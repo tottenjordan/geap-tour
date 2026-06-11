@@ -12,11 +12,14 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content, Part
 
-from .config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
-from .armor import input_guardrail_callback
 from .complexity import classify_complexity, score_to_model_tier
 
-from src.config import SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, resolve_model
+from src.armor.config import input_guardrail_callback
+from src.config import (
+    SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER,
+    LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
 from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
 from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION

@@ -19,9 +19,9 @@ EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")
 
 # Agent Registry — MCP server resource names (global location)
 AGENT_REGISTRY_LOCATION = os.environ.get("AGENT_REGISTRY_LOCATION", "us-central1")
-SEARCH_MCP_SERVER = os.environ["SEARCH_MCP_SERVER"]
-BOOKING_MCP_SERVER = os.environ["BOOKING_MCP_SERVER"]
-EXPENSE_MCP_SERVER = os.environ["EXPENSE_MCP_SERVER"]
+SEARCH_MCP_SERVER = os.environ.get("SEARCH_MCP_SERVER", "")
+BOOKING_MCP_SERVER = os.environ.get("BOOKING_MCP_SERVER", "")
+EXPENSE_MCP_SERVER = os.environ.get("EXPENSE_MCP_SERVER", "")
 
 # Fallback: map Agent Registry server names → Cloud Run URLs
 MCP_SERVER_URLS = {
@@ -58,7 +58,7 @@ PRO_MODEL = os.environ.get("PRO_MODEL", "gemini-3.1-pro-preview")
 SONNET_MODEL = os.environ.get("SONNET_MODEL", "claude-sonnet-4-6")
 OPUS_MODEL = os.environ.get("OPUS_MODEL", "claude-opus-4-6")
 COMPLEXITY_THRESHOLD_HIGH = float(os.environ.get("COMPLEXITY_THRESHOLD_HIGH", "0.65"))
-CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemini-3.1-flash-lite")
+CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemini-3.5-flash")
 SIMULATOR_MODEL = os.environ.get("SIMULATOR_MODEL", "gemini-2.5-flash")
 
 # Evaluation

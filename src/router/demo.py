@@ -4,7 +4,7 @@ import asyncio
 import time
 
 from .complexity import classify_complexity, score_to_model_tier
-from .config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
+from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
 from .cost_tracker import CostTracker, RequestLog, estimate_cost
 
 DEMO_PROMPTS = [

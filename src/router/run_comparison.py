@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from .complexity import classify_complexity
-from .config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
+from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
 from .cost_tracker import estimate_cost
 from .demo import DEMO_PROMPTS, MODEL_MAP, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS
 

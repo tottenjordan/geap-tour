@@ -132,17 +132,17 @@ class TestCostTracker:
 
 class TestAgentConfig:
     def test_resolve_model_gemini(self):
-        from src.router.agents import _resolve_model
-        assert _resolve_model("gemini-2.5-flash") == "gemini-2.5-flash"
-        assert _resolve_model("gemini-2.5-flash-lite") == "gemini-2.5-flash-lite"
-        assert _resolve_model("gemini-2.5-pro") == "gemini-2.5-pro"
+        from src.config import resolve_model
+        assert resolve_model("gemini-2.5-flash") == "gemini-2.5-flash"
+        assert resolve_model("gemini-2.5-flash-lite") == "gemini-2.5-flash-lite"
+        assert resolve_model("gemini-2.5-pro") == "gemini-2.5-pro"
 
     def test_resolve_model_litellm(self):
-        from src.router.agents import _resolve_model
+        from src.config import resolve_model
         from google.adk.models.lite_llm import LiteLlm
-        result = _resolve_model("claude-opus-4-6")
+        result = resolve_model("claude-opus-4-6")
         assert isinstance(result, LiteLlm)
-        result2 = _resolve_model("claude-sonnet-4-6")
+        result2 = resolve_model("claude-sonnet-4-6")
         assert isinstance(result2, LiteLlm)
 
     def test_router_has_five_sub_agents(self):
