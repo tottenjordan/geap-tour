@@ -1,11 +1,11 @@
-name: Simulated Eval on PR
+name: Simulated Eval
 
+# Cloud-based simulated eval (deploys a temporary Agent Engine and runs a
+# multi-turn simulated evaluation against it). Manual-only: trigger from the
+# Actions tab or `gh workflow run`. Fast, cloud-free unit tests run on every
+# PR (see tests.yaml).
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/agents/**'
-      - 'src/mcp_servers/**'
+  workflow_dispatch:
 
 jobs:
   simulated-eval:

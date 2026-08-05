@@ -1,13 +1,9 @@
 name: Comprehensive Eval Pipeline
 
+# Cloud-based eval pipeline (deploys agents + runs Vertex AI evals against
+# GCP_PROJECT_ID). Manual-only: trigger from the Actions tab or `gh workflow run`.
+# Fast, cloud-free unit tests run separately on every PR (see tests.yaml).
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/agents/**'
-      - 'src/eval/**'
-      - 'src/router/**'
-      - 'src/mcp_servers/**'
   workflow_dispatch:
     inputs:
       agent_id:
