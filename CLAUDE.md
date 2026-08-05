@@ -92,3 +92,9 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 - MCP servers use FastMCP with `streamable-http` transport.
 - Tests validate agent configuration (tool count, sub-agent names, callback presence) without requiring live GCP or MCP connections.
 - `.env` is the source of truth for deployed engine IDs — `deploy_agents.py` auto-updates it after each deploy.
+
+## Code standards
+
+Always refer to [CODE_STANDARDS.md](./CODE_STANDARDS.md) when writing code and
+making environment changes. Follow it for all git, Python tooling, and testing
+conventions.
