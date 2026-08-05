@@ -1,13 +1,9 @@
 name: Comprehensive Eval Pipeline
 
+# Cloud-based eval pipeline (deploys agents + runs Vertex AI evals against
+# GCP_PROJECT_ID). Manual-only: trigger from the Actions tab or `gh workflow run`.
+# Fast, cloud-free unit tests run separately on every PR (see tests.yaml).
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/agents/**'
-      - 'src/eval/**'
-      - 'src/router/**'
-      - 'src/mcp_servers/**'
   workflow_dispatch:
     inputs:
       agent_id:
@@ -23,7 +19,7 @@ on:
         default: false
 
 env:
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'wortz-project-352116' }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'hybrid-vertex' }}
   GCP_REGION: ${{ vars.GCP_REGION || 'us-central1' }}
   AGENT_ENGINE_ID: ${{ inputs.agent_id || vars.AGENT_ENGINE_ID || '1316648131831529472' }}
 
@@ -37,13 +33,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --group dev
 
       - name: Run eval infrastructure tests
         run: uv run python -m pytest tests/test_multi_agent_eval.py -v
@@ -51,6 +47,9 @@ jobs:
   batch-evals:
     name: Batch Evaluations
     needs: unit-tests
+    # Requires GCP auth — skip (don't fail) when WIF isn't configured (e.g. forks / repos
+    # without the WIF_PROVIDER + WIF_SERVICE_ACCOUNT repo variables set).
+    if: ${{ vars.WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,6 +116,8 @@ jobs:
   complexity-evals:
     name: Complexity Routing Evaluation
     needs: unit-tests
+    # Requires GCP auth — skip (don't fail) when WIF isn't configured.
+    if: ${{ vars.WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -176,7 +177,8 @@ jobs:
   monitor-check:
     name: Monitor Verification
     needs: [batch-evals]
-    if: ${{ !inputs.batch_only }}
+    # Requires GCP auth — skip when WIF isn't configured (also gated by batch_only).
+    if: ${{ !inputs.batch_only && vars.WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

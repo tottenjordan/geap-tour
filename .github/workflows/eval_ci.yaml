@@ -1,14 +1,17 @@
-name: Simulated Eval on PR
+name: Simulated Eval
 
+# Cloud-based simulated eval (deploys a temporary Agent Engine and runs a
+# multi-turn simulated evaluation against it). Manual-only: trigger from the
+# Actions tab or `gh workflow run`. Fast, cloud-free unit tests run on every
+# PR (see tests.yaml).
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/agents/**'
-      - 'src/mcp_servers/**'
+  workflow_dispatch:
 
 jobs:
   simulated-eval:
+    # Requires GCP auth (deploys a temporary agent) — skip (don't fail) when WIF isn't
+    # configured, e.g. forks / repos without the WIF_PROVIDER + WIF_SERVICE_ACCOUNT repo variables.
+    if: ${{ vars.WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -40,9 +43,9 @@ jobs:
           RESOURCE=$(uv run python -c "
           import vertexai
           vertexai.init(
-              project='${{ vars.GCP_PROJECT_ID || 'wortz-project-352116' }}',
+              project='${{ vars.GCP_PROJECT_ID || 'hybrid-vertex' }}',
               location='${{ vars.GCP_REGION || 'us-central1' }}',
-              staging_bucket='gs://${{ vars.GCP_STAGING_BUCKET || 'wortz-project-352116-geap-staging' }}',
+              staging_bucket='gs://${{ vars.GCP_STAGING_BUCKET || 'hybrid-vertex-geap-staging' }}',
           )
           from src.deploy.deploy_agents import deploy_agent
           from src.agents.travel_agent import travel_agent
@@ -63,7 +66,7 @@ jobs:
           uv run python -c "
           import vertexai
           vertexai.init(
-              project='${{ vars.GCP_PROJECT_ID || 'wortz-project-352116' }}',
+              project='${{ vars.GCP_PROJECT_ID || 'hybrid-vertex' }}',
               location='${{ vars.GCP_REGION || 'us-central1' }}',
           )
           from vertexai import agent_engines
