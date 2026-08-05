@@ -21,7 +21,7 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 
 ```
 src/
-├── agents/                    # Standalone deployable agents
+├── agents/                    # Standalone deployable ADK agents
 │   ├── coordinator_agent.py   # Domain router (travel vs expense)
 │   ├── travel_agent.py        # Flight/hotel search + booking
 │   ├── expense_agent.py       # Expense submission + policy checks
@@ -29,41 +29,56 @@ src/
 │   ├── flash_agent.py         # Tier 2: gemini-3.5-flash ($0.60/M)
 │   ├── pro_agent.py           # Tier 3: gemini-3.1-pro-preview ($10/M)
 │   ├── sonnet_agent.py        # Tier 4: claude-sonnet-4-6 ($15/M)
-│   └── opus_agent.py          # Tier 5: claude-opus-4-6 ($75/M)
+│   ├── opus_agent.py          # Tier 5: claude-opus-4-6 ($75/M)
+│   └── *_opt/, coordinator/   # GEPA optimization wrappers + evalsets
 ├── router/                    # Multi-model complexity router
 │   ├── agents.py              # Router + AgentTool-wrapped sub-agents
 │   ├── complexity.py          # Prompt complexity classifier
+│   ├── cost_tracker.py        # Per-tier cost tracking
+│   ├── demo.py, run_comparison.py  # Local demo + tier comparison
 │   └── *_agent_opt/           # GEPA optimization wrappers
-├── mcp_servers/               # MCP tool servers (Cloud Run)
+├── mcp_servers/               # FastMCP tool servers (Cloud Run)
 │   ├── search/                # Flight + hotel search
 │   ├── booking/               # Flight + hotel booking
 │   ├── expense/               # Expense management
+│   ├── auth.py                # MCP server auth
 │   └── otel_setup.py          # Shared OTel instrumentation
 ├── eval/                      # Evaluation pipelines
 │   ├── multi_agent_batch_eval.py    # Batch eval (6 metrics)
-│   ├── simulated_eval.py           # Multi-turn simulated eval
+│   ├── simulated_eval.py            # Multi-turn simulated eval
+│   ├── complexity_metrics.py        # Router accuracy + cost efficiency
 │   ├── cross_model_experiment.py    # All models × all tiers
-│   ├── setup_online_evaluators.py   # Online evaluator management
-│   └── agent_eval_configs.py        # Eval cases + metrics
-├── deploy/                    # Deployment scripts
-│   └── deploy_agents.py       # Deploy/update agents with auto .env write
-├── optimize/                  # GEPA optimization configs
+│   ├── run_all_evals.py             # Full eval orchestration
+│   ├── setup_online_monitors.py, verify_monitors.py  # Online monitoring
+│   ├── agent_eval_configs.py        # Eval cases + metrics
+│   └── evalsets/, scenarios/        # Test cases + simulator scenarios
+├── armor/                     # Model Armor config + guardrail callbacks
+├── deploy/                    # Deployment (Agent Runtime + Cloud Run)
+│   ├── deploy_agents.py       # Deploy/update agents with auto .env write
+│   ├── deploy_mcp_servers.py  # Deploy MCP servers to Cloud Run
+│   └── deploy_all.py          # Python end-to-end deployment
+├── optimize/                  # GEPA optimization configs + runner
 │   └── run_optimize.py        # Python-native GEPA runner
-├── traffic/                   # Traffic generation
+├── traffic/                   # Traffic generation for OTel traces
 │   └── generate_traffic.py    # Burst + steady-state traffic
+├── registry.py                # Agent Registry / MCP toolset discovery
 └── config.py                  # Shared config, resolve_model(), disable_pyopenssl()
 
-scripts/                       # Shell scripts for infrastructure
+scripts/                       # Shell scripts for infrastructure setup
 ├── setup_apphub.sh            # App Hub topology registration
 ├── setup_agent_gateway.sh     # Agent Gateway (ingress + egress)
 ├── setup_governance_policies.sh  # IAM + SGP governance
 └── deploy_all.sh              # Full end-to-end deployment
 
-docs/                          # Analysis reports
+diagrams/                      # Paper Banana architecture diagrams (inputs + outputs)
+docs/                          # Workshop guide, analysis reports, charts, and notes
+├── workshop_guide.md          # Full 4-session walkthrough
 ├── gepa_optimization_analysis.md  # GEPA before/after analysis
 ├── cross_model_experiment.md      # Cross-model complexity experiment
 ├── prompts/                       # Before/after prompt comparisons
-└── charts/                        # Matplotlib + PaperBanana visualizations
+├── charts/                        # Matplotlib + PaperBanana visualizations
+└── notes/                         # Engineering session notes
+tests/                         # Unit + integration tests (offline, no live GCP)
 ```
 
 ## Documentation
@@ -162,21 +177,3 @@ In our workshop, agents use SPIFFE-based workload identity (ID-2) with attestati
 | ![Observability Stack](diagrams/outputs/05_observability_stack.png) | OTel traces → Cloud Trace → BigQuery pipeline |
 | ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | GitHub Actions simulated eval gate on pull requests |
 | ![Model Armor](diagrams/outputs/07_agent_armor.png) | Model Armor input/output screening with guardrail callbacks |
-
-## Project Structure
-
-```
-src/
-├── agents/          # ADK agent definitions
-├── armor/           # Model Armor config + guardrail callbacks
-├── mcp_servers/     # FastMCP tool servers (search, booking, expense)
-├── deploy/          # Deployment scripts for Cloud Run + Agent Runtime
-├── eval/            # Evaluation pipeline (one-time, online, simulated)
-├── optimize/        # Agent optimization (GEPA algorithm)
-├── router/          # Multi-model complexity router
-└── traffic/         # Traffic generation for OTel traces
-scripts/             # Shell scripts for identity, gateway, registry setup
-diagrams/            # Paper Banana architectural diagrams
-docs/                # Workshop guide
-tests/               # Unit and integration tests
-```
