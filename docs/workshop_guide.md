@@ -877,14 +877,18 @@ eval_result = client.evals.evaluate(
 )
 ```
 
-**CI/CD integration** (`.github/workflows/eval_ci.yaml`):
-- On every PR that changes agent code -> deploy temp agent -> run simulated eval -> block if score < 3.0 -> cleanup
+**Orchestrated eval pipeline** (`.github/workflows/eval_vertex.yaml` → `src/pipelines/submit.py`):
+- Submit on demand -> deploy temp agent -> generate traffic -> batch ‖ simulated ‖ complexity -> monitor verify -> report -> cleanup temp agent. Simulated eval gates on a 3.0 score threshold. All eval compute runs as a **Vertex AI Managed Pipeline** (KFP v2), not on the CI runner.
 
 ```bash
+# Run just the simulated eval directly
 uv run python -m src.eval.simulated_eval <agent-resource-name> 3.0
+
+# Or submit the full eval DAG to Vertex Pipelines
+uv run python -m src.pipelines.submit --agent-id "$AGENT_ENGINE_ID" --skip-traffic
 ```
 
-**Console tour**: Show a GitHub Actions run with the eval results.
+**Console tour**: Open the run in the Vertex AI Pipelines UI and walk the DAG, artifacts, and metrics.
 
 **Diagram**: `diagrams/outputs/06_ci_cd_flow.png`
 

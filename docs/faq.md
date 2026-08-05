@@ -106,9 +106,9 @@ Quick reference for each component — what it is, how it works, and why it matt
 
 ## 7. Evaluation Pipeline
 
-**What is it?** — A three-tier evaluation system covering batch testing, continuous online monitoring, and CI/CD quality gates for the deployed agents.
+**What is it?** — A three-tier evaluation system covering batch testing, continuous online monitoring, and an on-demand Vertex Managed Pipeline that runs the full eval DAG for the deployed agents.
 
-**How does it work?** — The first tier is batch evaluation: `one_time_eval.py` and `batch_eval.py` run 20 test cases across 11 categories using custom `PointwiseMetric` rubrics that score safety, quality, tool use, and policy compliance. The second tier is continuous online evaluation: `setup_online_evaluators.py` creates native Online Evaluators that run every 10 minutes against OTel traces, scoring them with 4 predefined metrics and 2 custom rubrics (GEAP Task Quality and GEAP Policy Compliance) registered in the Metric Registry. The third tier is CI/CD integration: `simulated_eval.py` runs in the `eval_ci.yaml` GitHub Actions workflow and blocks pull requests when scores fall below 3.0. Supporting tools include `failure_clusters.py` for grouping error patterns and `quality_alerts.py` for threshold-based notifications.
+**How does it work?** — The first tier is batch evaluation: `one_time_eval.py` and `batch_eval.py` run 20 test cases across 11 categories using custom `PointwiseMetric` rubrics that score safety, quality, tool use, and policy compliance. The second tier is continuous online evaluation: `setup_online_evaluators.py` creates native Online Evaluators that run every 10 minutes against OTel traces, scoring them with 4 predefined metrics and 2 custom rubrics (GEAP Task Quality and GEAP Policy Compliance) registered in the Metric Registry. The third tier is the orchestrated eval pipeline: the whole suite (deploy → traffic → batch ‖ simulated ‖ complexity → monitor → report) runs as a single **Vertex AI Managed Pipeline** (KFP v2), submitted on demand via `src/pipelines/submit.py` (or the manual `eval_vertex.yaml` workflow), with `simulated_eval.py` gating on a 3.0 score threshold. All eval compute runs on Vertex — observable in the Vertex Pipelines UI with lineage and artifacts. Supporting tools include `failure_clusters.py` for grouping error patterns and `quality_alerts.py` for threshold-based notifications.
 
 **Why does it matter?** — Deploying agents without evaluation is flying blind. This pipeline ensures quality at every stage — pre-deployment testing, real-time production monitoring, and automated regression detection — closing the loop between development and production.
 
@@ -116,8 +116,9 @@ Quick reference for each component — what it is, how it works, and why it matt
 - `src/eval/one_time_eval.py` — Batch evaluation with PointwiseMetric rubrics
 - `src/eval/batch_eval.py` — Extended batch evaluation (20 test cases, 11 categories)
 - `src/eval/setup_online_evaluators.py` — Native Online Evaluators with custom rubrics (create, list, verify, cleanup)
-- `src/eval/simulated_eval.py` — CI/CD eval gate (blocks PRs below score 3.0)
-- `.github/workflows/eval_ci.yaml` — GitHub Actions workflow for eval-on-PR
+- `src/eval/simulated_eval.py` — Multi-turn simulated eval (gates on score 3.0)
+- `src/pipelines/eval_pipeline.py` / `src/pipelines/submit.py` — Vertex Managed Pipeline (KFP v2) DAG + manual submit CLI
+- `.github/workflows/eval_vertex.yaml` — Manual `workflow_dispatch` that submits the pipeline to Vertex
 - `src/eval/failure_clusters.py` — Failure pattern clustering and analysis
 
 ---
