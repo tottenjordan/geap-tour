@@ -9,3 +9,6 @@ file; keep this index short (< 200 lines).
 - [Dependency management & the internal registry gotcha](./dependency-management.md)
   — why `uv lock` here resolves from PyPI, and the inaccessible Artifact Foundry
   mirror.
+- [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
+  DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas
+  (env-injection, import-time config, exit-handler cleanup).

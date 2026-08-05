@@ -42,6 +42,11 @@ uv run python -m src.eval.simulated_eval --agent-id <ENGINE_ID> --agent-name coo
 uv run python -m src.eval.multi_agent_batch_eval coordinator_agent
 uv run python -m src.eval.run_all_evals
 
+# Vertex Managed Pipeline (runs the full eval DAG on Vertex Pipelines)
+bash scripts/build_eval_image.sh v1                                  # build+push runner image (one-time)
+uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)
+uv run python -m src.pipelines.submit --agent-module coordinator_agent        # full parity, fresh temp deploy
+
 # Infrastructure setup (shell scripts)
 bash scripts/deploy_all.sh              # full end-to-end
 bash scripts/setup_governance_policies.sh --sgp   # IAM + SGP
