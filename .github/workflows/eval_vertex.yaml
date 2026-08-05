@@ -1,0 +1,52 @@
+name: Vertex Eval Pipeline
+
+# Submit the GEAP eval DAG to Vertex AI Managed Pipelines. Manual-only:
+# trigger from the Actions tab or `gh workflow run`. The runner only COMPILES
+# and SUBMITS the pipeline; all eval compute runs on Vertex, not on the runner.
+# Fast, cloud-free unit tests still run on every PR (see tests.yaml).
+on:
+  workflow_dispatch:
+    inputs:
+      agent_id:
+        description: 'Existing Agent Engine ID (leave empty to deploy a temp engine)'
+        required: false
+      skip_traffic:
+        description: 'Skip traffic generation'
+        type: boolean
+        default: false
+
+jobs:
+  submit:
+    # Requires GCP auth — skip (don't fail) when WIF isn't configured (e.g. forks /
+    # repos without the WIF_PROVIDER + WIF_SERVICE_ACCOUNT repo variables set).
+    if: ${{ vars.WIF_PROVIDER != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --group pipelines
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Submit eval pipeline
+        run: |
+          uv run python -m src.pipelines.submit \
+            ${{ inputs.agent_id && format('--agent-id {0}', inputs.agent_id) || '' }} \
+            ${{ inputs.skip_traffic && '--skip-traffic' || '' }}
