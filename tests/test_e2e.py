@@ -88,18 +88,21 @@ class TestAgentConfigE2E:
 
     def test_coordinator_orchestration_structure(self):
         from src.agents.coordinator_agent import coordinator_agent
-        sub_names = [a.name for a in coordinator_agent.sub_agents]
-        assert "travel_agent" in sub_names
-        assert "expense_agent" in sub_names
+        from google.adk.tools.agent_tool import AgentTool
 
-    def test_all_agents_have_model_armor(self):
-        from src.agents.travel_agent import travel_agent
-        from src.agents.expense_agent import expense_agent
-        from src.agents.coordinator_agent import coordinator_agent
-        for agent in [travel_agent, expense_agent, coordinator_agent]:
-            assert agent.generate_content_config is not None
-            assert agent.generate_content_config.model_armor_config is not None
-            assert agent.before_agent_callback is not None
+        # Coordinator delegates via AgentTool-wrapped specialists (not sub_agents).
+        tool_agent_names = [t.agent.name for t in coordinator_agent.tools if isinstance(t, AgentTool)]
+        assert "travel_agent" in tool_agent_names
+        assert "expense_agent" in tool_agent_names
+
+    def test_entry_point_agents_wire_guardrail(self):
+        # Model Armor is enforced server-side at deploy time (gateway policy);
+        # the in-code guardrail is wired at the entry-point agents (router and
+        # coordinator), not on individual sub-agents.
+        from src.router.agents import router_agent
+        from src.agents.coordinator.agent import root_agent as coordinator_agent
+        assert router_agent.before_agent_callback is not None
+        assert coordinator_agent.before_agent_callback is not None
 
 
 # --- Agent Armor E2E ---

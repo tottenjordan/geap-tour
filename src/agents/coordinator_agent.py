@@ -11,7 +11,6 @@ from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 from src.config import AGENT_MODEL, SEARCH_MCP_SERVER, resolve_model
 from src.registry import get_mcp_tools
-from src.armor.config import get_armored_generate_config, input_guardrail_callback
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
 

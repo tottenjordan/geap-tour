@@ -145,13 +145,18 @@ class TestAgentConfig:
         result2 = resolve_model("claude-sonnet-4-6")
         assert isinstance(result2, LiteLlm)
 
-    def test_router_has_five_sub_agents(self):
+    def test_router_has_five_agent_tools(self):
         from src.router.agents import router_agent
-        assert len(router_agent.sub_agents) == 5
+        from google.adk.tools.agent_tool import AgentTool
+
+        agent_tools = [t for t in router_agent.tools if isinstance(t, AgentTool)]
+        assert len(agent_tools) == 5
 
     def test_sub_agent_names(self):
         from src.router.agents import router_agent
-        names = {a.name for a in router_agent.sub_agents}
+        from google.adk.tools.agent_tool import AgentTool
+
+        names = {t.agent.name for t in router_agent.tools if isinstance(t, AgentTool)}
         assert names == {"lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"}
 
     def test_router_has_callback(self):
