@@ -67,9 +67,9 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 `src/config.py:resolve_model()` handles the Gemini 2.x vs 3.x split: Gemini 2.x models pass as plain strings (regional endpoints), while Gemini 3.x and Claude models are wrapped in `LiteLlm(vertex_location="global")` because they require the global endpoint.
 
-### Dual config files
+### Shared config
 
-`src/config.py` is the shared config used by standalone agents and eval. `src/router/config.py` is a self-contained copy for the router package — needed because Agent Runtime deploys each agent as an isolated package. When changing model defaults or env var names, update both files.
+`src/config.py` is the single shared config for all agents (standalone, coordinator, router) and eval — `resolve_model()`, model defaults, engine IDs, and env-var names all live here. It's bundled into every Agent Runtime deployment via `extra_packages=["src"]` (`src/deploy/deploy_agents.py`), so the router imports it directly. (The router previously carried a self-contained `src/router/config.py` copy; that duplication was removed.)
 
 ### Evaluation
 
@@ -83,7 +83,7 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 ### Security layers
 
-- **Model Armor** (`src/armor/config.py`, `src/router/armor.py`): server-side screening via Model Armor templates + client-side `input_guardrail_callback` (blocklist patterns, length limits). The armor config is duplicated between `src/armor/` (for coordinator) and `src/router/` (for router) — same reason as dual config.
+- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side `input_guardrail_callback` (blocklist patterns, length limits). Both the coordinator and the router import this single shared module (the router previously had a duplicate `src/router/armor.py`, now removed).
 
 ## Key Conventions
 
