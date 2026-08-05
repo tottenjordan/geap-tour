@@ -6,7 +6,7 @@ PROJECT=${GCP_PROJECT_ID:-hybrid-vertex}
 REGION=${GCP_REGION:-us-central1}
 TAG=${1:-latest}
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/geap-eval/eval-runner:${TAG}"
-gcloud builds submit --project="$PROJECT" --tag "$IMAGE" \
+gcloud builds submit --project="$PROJECT" \
     --config=/dev/stdin <<EOF
 steps:
 - name: gcr.io/cloud-builders/docker
