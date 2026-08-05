@@ -1,9 +1,10 @@
 name: Tests
 
 # Fast, cloud-free test suite. Runs the full offline pytest suite (validates
-# agent configuration without live GCP or MCP connections — env defaults come
-# from tests/conftest.py). This is the check that gates PRs; the cloud-based
-# eval pipeline runs separately and manually (see eval_pipeline.yaml / eval_ci.yaml).
+# agent configuration and KFP pipeline compilation without live GCP or MCP
+# connections — env defaults come from tests/conftest.py). This is the check
+# that gates PRs; the cloud-based eval pipeline runs separately and manually
+# (submitted via src.pipelines.submit / the eval_vertex.yaml workflow).
 
 on:
   pull_request:
@@ -27,7 +28,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --group pipelines
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --group pipelines pytest
