@@ -1,5 +1,13 @@
 """Expense MCP server — exposes expense submission, policy checks, and history over StreamableHTTP."""
 
+import logging
+logging.basicConfig(level=logging.INFO)
+try:
+    from otel_setup import setup_opentelemetry
+    setup_opentelemetry("expense-mcp")
+except Exception as e:
+    logging.warning("OTel setup failed: %s", e)
+
 from fastmcp import FastMCP
 
 try:

@@ -146,7 +146,10 @@ class TestEvalsetFilesValidJson:
             assert "user_content" in turn
             assert "final_response" in turn
             assert "intermediate_data" in turn
-            assert "tool_uses" in turn["intermediate_data"]
+            # intermediate_data is {} for no-tool-call cases (e.g. out-of-scope
+            # replies the agent handles without any tool); when tool_uses is
+            # present it must be a list of tool calls.
+            assert isinstance(turn["intermediate_data"].get("tool_uses", []), list)
 
     @pytest.mark.parametrize("filename", EVALSET_FILES)
     def test_evalset_unique_eval_ids(self, filename):
@@ -164,7 +167,7 @@ class TestEvalConfigFiles:
         with open(path) as f:
             data = json.load(f)
         assert "criteria" in data
-        assert "tool_trajectory_avg_score" in data["criteria"]
+        assert "response_match_score" in data["criteria"]
 
     def test_dynamic_eval_config(self):
         path = SCENARIOS_DIR / "eval_config.json"

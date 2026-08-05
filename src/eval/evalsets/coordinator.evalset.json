@@ -2,34 +2,23 @@
   "eval_set_id": "coordinator_eval_set",
   "eval_cases": [
     {
-      "eval_id": "flight_search_sfo_jfk",
-      "conversation": [{
-        "user_content": {"parts": [{"text": "Find flights from SFO to JFK on June 15"}], "role": "user"},
-        "final_response": {"parts": [{"text": "I found several flight options from SFO to JFK on June 15. Flight FL001 with United Airlines departs at 8:00 AM for $350, and FL002 with Delta departs at 2:00 PM for $420."}], "role": "model"},
-        "intermediate_data": {
-          "tool_uses": [{"name": "search_flights", "args": {"origin": "SFO", "destination": "JFK", "date": "2026-06-15"}}]
-        }
-      }],
-      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
-    },
-    {
-      "eval_id": "flight_search_lax_chicago",
-      "conversation": [{
-        "user_content": {"parts": [{"text": "Search for flights from LAX to Chicago on June 16"}], "role": "user"},
-        "final_response": {"parts": [{"text": "Here are flights from LAX to Chicago (ORD) on June 16. Flight FL003 with American Airlines is available."}], "role": "model"},
-        "intermediate_data": {
-          "tool_uses": [{"name": "search_flights", "args": {"origin": "LAX", "destination": "ORD", "date": "2026-06-16"}}]
-        }
-      }],
-      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
-    },
-    {
       "eval_id": "hotel_search_nyc",
       "conversation": [{
         "user_content": {"parts": [{"text": "Search for hotels in New York under $350 per night"}], "role": "user"},
-        "final_response": {"parts": [{"text": "I found hotels in New York under $350: Grand Hyatt at $299/night and Budget Inn at $149/night."}], "role": "model"},
+        "final_response": {"parts": [{"text": "I found hotels in New York under $350 per night: Grand Hyatt New York at $320/night (4.5 rating) and Budget Inn Downtown at $120/night (3.2 rating)."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [{"name": "search_hotels", "args": {"city": "New York", "max_price": 350}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "hotel_search_miami",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Find me a hotel in Miami"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I found the Fontainebleau Miami at $400/night with a 4.7 rating."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "search_hotels", "args": {"city": "Miami"}}]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
@@ -49,7 +38,7 @@
       "eval_id": "expense_policy_check_within",
       "conversation": [{
         "user_content": {"parts": [{"text": "Check if a $50 meal expense is within policy"}], "role": "user"},
-        "final_response": {"parts": [{"text": "A $50 meal expense is within the corporate policy. The meal expense limit is $75."}], "role": "model"},
+        "final_response": {"parts": [{"text": "The $50 meal expense is within the policy limit of $75."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [{"name": "check_expense_policy", "args": {"category": "meals", "amount": 50}}]
         }
@@ -60,7 +49,7 @@
       "eval_id": "expense_policy_over_limit",
       "conversation": [{
         "user_content": {"parts": [{"text": "Check policy for a $500 entertainment expense"}], "role": "user"},
-        "final_response": {"parts": [{"text": "A $500 entertainment expense exceeds the corporate policy limit of $150 for entertainment."}], "role": "model"},
+        "final_response": {"parts": [{"text": "A $500 entertainment expense exceeds the $150 policy limit for entertainment. It requires manager review."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}]
         }
@@ -71,7 +60,7 @@
       "eval_id": "expense_submit_within",
       "conversation": [{
         "user_content": {"parts": [{"text": "Submit a $45 meals expense for lunch meeting, user ID EMP001"}], "role": "user"},
-        "final_response": {"parts": [{"text": "Expense submitted: $45 meals for EMP001. Status: approved (within $75 meal policy limit)."}], "role": "model"},
+        "final_response": {"parts": [{"text": "Your $45 meals expense for lunch meeting has been submitted and approved."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 45, "description": "lunch meeting"}}]
         }
@@ -90,26 +79,114 @@
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
     },
     {
-      "eval_id": "multi_intent_routing",
+      "eval_id": "flight_search_sfo_jfk",
       "conversation": [{
-        "user_content": {"parts": [{"text": "I need to book a trip to Chicago and submit my last meal receipt for $30"}], "role": "user"},
-        "final_response": {"parts": [{"text": "I'll help with both. Let me search for travel options to Chicago and submit your meal expense."}], "role": "model"},
+        "user_content": {"parts": [{"text": "Find flights from SFO to JFK"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I found flights from SFO to JFK: United FL001 at $450 and Delta FL002 at $520."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "search_flights", "args": {"origin": "SFO", "destination": "JFK"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "flight_search_lax_ord",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Search for flights from LAX to ORD"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I found American Airlines flight FL003 from LAX to ORD at $380."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "search_flights", "args": {"origin": "LAX", "destination": "ORD"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "hotel_search_chicago",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "What hotels are available in Chicago?"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I found The Palmer House in Chicago at $250/night with a 4.3 rating."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "search_hotels", "args": {"city": "Chicago"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "book_hotel",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Book hotel HT001 for Bob Smith, check-in June 15, check-out June 18"}], "role": "user"},
+        "final_response": {"parts": [{"text": "Hotel HT001 (Grand Hyatt New York) has been booked for Bob Smith from June 15 to June 18. Booking confirmed."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "book_hotel", "args": {"hotel_id": "HT001", "guest_name": "Bob Smith", "checkin_date": "2026-06-15", "checkout_date": "2026-06-18"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "expense_policy_transport",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Is a $180 transport expense within policy?"}], "role": "user"},
+        "final_response": {"parts": [{"text": "A $180 transport expense is within policy. The transport limit is $200."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "transport", "amount": 180}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "expense_policy_lodging",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "What is the lodging expense limit?"}], "role": "user"},
+        "final_response": {"parts": [{"text": "The corporate lodging expense limit is $400 per night."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "lodging"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "expense_submit_over_limit",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Submit a $500 entertainment expense for team event, user ID EMP002"}], "role": "user"},
+        "final_response": {"parts": [{"text": "The $500 entertainment expense exceeds the policy limit of $150. It has been flagged for review."}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "flight_search_no_results",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Find flights from XYZ to ABC"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I wasn't able to find any flights from XYZ to ABC. These don't appear to be valid airport codes. Could you provide valid origin and destination airports?"}], "role": "model"},
+        "intermediate_data": {
+          "tool_uses": [{"name": "search_flights", "args": {"origin": "XYZ", "destination": "ABC"}}]
+        }
+      }],
+      "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
+    },
+    {
+      "eval_id": "multi_intent_travel_expense",
+      "conversation": [{
+        "user_content": {"parts": [{"text": "Submit a $30 meal receipt for user EMP001"}], "role": "user"},
+        "final_response": {"parts": [{"text": "Your $30 meal expense for EMP001 has been submitted and approved, within the $75 policy limit."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [
             {"name": "search_flights", "args": {"destination": "ORD"}},
-            {"name": "submit_expense", "args": {"category": "meals", "amount": 30}}
+            {"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 30}}
           ]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
     },
     {
-      "eval_id": "hotel_search_miami",
+      "eval_id": "hotel_search_no_results",
       "conversation": [{
-        "user_content": {"parts": [{"text": "Find me a hotel in Miami"}], "role": "user"},
-        "final_response": {"parts": [{"text": "I found hotels in Miami including the Fontainebleau."}], "role": "model"},
+        "user_content": {"parts": [{"text": "Search for hotels in Atlantis"}], "role": "user"},
+        "final_response": {"parts": [{"text": "I wasn't able to find any hotels in Atlantis. This city doesn't appear to be in our system. Try searching for a major city like New York, Chicago, or Miami."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "search_hotels", "args": {"city": "Miami"}}]
+          "tool_uses": [{"name": "search_hotels", "args": {"city": "Atlantis"}}]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}

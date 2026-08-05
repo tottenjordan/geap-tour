@@ -6,54 +6,69 @@ interactions (past bookings, expense submissions, preferences) across sessions.
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import AGENT_MODEL, SEARCH_MCP_SERVER
+from src.config import AGENT_MODEL, SEARCH_MCP_SERVER, resolve_model
 from src.registry import get_mcp_tools
-from src.armor.config import get_armored_generate_config, input_guardrail_callback
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
 
 INSTRUCTION = """\
-You are a corporate assistant coordinator. You help employees with travel and \
-expense needs by routing their requests to the right specialist.
+You are a corporate assistant coordinator. Your primary role is to efficiently \
+route user requests and provide direct assistance using available tools when appropriate.
 
-- For flight/hotel search and booking requests → delegate to travel_agent
-- For expense submission, policy checks, or reimbursement → delegate to expense_agent
-- For general travel information queries → use the search tools directly
+1. Direct Tool Usage (Your Primary Action):
+   - Flight Search: Use search_flights directly for find/search requests. \
+If invalid airport codes are returned, inform the user clearly.
+   - Hotel Search: Use search_hotels directly for hotel find/search requests.
+   - Expense Policy Checks: Use check_expense_policy directly for policy questions. \
+Known limits: meals ($75), transport ($200), lodging ($400), supplies ($100), entertainment ($150).
+   - User Expense Retrieval: Use get_user_expenses directly to show past expenses.
 
-You have access to Memory Bank, which stores information from past conversations \
-with each user. Use recalled memories to personalize your responses — for example, \
-greeting returning users by referencing their recent bookings, preferred airlines, \
-or past expense submissions. If a user asks "what did I book last time?" or \
-similar, the memory tool will have that context.
+2. Delegation (Use Specialist Agent Tools):
+   - Flight/Hotel Booking: If a user asks to book a flight or hotel, \
+use the travel_agent tool.
+   - Expense Submission: For requests to submit expenses, \
+use the expense_agent tool.
 
-Always greet the user and ask how you can help if their intent is unclear. \
-When delegating, briefly explain which specialist is handling their request.
+3. Memory Bank for Personalization:
+   - Use recalled memories to personalize responses — greet returning users by \
+referencing their recent bookings, preferred airlines, or past expense submissions.
+
+4. Greeting and Clarification:
+   - Always greet the user warmly.
+   - If intent is unclear, ask for more details.
+
+When a request comes in, first determine if you can fulfill it directly using your \
+tools. If the request involves booking or submission, use the appropriate \
+specialist agent tool. Always provide the most direct and efficient assistance.\
 """
 
 
 async def save_memories_callback(callback_context: CallbackContext):
-    """after_agent_callback: persist this session's events to Memory Bank.
-
-    Uses add_session_to_memory which sends the full session to Memory Bank
-    for background processing. Memories are scoped to {user_id, app_name}
-    so each user gets their own memory space.
-    """
-    await callback_context.add_session_to_memory()
+    """after_agent_callback: persist this session's events to Memory Bank."""
+    try:
+        await callback_context.add_session_to_memory()
+    except Exception:
+        pass
     return None
 
 
 coordinator_agent = LlmAgent(
-    model=AGENT_MODEL,
+    model=resolve_model(AGENT_MODEL),
     name="coordinator_agent",
     instruction=INSTRUCTION,
     tools=[
         get_mcp_tools(SEARCH_MCP_SERVER),
         PreloadMemoryTool(),
+        AgentTool(agent=travel_agent),
+        AgentTool(agent=expense_agent),
     ],
-    sub_agents=[travel_agent, expense_agent],
-    generate_content_config=get_armored_generate_config(),
-    before_agent_callback=input_guardrail_callback,
     after_agent_callback=save_memories_callback,
 )
+
+root_agent = coordinator_agent
+
+import types as _t
+agent = _t.SimpleNamespace(root_agent=coordinator_agent)

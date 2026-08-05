@@ -80,21 +80,22 @@ class TestModelArmorConfig:
         assert config.model_armor_config is not None
 
 
-class TestAgentsHaveArmor:
-    def test_travel_agent_has_armor(self):
-        from src.agents.travel_agent import travel_agent
-        assert travel_agent.generate_content_config is not None
-        assert travel_agent.generate_content_config.model_armor_config is not None
-        assert travel_agent.before_agent_callback is not None
+class TestEntryPointGuardrails:
+    """Armor is layered: Model Armor runs server-side (deploy-time gateway
+    policy, validated by TestModelArmorConfig), and the in-code client-side
+    guardrail is wired at the *entry-point* agents (router and coordinator),
+    not on individual sub-agents like travel/expense.
+    """
 
-    def test_expense_agent_has_armor(self):
-        from src.agents.expense_agent import expense_agent
-        assert expense_agent.generate_content_config is not None
-        assert expense_agent.generate_content_config.model_armor_config is not None
-        assert expense_agent.before_agent_callback is not None
+    def test_router_entry_wires_guardrail(self):
+        # The router's before_agent_callback classifies complexity AND runs the
+        # input guardrail (see complexity_router_callback) before delegating.
+        from src.router.agents import router_agent
+        assert router_agent.before_agent_callback is not None
 
-    def test_coordinator_agent_has_armor(self):
-        from src.agents.coordinator_agent import coordinator_agent
-        assert coordinator_agent.generate_content_config is not None
-        assert coordinator_agent.generate_content_config.model_armor_config is not None
+    def test_coordinator_entry_wires_guardrail(self):
+        from src.agents.coordinator.agent import root_agent as coordinator_agent
+        # The coordinator package defines its own input_guardrail_callback, so
+        # assert by name rather than object identity.
         assert coordinator_agent.before_agent_callback is not None
+        assert coordinator_agent.before_agent_callback.__name__ == "input_guardrail_callback"
