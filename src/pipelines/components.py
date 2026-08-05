@@ -18,6 +18,7 @@ IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v1"
 def resolve_agent(
     agent_id: str,
     agent_module: str,
+    display_name: str = "",
 ) -> NamedTuple("Out", [("agent_resource", str), ("deployed_fresh", bool)]):  # type: ignore[valid-type]
     from src.config import GCP_PROJECT_ID, GCP_REGION
 
@@ -35,8 +36,10 @@ def resolve_agent(
 
     from src.deploy.deploy_agents import deploy_agent
 
+    # Deploy the temp engine under a unique display_name so the exit-handler
+    # cleanup task can find and delete it using pipeline params alone.
     mod = importlib.import_module(f"src.agents.{agent_module}")
-    res = deploy_agent(getattr(mod, agent_module))
+    res = deploy_agent(getattr(mod, agent_module), display_name=display_name or None)
     return (res, True)
 
 
@@ -200,8 +203,12 @@ def report(
 
 
 @dsl.component(base_image=IMAGE)
-def cleanup(agent_resource: str, deployed_fresh: bool):
-    if not deployed_fresh:
+def cleanup(agent_id: str, display_name: str):
+    # Exit-handler task. KFP forbids exit tasks from depending on other tasks,
+    # so this works purely from pipeline params: only when a fresh temp engine
+    # was deployed (agent_id empty) do we delete it, matching by the unique
+    # display_name that resolve_agent deployed it under.
+    if agent_id or not display_name:
         return
 
     import vertexai
@@ -211,6 +218,16 @@ def cleanup(agent_resource: str, deployed_fresh: bool):
 
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     try:
-        agent_engines.delete(agent_resource, force=True)
+        for eng in agent_engines.list():
+            dn = getattr(eng, "display_name", None)
+            if dn is None:
+                dn = getattr(getattr(eng, "api_resource", None), "display_name", None)
+            if dn != display_name:
+                continue
+            name = getattr(eng, "resource_name", None) or getattr(
+                getattr(eng, "api_resource", None), "name", None
+            )
+            agent_engines.delete(name, force=True)
+            print(f"deleted temp engine: {name}")
     except Exception as e:
         print(f"cleanup skipped: {e}")

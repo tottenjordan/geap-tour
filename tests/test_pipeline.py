@@ -7,3 +7,13 @@ def test_components_are_kfp():
     ):
         comp = getattr(c, name)
         assert hasattr(comp, "component_spec"), f"{name} is not a KFP component"
+
+
+def test_pipeline_compiles(tmp_path):
+    from kfp import compiler
+
+    from src.pipelines.eval_pipeline import eval_pipeline
+
+    out = tmp_path / "pipeline.json"
+    compiler.Compiler().compile(eval_pipeline, str(out))
+    assert out.exists() and out.stat().st_size > 0
