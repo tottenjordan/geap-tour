@@ -105,3 +105,24 @@ def test_poll_jobs_terminates_with_injected_state():
         sleep=lambda s: None,
     )
     assert states == {"dp01": "PIPELINE_STATE_SUCCEEDED", "dp02": "PIPELINE_STATE_SUCCEEDED"}
+
+
+def test_harvest_forwards_poll_timeout(tmp_path):
+    manifest = {"experiment_id": "exp1", "factors": [], "points": []}
+    seen = {}
+
+    def _poll(m, *, timeout_s, interval_s):
+        seen["timeout_s"] = timeout_s
+        seen["interval_s"] = interval_s
+        return {}
+
+    h.harvest(
+        manifest,
+        out_dir=str(tmp_path),
+        wait=True,
+        poll_timeout_s=5400,
+        poll_interval_s=7,
+        fetch=lambda uri: {},
+        poll=_poll,
+    )
+    assert seen == {"timeout_s": 5400, "interval_s": 7}

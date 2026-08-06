@@ -189,12 +189,19 @@ def harvest(
     agent: str = DEFAULT_AGENT,
     out_dir: str = ".",
     wait: bool = True,
+    poll_timeout_s: int = 7200,
+    poll_interval_s: int = 30,
     fetch=fetch_results,
     poll=poll_jobs,
 ) -> pd.DataFrame:
-    """Poll (optional), download each run's results, build + persist the table."""
+    """Poll (optional), download each run's results, build + persist the table.
+
+    ``poll_timeout_s`` defaults to 2h: a ``thorough``-fidelity point can take
+    just over an hour, so the old 1h default could cut off before a slow run's
+    report landed. Raise it further for large full-factorial fan-outs.
+    """
     if wait:
-        poll(manifest)
+        poll(manifest, timeout_s=poll_timeout_s, interval_s=poll_interval_s)
     results_by_point = {
         e["design_point"]: fetch(e["gcs_results"]) for e in manifest["points"]
     }

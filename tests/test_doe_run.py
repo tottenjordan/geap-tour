@@ -78,7 +78,9 @@ def test_execute_with_wait_harvests_and_analyzes(tmp_path):
 
     orig_harvest, orig_analyze = rd.harvest, rd.analyze
     try:
-        rd.harvest = lambda manifest, out_dir=".", wait=True: pd.DataFrame([{"design_point": "dp01"}])
+        rd.harvest = lambda manifest, out_dir=".", wait=True, poll_timeout_s=7200: pd.DataFrame(
+            [{"design_point": "dp01"}]
+        )
         rd.analyze = lambda df, factors, experiment_id, out_dir=".": "# report"
         summary = rd.run_experiment(
             kind="screening",

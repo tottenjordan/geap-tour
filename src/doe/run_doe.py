@@ -47,6 +47,7 @@ def run_experiment(
     agent_module: str = "coordinator_agent",
     spec_dir: str = ".",
     out_dir: str | None = None,
+    poll_timeout_s: int = 7200,
     runner=subprocess.run,
 ) -> dict:
     """Design + (optionally) launch/harvest/analyze one experiment.
@@ -94,7 +95,7 @@ def run_experiment(
         return summary
 
     if wait:
-        df = harvest(manifest, out_dir=out_dir, wait=True)
+        df = harvest(manifest, out_dir=out_dir, wait=True, poll_timeout_s=poll_timeout_s)
         summary["dataframe"] = df
         summary["report"] = analyze(df, factors, experiment_id, out_dir=out_dir)
         print(f"Report written to {out_dir}/report.md")
@@ -126,6 +127,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Explicit dry run (default); prints the design and submits nothing",
     )
     parser.add_argument("--wait", action="store_true", help="Wait, then harvest + analyze")
+    parser.add_argument(
+        "--poll-timeout-s",
+        type=int,
+        default=7200,
+        help="Max seconds to wait for jobs to finish before giving up (default 7200 = 2h)",
+    )
     parser.add_argument("--max-runs", type=int, default=None, help="Cap the number of runs")
     parser.add_argument("--reuse-agent-id", default="", help="Reuse an engine (runner_env/param-only experiments)")
     parser.add_argument("--agent-module", default="coordinator_agent")
@@ -144,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
         agent_module=args.agent_module,
         spec_dir=args.spec_dir,
         out_dir=args.out_dir or None,
+        poll_timeout_s=args.poll_timeout_s,
     )
 
 
