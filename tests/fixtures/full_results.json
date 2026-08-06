@@ -1,0 +1,673 @@
+{
+  "run_id": "multi_agent_eval_20260805_231213",
+  "timestamp": "2026-08-05T23:22:14.701477",
+  "agent": "projects/hybrid-vertex/locations/us-central1/reasoningEngines/4709107696450666496",
+  "threshold": 3,
+  "batch": {
+    "run_id": "multi_agent_eval_20260805_231213",
+    "timestamp": "2026-08-05T23:22:14.701477",
+    "agent_engine": "projects/hybrid-vertex/locations/us-central1/reasoningEngines/4709107696450666496",
+    "score_threshold": 3,
+    "total_agents": 4,
+    "agents_passed": 0,
+    "all_passed": false,
+    "total_test_cases": 52,
+    "agents": {
+      "coordinator_agent": {
+        "agent": "coordinator_agent",
+        "status": "FAILED",
+        "test_cases": 20,
+        "inference_seconds": 141.6,
+        "metrics": {
+          "agent_engine_0/instruction_following_v1": {
+            "score": 0.664335323497653,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_quality_v1": {
+            "score": 0.8552631594632802,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/tool_use_quality_v1": {
+            "score": 0.42418547209940455,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/hallucination_v1": {
+            "score": 0.9528301886792451,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/safety_v1": {
+            "score": 1.0,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_match_v2": {
+            "score": 0.41758241758241765,
+            "threshold": 0.6,
+            "passed": false
+          }
+        },
+        "summary_raw": {
+          "agent_engine_0/hallucination_v1/VARIANCE": 0.04494482022071912,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MODE": 0,
+          "agent_engine_0/final_response_quality_v1/MINIMUM": 0,
+          "agent_engine_0/safety_v1/VARIANCE": 0,
+          "agent_engine_0/final_response_match_v2/MAXIMUM": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/instruction_following_v1/MEDIAN": 0.7083333432674408,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/instruction_following_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/instruction_following_v1/AVERAGE": 0.664335323497653,
+          "agent_engine_0/hallucination_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/MODE": 0.3333333432674408,
+          "agent_engine_0/final_response_quality_v1/STANDARD_DEVIATION": 0.30629614341113154,
+          "agent_engine_0/hallucination_v1/MODE": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/MEDIAN": 0,
+          "agent_engine_0/final_response_quality_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/MINIMUM": 0,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P99": 0.6666666865348816,
+          "agent_engine_0/tool_use_quality_v1/MEDIAN": 0.3333333432674408,
+          "agent_engine_0/tool_use_quality_v1/MAXIMUM": 0.6666666865348816,
+          "agent_engine_0/final_response_quality_v1/AVERAGE": 0.8552631594632802,
+          "agent_engine_0/final_response_match_v2/STANDARD_DEVIATION": 0.4931605642267445,
+          "agent_engine_0/final_response_quality_v1/VARIANCE": 0.09381732746853245,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P95": 0.6666666865348816,
+          "agent_engine_0/safety_v1/MODE": 1,
+          "agent_engine_0/final_response_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/VARIANCE": 0.08799189559198511,
+          "agent_engine_0/final_response_match_v2/VARIANCE": 0.24320734210844097,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/tool_use_quality_v1/VARIANCE": 0.014466382297899543,
+          "agent_engine_0/tool_use_quality_v1/MINIMUM": 0.2857142984867096,
+          "agent_engine_0/safety_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/AVERAGE": 0.42418547209940455,
+          "agent_engine_0/hallucination_v1/AVERAGE": 0.9528301886792451,
+          "agent_engine_0/tool_use_quality_v1/STANDARD_DEVIATION": 0.12027627487538656,
+          "agent_engine_0/safety_v1/MINIMUM": 1,
+          "agent_engine_0/instruction_following_v1/STANDARD_DEVIATION": 0.29663427919238383,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/safety_v1/AVERAGE": 1,
+          "agent_engine_0/final_response_quality_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/MEDIAN": 1,
+          "agent_engine_0/instruction_following_v1/MINIMUM": 0,
+          "agent_engine_0/instruction_following_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/STANDARD_DEVIATION": 0.2120019344740022,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P90": 0.6666666865348816,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P95": 1,
+          "agent_engine_0/safety_v1/STANDARD_DEVIATION": 0,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MINIMUM": 0,
+          "agent_engine_0/final_response_match_v2/AVERAGE": 0.41758241758241765
+        },
+        "evaluation_run_name": "projects/934903580331/locations/us-central1/evaluationRuns/7609895897698140160",
+        "item_count": 0,
+        "items": []
+      },
+      "travel_agent": {
+        "agent": "travel_agent",
+        "status": "FAILED",
+        "test_cases": 10,
+        "inference_seconds": 57.2,
+        "metrics": {
+          "agent_engine_0/instruction_following_v1": {
+            "score": 0.7710113988982307,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_quality_v1": {
+            "score": 0.7892857151372092,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/tool_use_quality_v1": {
+            "score": 0.37500000579489595,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/hallucination_v1": {
+            "score": 0.92,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/safety_v1": {
+            "score": 1.0,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_match_v2": {
+            "score": 0.3777777777777778,
+            "threshold": 0.6,
+            "passed": false
+          }
+        },
+        "summary_raw": {
+          "agent_engine_0/hallucination_v1/VARIANCE": 0.0736,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MODE": 0,
+          "agent_engine_0/final_response_quality_v1/MINIMUM": 0,
+          "agent_engine_0/safety_v1/VARIANCE": 0,
+          "agent_engine_0/final_response_match_v2/MAXIMUM": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/instruction_following_v1/MEDIAN": 0.75,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/instruction_following_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/instruction_following_v1/AVERAGE": 0.7710113988982307,
+          "agent_engine_0/hallucination_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/MODE": 0.3333333432674408,
+          "agent_engine_0/final_response_quality_v1/STANDARD_DEVIATION": 0.33868367641695923,
+          "agent_engine_0/hallucination_v1/MODE": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/MEDIAN": 0,
+          "agent_engine_0/final_response_quality_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/MINIMUM": 0,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P99": 0.5,
+          "agent_engine_0/tool_use_quality_v1/MEDIAN": 0.3333333432674408,
+          "agent_engine_0/tool_use_quality_v1/MAXIMUM": 0.5,
+          "agent_engine_0/final_response_quality_v1/AVERAGE": 0.7892857151372092,
+          "agent_engine_0/final_response_match_v2/STANDARD_DEVIATION": 0.48483164953936514,
+          "agent_engine_0/final_response_quality_v1/VARIANCE": 0.11470663267130755,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P95": 0.5,
+          "agent_engine_0/safety_v1/MODE": 1,
+          "agent_engine_0/final_response_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/VARIANCE": 0.047246977910881505,
+          "agent_engine_0/final_response_match_v2/VARIANCE": 0.23506172839506176,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/tool_use_quality_v1/VARIANCE": 0.00945215991893671,
+          "agent_engine_0/tool_use_quality_v1/MINIMUM": 0.1666666716337204,
+          "agent_engine_0/safety_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/AVERAGE": 0.37500000579489595,
+          "agent_engine_0/hallucination_v1/AVERAGE": 0.92,
+          "agent_engine_0/tool_use_quality_v1/STANDARD_DEVIATION": 0.09722221926564271,
+          "agent_engine_0/safety_v1/MINIMUM": 1,
+          "agent_engine_0/instruction_following_v1/STANDARD_DEVIATION": 0.21736369961629173,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/safety_v1/AVERAGE": 1,
+          "agent_engine_0/final_response_quality_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/MEDIAN": 1,
+          "agent_engine_0/instruction_following_v1/MINIMUM": 0.375,
+          "agent_engine_0/instruction_following_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/STANDARD_DEVIATION": 0.2712931993250107,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P90": 0.5,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P95": 1,
+          "agent_engine_0/safety_v1/STANDARD_DEVIATION": 0,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MINIMUM": 0,
+          "agent_engine_0/final_response_match_v2/AVERAGE": 0.3777777777777778
+        },
+        "evaluation_run_name": "projects/934903580331/locations/us-central1/evaluationRuns/1803630078110728192",
+        "item_count": 0,
+        "items": []
+      },
+      "expense_agent": {
+        "agent": "expense_agent",
+        "status": "FAILED",
+        "test_cases": 10,
+        "inference_seconds": 28.7,
+        "metrics": {
+          "agent_engine_0/instruction_following_v1": {
+            "score": 0.716078785834489,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_quality_v1": {
+            "score": 0.7857142857142857,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/tool_use_quality_v1": {
+            "score": 0.41666667349636555,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/hallucination_v1": {
+            "score": 0.9090909090909091,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/safety_v1": {
+            "score": 1.0,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_match_v2": {
+            "score": 0.4782608695652173,
+            "threshold": 0.6,
+            "passed": false
+          }
+        },
+        "summary_raw": {
+          "agent_engine_0/hallucination_v1/VARIANCE": 0.08264462809917354,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MODE": 0,
+          "agent_engine_0/final_response_quality_v1/MINIMUM": 0,
+          "agent_engine_0/safety_v1/VARIANCE": 0,
+          "agent_engine_0/final_response_match_v2/MAXIMUM": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/instruction_following_v1/MEDIAN": 0.7777777910232544,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/instruction_following_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/instruction_following_v1/AVERAGE": 0.716078785834489,
+          "agent_engine_0/hallucination_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/MODE": 0.3333333432674408,
+          "agent_engine_0/final_response_quality_v1/STANDARD_DEVIATION": 0.3642156795423418,
+          "agent_engine_0/hallucination_v1/MODE": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/MEDIAN": 0,
+          "agent_engine_0/final_response_quality_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/MINIMUM": 0,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P99": 0.925,
+          "agent_engine_0/tool_use_quality_v1/MEDIAN": 0.3333333432674408,
+          "agent_engine_0/tool_use_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/final_response_quality_v1/AVERAGE": 0.7857142857142857,
+          "agent_engine_0/final_response_match_v2/STANDARD_DEVIATION": 0.49952718665548085,
+          "agent_engine_0/final_response_quality_v1/VARIANCE": 0.13265306122448983,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P95": 0.625,
+          "agent_engine_0/safety_v1/MODE": 1,
+          "agent_engine_0/final_response_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/VARIANCE": 0.05576969419959652,
+          "agent_engine_0/final_response_match_v2/VARIANCE": 0.2495274102079396,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/tool_use_quality_v1/VARIANCE": 0.027777776639494652,
+          "agent_engine_0/tool_use_quality_v1/MINIMUM": 0.3333333432674408,
+          "agent_engine_0/safety_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/AVERAGE": 0.41666667349636555,
+          "agent_engine_0/hallucination_v1/AVERAGE": 0.9090909090909091,
+          "agent_engine_0/tool_use_quality_v1/STANDARD_DEVIATION": 0.16666666325181725,
+          "agent_engine_0/safety_v1/MINIMUM": 1,
+          "agent_engine_0/instruction_following_v1/STANDARD_DEVIATION": 0.23615608016647913,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/safety_v1/AVERAGE": 1,
+          "agent_engine_0/final_response_quality_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/MEDIAN": 1,
+          "agent_engine_0/instruction_following_v1/MINIMUM": 0.2857142984867096,
+          "agent_engine_0/instruction_following_v1/MODE": [
+            0.800000011920929,
+            1
+          ],
+          "agent_engine_0/hallucination_v1/STANDARD_DEVIATION": 0.28747978728803447,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P90": 0.5,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P95": 1,
+          "agent_engine_0/safety_v1/STANDARD_DEVIATION": 0,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MINIMUM": 0,
+          "agent_engine_0/final_response_match_v2/AVERAGE": 0.4782608695652173
+        },
+        "evaluation_run_name": "projects/934903580331/locations/us-central1/evaluationRuns/9194037066625712128",
+        "item_count": 0,
+        "items": []
+      },
+      "router_agent": {
+        "agent": "router_agent",
+        "status": "FAILED",
+        "test_cases": 12,
+        "inference_seconds": 77.6,
+        "metrics": {
+          "agent_engine_0/instruction_following_v1": {
+            "score": 0.5044642841177327,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/final_response_quality_v1": {
+            "score": 0.6458333358168601,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/tool_use_quality_v1": {
+            "score": 0.5357142862948504,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/hallucination_v1": {
+            "score": 0.5689655172413792,
+            "threshold": 0.6,
+            "passed": false
+          },
+          "agent_engine_0/safety_v1": {
+            "score": 1.0,
+            "threshold": 0.6,
+            "passed": true
+          },
+          "agent_engine_0/final_response_match_v2": {
+            "score": 0.2545454545454546,
+            "threshold": 0.6,
+            "passed": false
+          }
+        },
+        "summary_raw": {
+          "agent_engine_0/hallucination_v1/VARIANCE": 0.24524375743162907,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MODE": 0,
+          "agent_engine_0/final_response_quality_v1/MINIMUM": 0,
+          "agent_engine_0/safety_v1/VARIANCE": 0,
+          "agent_engine_0/final_response_match_v2/MAXIMUM": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/instruction_following_v1/MEDIAN": 0.375,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_quality_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/instruction_following_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/instruction_following_v1/AVERAGE": 0.5044642841177327,
+          "agent_engine_0/hallucination_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/MODE": 0.5,
+          "agent_engine_0/final_response_quality_v1/STANDARD_DEVIATION": 0.43130535045127716,
+          "agent_engine_0/hallucination_v1/MODE": 1,
+          "agent_engine_0/safety_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/MEDIAN": 0,
+          "agent_engine_0/final_response_quality_v1/MODE": 1,
+          "agent_engine_0/hallucination_v1/MINIMUM": 0,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P99": 0.975,
+          "agent_engine_0/tool_use_quality_v1/MEDIAN": 0.5,
+          "agent_engine_0/tool_use_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/final_response_quality_v1/AVERAGE": 0.6458333358168601,
+          "agent_engine_0/final_response_match_v2/STANDARD_DEVIATION": 0.4356054018440342,
+          "agent_engine_0/final_response_quality_v1/VARIANCE": 0.186024305327899,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P95": 0.875,
+          "agent_engine_0/safety_v1/MODE": 1,
+          "agent_engine_0/final_response_quality_v1/MAXIMUM": 1,
+          "agent_engine_0/instruction_following_v1/VARIANCE": 0.1461892220740586,
+          "agent_engine_0/final_response_match_v2/VARIANCE": 0.1897520661157025,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/tool_use_quality_v1/VARIANCE": 0.05009276392232068,
+          "agent_engine_0/tool_use_quality_v1/MINIMUM": 0.1428571492433548,
+          "agent_engine_0/safety_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/MAXIMUM": 1,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/tool_use_quality_v1/AVERAGE": 0.5357142862948504,
+          "agent_engine_0/hallucination_v1/AVERAGE": 0.5689655172413792,
+          "agent_engine_0/tool_use_quality_v1/STANDARD_DEVIATION": 0.22381412806684184,
+          "agent_engine_0/safety_v1/MINIMUM": 1,
+          "agent_engine_0/instruction_following_v1/STANDARD_DEVIATION": 0.38234699171571707,
+          "agent_engine_0/hallucination_v1/PERCENTILE_P99": 1,
+          "agent_engine_0/safety_v1/AVERAGE": 1,
+          "agent_engine_0/final_response_quality_v1/MEDIAN": 1,
+          "agent_engine_0/safety_v1/MEDIAN": 1,
+          "agent_engine_0/instruction_following_v1/MINIMUM": 0,
+          "agent_engine_0/instruction_following_v1/MODE": 0.25,
+          "agent_engine_0/hallucination_v1/STANDARD_DEVIATION": 0.49522091780500255,
+          "agent_engine_0/tool_use_quality_v1/PERCENTILE_P90": 0.75,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P95": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P95": 1,
+          "agent_engine_0/safety_v1/STANDARD_DEVIATION": 0,
+          "agent_engine_0/instruction_following_v1/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P99": 1,
+          "agent_engine_0/final_response_match_v2/PERCENTILE_P90": 1,
+          "agent_engine_0/final_response_match_v2/MINIMUM": 0,
+          "agent_engine_0/final_response_match_v2/AVERAGE": 0.2545454545454546
+        },
+        "evaluation_run_name": "projects/934903580331/locations/us-central1/evaluationRuns/9188407567091499008",
+        "item_count": 0,
+        "items": []
+      }
+    }
+  },
+  "simulated": {
+    "coordinator_agent": {
+      "passed": true
+    },
+    "travel_agent": {
+      "passed": true
+    }
+  },
+  "complexity": {
+    "accuracy": {
+      "total_cases": 12,
+      "correct": 12,
+      "accuracy": 1.0,
+      "accuracy_pct": "100.0%",
+      "avg_latency_ms": 4181.9,
+      "confusion_matrix": {
+        "low": {
+          "low": 5,
+          "medium": 0,
+          "high": 0
+        },
+        "medium": {
+          "low": 0,
+          "medium": 3,
+          "high": 0
+        },
+        "high": {
+          "low": 0,
+          "medium": 0,
+          "high": 4
+        }
+      },
+      "per_case": [
+        {
+          "prompt": "Find flights from SFO to JFK",
+          "expected": "low",
+          "actual": "low",
+          "score": 0.1,
+          "reason": "The prompt is a simple, single-intent query requesting a direct lookup for flights between two cities.",
+          "match": true,
+          "latency_ms": 2211.1
+        },
+        {
+          "prompt": "What's the expense policy for meals?",
+          "expected": "low",
+          "actual": "low",
+          "score": 0.1,
+          "reason": "The prompt is a simple, single-intent query asking for a direct lookup of the meal expense policy.",
+          "match": true,
+          "latency_ms": 1903.3
+        },
+        {
+          "prompt": "Search hotels in Chicago under $200",
+          "expected": "low",
+          "actual": "low",
+          "score": 0.2,
+          "reason": "The prompt represents a simple, single-intent search for hotels in a specific location with a basic price filter, requiring only a single tool call.",
+          "match": true,
+          "latency_ms": 5467.9
+        },
+        {
+          "prompt": "Check if a $50 transport expense is within policy",
+          "expected": "low",
+          "actual": "low",
+          "score": 0.15,
+          "reason": "The prompt is a simple, single-intent query that requires a direct lookup of a transport expense policy.",
+          "match": true,
+          "latency_ms": 3006.5
+        },
+        {
+          "prompt": "Find flights to NYC and compare the cheapest options by airline",
+          "expected": "medium",
+          "actual": "medium",
+          "score": 0.45,
+          "reason": "The prompt involves two related intents: searching for flights to NYC and comparing the cheapest options by airline.",
+          "match": true,
+          "latency_ms": 2397.5
+        },
+        {
+          "prompt": "Search hotels in Boston, then check if the nightly rate fits our lodging policy",
+          "expected": "medium",
+          "actual": "medium",
+          "score": 0.45,
+          "reason": "The prompt involves two related intents: searching for hotels in a specific location and then verifying if the rates comply with the company's lodging policy.",
+          "match": true,
+          "latency_ms": 6220.1
+        },
+        {
+          "prompt": "Show my expense history and flag any items that exceeded policy limits",
+          "expected": "medium",
+          "actual": "medium",
+          "score": 0.45,
+          "reason": "The prompt involves two related intents: retrieving the user's expense history and evaluating those expenses against policy limits to flag violations.",
+          "match": true,
+          "latency_ms": 2702.0
+        },
+        {
+          "prompt": "Plan a 5-day trip to Tokyo for a team of 4: find flights, hotels near Shibuya, e",
+          "expected": "high",
+          "actual": "high",
+          "score": 0.85,
+          "reason": "The prompt involves complex team planning for four people across multiple domains, including flight and hotel searches, meal expense estimation, and corporate policy verification.",
+          "match": true,
+          "latency_ms": 10833.6
+        },
+        {
+          "prompt": "Compare individual vs group flight bookings for our team retreat to Denver. Fact",
+          "expected": "high",
+          "actual": "high",
+          "score": 0.85,
+          "reason": "The prompt requires complex, cross-domain analysis and budget optimization for team planning, involving multiple intents such as comparing flight booking types, analyzing cancellation policies, and evaluating hotel and transport cost-effectiveness.",
+          "match": true,
+          "latency_ms": 4965.5
+        },
+        {
+          "prompt": "Analyze EMP001's expense history: they overspent on entertainment last quarter. ",
+          "expected": "high",
+          "actual": "high",
+          "score": 0.75,
+          "reason": "The prompt involves three distinct tasks: analyzing past expense history, drafting a policy recommendation based on that analysis, and submitting a new lunch receipt.",
+          "match": true,
+          "latency_ms": 3310.2
+        },
+        {
+          "prompt": "Book the cheapest SFO-JFK flight, find a hotel within walking distance of 350 5t",
+          "expected": "high",
+          "actual": "high",
+          "score": 0.9,
+          "reason": "The prompt is highly complex as it requires executing multiple distinct tasks across different domains, including flight booking, location-based hotel search, policy compliance checking, and calculating/submitting a pre-approval expense report.",
+          "match": true,
+          "latency_ms": 4895.5
+        },
+        {
+          "prompt": "How much can I spend on meals per day while traveling?",
+          "expected": "low",
+          "actual": "low",
+          "score": 0.1,
+          "reason": "The prompt is a simple, single-intent policy lookup regarding daily meal limits with no complex constraints or multi-step requirements.",
+          "match": true,
+          "latency_ms": 2269.3
+        }
+      ]
+    },
+    "cost_efficiency": {
+      "total_prompts": 12,
+      "routed_cost_usd": 0.17867715,
+      "all_opus_cost_usd": 0.486,
+      "savings_pct": 63.2,
+      "per_case": [
+        {
+          "prompt": "Find flights from SFO to JFK",
+          "complexity": "low",
+          "model": "gemini-3.1-flash-lite",
+          "cost_usd": 0.0001719,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "What's the expense policy for meals?",
+          "complexity": "low",
+          "model": "gemini-3.1-flash-lite",
+          "cost_usd": 0.0001719,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Search hotels in Chicago under $200",
+          "complexity": "low",
+          "model": "gemini-3.1-flash-lite",
+          "cost_usd": 0.0001719,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Check if a $50 transport expense is within policy",
+          "complexity": "low",
+          "model": "gemini-3.1-flash-lite",
+          "cost_usd": 0.00017235,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Find flights to NYC and compare the cheapest options by airl",
+          "complexity": "medium",
+          "model": "gemini-3.1-pro-preview",
+          "cost_usd": 0.00525765,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Search hotels in Boston, then check if the nightly rate fits",
+          "complexity": "medium",
+          "model": "gemini-3.1-pro-preview",
+          "cost_usd": 0.0052581,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Show my expense history and flag any items that exceeded pol",
+          "complexity": "medium",
+          "model": "gemini-3.1-pro-preview",
+          "cost_usd": 0.0052578,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Plan a 5-day trip to Tokyo for a team of 4: find flights, ho",
+          "complexity": "high",
+          "model": "claude-opus-4-6",
+          "cost_usd": 0.04051065,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Compare individual vs group flight bookings for our team ret",
+          "complexity": "high",
+          "model": "claude-opus-4-6",
+          "cost_usd": 0.04051095,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Analyze EMP001's expense history: they overspent on entertai",
+          "complexity": "high",
+          "model": "claude-opus-4-6",
+          "cost_usd": 0.0405102,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "Book the cheapest SFO-JFK flight, find a hotel within walkin",
+          "complexity": "high",
+          "model": "claude-opus-4-6",
+          "cost_usd": 0.0405111,
+          "opus_cost_usd": 0.0405
+        },
+        {
+          "prompt": "How much can I spend on meals per day while traveling?",
+          "complexity": "low",
+          "model": "gemini-3.1-flash-lite",
+          "cost_usd": 0.00017265,
+          "opus_cost_usd": 0.0405
+        }
+      ]
+    }
+  },
+  "monitors": {
+    "status": "no_table",
+    "message": "Table hybrid-vertex.geap_workshop_logs.online_eval_results does not exist.\n  1. Set up monitors: uv run python -m src.eval.setup_online_monitors <agent>\n  2. Generate traffic: uv run python -m src.traffic.generate_traffic\n  3. Wait 10 minutes for the first monitor cycle to complete."
+  }
+}
