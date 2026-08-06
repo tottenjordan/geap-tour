@@ -62,6 +62,25 @@ def test_max_runs_caps_fanout(tmp_path):
     assert summary["manifest"]["num_points"] == 2
 
 
+def test_specs_default_to_out_dir(tmp_path):
+    # With no spec_dir given, per-point specs colocate under the run's out_dir
+    # (not the repo root).
+    calls: list = []
+    out_dir = tmp_path / "run"
+    run_doe.run_experiment(
+        kind="screening",
+        experiment_id="expcolocate",
+        dry_run=False,
+        max_runs=1,
+        out_dir=str(out_dir),
+        runner=_fake_runner(calls),
+    )
+    cmd = calls[0]
+    spec_path = cmd[cmd.index("--spec-path") + 1]
+    assert spec_path.startswith(str(out_dir))
+    assert "eval_pipeline_expcolocate_" in spec_path
+
+
 def test_default_experiment_id_uses_kind_and_timestamp():
     from datetime import datetime
 

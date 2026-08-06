@@ -45,7 +45,7 @@ def run_experiment(
     max_runs: int | None = None,
     reuse_agent_id: str = "",
     agent_module: str = "coordinator_agent",
-    spec_dir: str = ".",
+    spec_dir: str | None = None,
     out_dir: str | None = None,
     poll_timeout_s: int = 7200,
     runner=subprocess.run,
@@ -58,6 +58,10 @@ def run_experiment(
     factors = get_factors(factor_names)
     experiment_id = experiment_id or _default_experiment_id(kind)
     out_dir = out_dir or f"doe_runs/{experiment_id}"
+    # Colocate the per-point compiled specs with the run's other artifacts
+    # (manifest/results) unless the caller pins an explicit spec dir. They are
+    # transient build outputs — nothing reads them locally after submit.
+    spec_dir = spec_dir or out_dir
 
     design = build_design(factors, kind=kind)
     if max_runs is not None and len(design) > max_runs:
@@ -136,7 +140,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-runs", type=int, default=None, help="Cap the number of runs")
     parser.add_argument("--reuse-agent-id", default="", help="Reuse an engine (runner_env/param-only experiments)")
     parser.add_argument("--agent-module", default="coordinator_agent")
-    parser.add_argument("--spec-dir", default=".")
+    parser.add_argument(
+        "--spec-dir",
+        default="",
+        help="Where to write compiled per-point specs (default: the run's out-dir)",
+    )
     parser.add_argument("--out-dir", default="")
     args = parser.parse_args(argv)
 
@@ -149,7 +157,7 @@ def main(argv: list[str] | None = None) -> None:
         max_runs=args.max_runs,
         reuse_agent_id=args.reuse_agent_id,
         agent_module=args.agent_module,
-        spec_dir=args.spec_dir,
+        spec_dir=args.spec_dir or None,
         out_dir=args.out_dir or None,
         poll_timeout_s=args.poll_timeout_s,
     )

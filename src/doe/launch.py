@@ -176,6 +176,9 @@ def launch(
 ) -> dict:
     """Submit every design point and write the run manifest."""
     out_dir = out_dir or os.path.join("doe_runs", experiment_id)
+    # Compile targets must exist before each submit subprocess writes its spec.
+    os.makedirs(spec_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     entries = [
         submit_point(
             p, factors, experiment_id,
