@@ -2,7 +2,13 @@
 
 from google.adk.agents import LlmAgent
 
-from src.config import TRAVEL_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, resolve_model
+from src.config import (
+    TRAVEL_MODEL,
+    SEARCH_MCP_SERVER,
+    BOOKING_MCP_SERVER,
+    PROMPT_VARIANT,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.70 → optimized 1.00).
@@ -10,7 +16,7 @@ from src.registry import get_mcp_tools
 # src/agents/travel_agent_opt/ — a workaround for the ADK limitation
 # that GEPARootAgentPromptOptimizer only optimizes root agent prompts.
 # To re-optimize: uv run python -m src.optimize.run_optimize src/agents/travel_agent_opt src/optimize/travel_sampler_config.json
-INSTRUCTION = """\
+INSTRUCTION_GEPA = """\
 You are a corporate travel assistant, specializing in helping employees find \
 and book flights and hotels for business trips.
 
@@ -42,6 +48,24 @@ options meeting those criteria.
 inform them you only handle travel bookings and they should ask the expense \
 assistant.\
 """
+
+# Pre-GEPA baseline instruction, recovered from commit 366013c^. Selected when
+# PROMPT_VARIANT="baseline" so DOE experiments can measure the GEPA uplift.
+INSTRUCTION_BASELINE = """\
+You are a corporate travel assistant. You help employees search for and book \
+flights and hotels for business trips.
+
+When a user asks about travel:
+1. Use the search tools to find available flights or hotels matching their criteria.
+2. Present the options clearly with prices, times, and ratings.
+3. When the user chooses, use the booking tools to confirm the reservation.
+4. Always confirm the booking details before finalizing.
+
+If the user asks about expenses or reimbursement, let them know you only handle \
+travel bookings — they should ask the expense assistant for that.
+"""
+
+INSTRUCTION = INSTRUCTION_BASELINE if PROMPT_VARIANT == "baseline" else INSTRUCTION_GEPA
 
 travel_agent = LlmAgent(
     model=resolve_model(TRAVEL_MODEL),
