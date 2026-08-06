@@ -2,7 +2,7 @@
 
 from google.adk.agents import LlmAgent
 
-from src.config import AGENT_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, resolve_model
+from src.config import TRAVEL_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, resolve_model
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.70 → optimized 1.00).
@@ -44,7 +44,7 @@ assistant.\
 """
 
 travel_agent = LlmAgent(
-    model=resolve_model(AGENT_MODEL),
+    model=resolve_model(TRAVEL_MODEL),
     name="travel_agent",
     instruction=INSTRUCTION,
     tools=[

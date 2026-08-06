@@ -9,7 +9,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import AGENT_MODEL, SEARCH_MCP_SERVER, resolve_model
+from src.config import COORDINATOR_MODEL, SEARCH_MCP_SERVER, resolve_model
 from src.registry import get_mcp_tools
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
@@ -56,7 +56,7 @@ async def save_memories_callback(callback_context: CallbackContext):
 
 
 coordinator_agent = LlmAgent(
-    model=resolve_model(AGENT_MODEL),
+    model=resolve_model(COORDINATOR_MODEL),
     name="coordinator_agent",
     instruction=INSTRUCTION,
     tools=[

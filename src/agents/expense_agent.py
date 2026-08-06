@@ -2,7 +2,7 @@
 
 from google.adk.agents import LlmAgent
 
-from src.config import AGENT_MODEL, EXPENSE_MCP_SERVER, resolve_model
+from src.config import EXPENSE_MODEL, EXPENSE_MCP_SERVER, resolve_model
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.60 → optimized 0.90).
@@ -36,7 +36,7 @@ and they should ask the travel assistant.\
 """
 
 expense_agent = LlmAgent(
-    model=resolve_model(AGENT_MODEL),
+    model=resolve_model(EXPENSE_MODEL),
     name="expense_agent",
     instruction=INSTRUCTION,
     tools=[

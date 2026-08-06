@@ -18,6 +18,7 @@ from src.armor.config import input_guardrail_callback
 from src.config import (
     SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER,
     LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL,
+    ROUTER_MODEL,
     resolve_model,
 )
 from src.registry import get_mcp_tools
@@ -137,7 +138,7 @@ Never answer the user's question yourself. Always use a specialist agent tool.\
 """
 
 router_agent = LlmAgent(
-    model=resolve_model(LITE_MODEL),
+    model=resolve_model(ROUTER_MODEL),
     name="router_agent",
     instruction=ROUTER_INSTRUCTION,
     tools=[
