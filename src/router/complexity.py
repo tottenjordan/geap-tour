@@ -16,7 +16,15 @@ from google.genai.types import GenerateContentConfig
 
 import os
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, CLASSIFIER_MODEL
+from src.config import (
+    GCP_PROJECT_ID,
+    GCP_REGION,
+    CLASSIFIER_MODEL,
+    COMPLEXITY_LOW,
+    COMPLEXITY_HIGH,
+    MEDIUM_SPLIT,
+    HIGH_SPLIT,
+)
 
 # Newer Gemini models (3.x) are only available via location=global
 CLASSIFIER_LOCATION = os.environ.get("CLASSIFIER_LOCATION", "global")
@@ -48,13 +56,14 @@ class ComplexityResult:
     reason: str
 
 
-# 3 logical tiers with sub-tiers for model selection
-THRESHOLDS = [0.30, 0.60]
+# 3 logical tiers with sub-tiers for model selection.
+# Boundaries are sourced from src.config so DOE experiments can override them
+# via env vars (COMPLEXITY_LOW/HIGH, MEDIUM_SPLIT, HIGH_SPLIT).
+THRESHOLDS = [COMPLEXITY_LOW, COMPLEXITY_HIGH]
 LEVELS = ["low", "medium", "high"]
 
-# Within-tier model selection boundaries
-MEDIUM_SPLIT = 0.45  # below → FLASH_MODEL, above → SONNET_MODEL
-HIGH_SPLIT = 0.80    # below → PRO_MODEL, above → OPUS_MODEL
+# Within-tier model selection boundaries (below → cheaper tier, above → pricier)
+# MEDIUM_SPLIT: FLASH_MODEL vs SONNET_MODEL; HIGH_SPLIT: PRO_MODEL vs OPUS_MODEL
 
 
 def _score_to_level(score: float) -> str:
@@ -69,11 +78,11 @@ def score_to_model_tier(score: float) -> str:
 
     Returns one of: 'lite', 'flash', 'sonnet', 'pro', 'opus'
     """
-    if score < 0.30:
+    if score < THRESHOLDS[0]:
         return "lite"
     elif score < MEDIUM_SPLIT:
         return "flash"
-    elif score < 0.60:
+    elif score < THRESHOLDS[1]:
         return "sonnet"
     elif score < HIGH_SPLIT:
         return "pro"
