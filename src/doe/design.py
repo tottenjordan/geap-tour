@@ -42,7 +42,7 @@ def _coded_to_points(matrix, factors: list[Factor], prefix: str = "dp") -> list[
     for i, row in enumerate(matrix, start=1):
         assignments = {
             f.name: (f.low_label if val < 0 else f.high_label)
-            for f, val in zip(factors, row)
+            for f, val in zip(factors, row, strict=True)
         }
         points.append(DesignPoint(design_point=f"{prefix}{i:02d}", assignments=assignments))
     return points

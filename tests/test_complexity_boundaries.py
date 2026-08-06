@@ -12,7 +12,6 @@ import pytest
 import src.config
 import src.router.complexity
 
-
 _BOUNDARY_VARS = ("COMPLEXITY_LOW", "COMPLEXITY_HIGH", "MEDIUM_SPLIT", "HIGH_SPLIT")
 
 

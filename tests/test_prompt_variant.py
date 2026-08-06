@@ -9,9 +9,9 @@ import importlib
 
 import pytest
 
-import src.config
-import src.agents.travel_agent as travel_mod
 import src.agents.expense_agent as expense_mod
+import src.agents.travel_agent as travel_mod
+import src.config
 
 
 def _reload():

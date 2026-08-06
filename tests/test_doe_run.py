@@ -72,8 +72,9 @@ def test_default_experiment_id_uses_kind_and_timestamp():
 def test_execute_with_wait_harvests_and_analyzes(tmp_path):
     calls: list = []
     # Stub harvest + analyze so we don't touch GCS/aiplatform.
-    import src.doe.run_doe as rd
     import pandas as pd
+
+    import src.doe.run_doe as rd
 
     orig_harvest, orig_analyze = rd.harvest, rd.analyze
     try:

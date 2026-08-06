@@ -156,7 +156,7 @@ def write_manifest(manifest: dict, out_dir: str) -> str:
         bucket = client.bucket(GCP_STAGING_BUCKET)
         bucket.blob(f"{prefix}/manifest.json").upload_from_filename(local_path)
         print(f"manifest → gs://{GCP_STAGING_BUCKET}/{prefix}/manifest.json")
-    except Exception as e:  # noqa: BLE001 - GCS is optional (offline/dry-run)
+    except Exception as e:
         print(f"manifest GCS upload skipped: {e}")
     return local_path
 

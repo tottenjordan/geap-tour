@@ -9,21 +9,19 @@ within the medium and high tiers:
 """
 
 import json
+import os
 from dataclasses import dataclass
 
 from google import genai
 from google.genai.types import GenerateContentConfig
 
-import os
-
 from src.config import (
-    GCP_PROJECT_ID,
-    GCP_REGION,
     CLASSIFIER_MODEL,
-    COMPLEXITY_LOW,
     COMPLEXITY_HIGH,
-    MEDIUM_SPLIT,
+    COMPLEXITY_LOW,
+    GCP_PROJECT_ID,
     HIGH_SPLIT,
+    MEDIUM_SPLIT,
 )
 
 # Newer Gemini models (3.x) are only available via location=global

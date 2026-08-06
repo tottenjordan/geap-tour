@@ -1,7 +1,7 @@
 """Analyze a harvested DOE table: main effects, factor ranking, and the
 cost-quality frontier; render a markdown report.
 
-Main effect of a two-level factor on a response = mean(response | high level) −
+Main effect of a two-level factor on a response = mean(response | high level) -
 mean(response | low level), computed with nanmean so partial runs still count.
 High/low levels come from the factor registry (labels[1]/labels[0]).
 """
@@ -32,7 +32,7 @@ QUALITY_METRICS = ("tool_use_quality", "final_response_match")
 
 
 def main_effect(df: pd.DataFrame, factor: Factor, response: str) -> float:
-    """mean(response | high) − mean(response | low) for one factor/response."""
+    """mean(response | high) - mean(response | low) for one factor/response."""
     if factor.name not in df.columns or response not in df.columns:
         return float("nan")
     high = df.loc[df[factor.name] == factor.high_label, response]
@@ -134,7 +134,7 @@ def build_report(df: pd.DataFrame, factors: list[Factor], experiment_id: str) ->
         f"- Design points: **{len(df)}**",
         f"- Factors: {', '.join(f.name for f in factors)}",
         "",
-        "## Main effects (mean high − mean low)",
+        "## Main effects (mean high - mean low)",
         "",
     ]
     eff = main_effects_table(df, factors)
@@ -201,6 +201,6 @@ def analyze(
             f"{prefix}/report.md"
         ).upload_from_filename(path)
         print(f"analysis → gs://{GCP_STAGING_BUCKET}/{prefix}/report.md")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"report upload skipped: {e}")
     return md

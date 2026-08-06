@@ -21,7 +21,6 @@ import json
 import re
 import time
 
-import numpy as np
 import pandas as pd
 
 from src.config import GCP_STAGING_BUCKET
@@ -120,7 +119,7 @@ def fetch_results(gcs_uri: str, *, client=None) -> dict:
         bucket_name, _, blob_path = gcs_uri[len("gs://"):].partition("/")
         blob = client.bucket(bucket_name).blob(blob_path)
         return json.loads(blob.download_as_text())
-    except Exception as e:  # noqa: BLE001 - a missing/broken run must not crash harvest
+    except Exception as e:
         print(f"fetch_results failed for {gcs_uri}: {e}")
         return {}
 
@@ -151,7 +150,7 @@ def poll_jobs(
         for dp, resource in list(pending.items()):
             try:
                 state = get_state(resource)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"poll {dp}: {e}")
                 continue
             if state in _TERMINAL_STATES:
@@ -161,7 +160,7 @@ def poll_jobs(
         if pending:
             sleep(interval_s)
             waited += interval_s
-    for dp, resource in pending.items():
+    for dp in pending:
         states[dp] = "PIPELINE_STATE_TIMEOUT"
     return states
 
@@ -215,6 +214,6 @@ def harvest(
             f"{prefix}/results.csv"
         ).upload_from_filename(csv_path)
         print(f"results table → gs://{GCP_STAGING_BUCKET}/{prefix}/results.csv")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"results CSV upload skipped: {e}")
     return df

@@ -7,7 +7,6 @@ import pytest
 from src.doe import analyze as an
 from src.doe.factors import Factor
 
-
 # Two simple 2-level factors for hand-checked arithmetic.
 A = Factor(name="A", channel="param", levels={"lo": {"p": 1}, "hi": {"p": 2}})
 B = Factor(name="B", channel="param", levels={"lo": {"q": 1}, "hi": {"q": 2}})

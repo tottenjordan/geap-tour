@@ -81,7 +81,7 @@ def test_build_dataframe_merges_factors_and_responses(results):
     assert isinstance(df, pd.DataFrame)
     assert list(df["design_point"]) == ["dp01", "baseline"]
     # factor columns present
-    assert set(["model_tier", "prompt_variant"]).issubset(df.columns)
+    assert {"model_tier", "prompt_variant"}.issubset(df.columns)
     # dp01 has real data, baseline (empty results) is NaN
     dp01 = df[df.design_point == "dp01"].iloc[0]
     assert dp01["safety"] == pytest.approx(1.0)

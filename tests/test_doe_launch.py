@@ -2,8 +2,6 @@
 
 import types
 
-import pytest
-
 from src.doe import launch as launch_mod
 from src.doe.design import DesignPoint, build_design
 from src.doe.factors import get_factors
