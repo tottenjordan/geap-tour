@@ -42,6 +42,11 @@ uv run python -m src.eval.simulated_eval --agent-id <ENGINE_ID> --agent-name coo
 uv run python -m src.eval.multi_agent_batch_eval coordinator_agent
 uv run python -m src.eval.run_all_evals
 
+# Vertex Managed Pipeline (runs the full eval DAG on Vertex Pipelines)
+bash scripts/build_eval_image.sh v1                                  # build+push runner image (one-time)
+uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)
+uv run python -m src.pipelines.submit --agent-module coordinator_agent        # full parity, fresh temp deploy
+
 # Infrastructure setup (shell scripts)
 bash scripts/deploy_all.sh              # full end-to-end
 bash scripts/setup_governance_policies.sh --sgp   # IAM + SGP
@@ -74,8 +79,9 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 ### Evaluation
 
 - **Batch eval** (`src/eval/multi_agent_batch_eval.py`): offline eval using `AgentInfo` descriptors (no live MCP connections). 6 metrics: response quality, hallucination, safety, tool use, instruction following, response match.
-- **Simulated eval** (`src/eval/simulated_eval.py`): multi-turn eval against a deployed agent using Vertex AI's user simulator. Used in CI (`eval_ci.yaml`).
+- **Simulated eval** (`src/eval/simulated_eval.py`): multi-turn eval against a deployed agent using Vertex AI's user simulator.
 - **Eval configs** (`src/eval/agent_eval_configs.py`): test cases per agent plus `build_agent_info()` which constructs `AgentInfo` for offline eval.
+- **Vertex eval pipeline** (`src/pipelines/`): the full eval DAG (deploy → traffic → batch ‖ simulated ‖ complexity → monitor → report) as a KFP v2 Managed Pipeline, submitted manually via `src.pipelines.submit` (workflow: `.github/workflows/eval_vertex.yaml`). Replaced the old GitHub-Actions eval job graph. See [docs/notes/vertex-eval-pipeline.md](docs/notes/vertex-eval-pipeline.md).
 
 ### GEPA optimization
 

@@ -1,5 +1,6 @@
 ./.env.example
-./.github/workflows/eval_ci.yaml
+./.github/workflows/eval_vertex.yaml
+./.github/workflows/tests.yaml
 ./.gitignore
 ./P&G GEAP Tour Ideation.pdf
 ./README.md

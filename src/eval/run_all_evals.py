@@ -189,8 +189,8 @@ def _run_monitors_phase(agent_resource_name: str, output_dir: Path, results: dic
     print()
 
 
-def _generate_report(output_dir: Path, results: dict):
-    """Generate the final markdown report."""
+def build_report(results: dict) -> str:
+    """Build the markdown report string (pure, no I/O)."""
     lines = [
         "# GEAP Comprehensive Evaluation Report",
         "",
@@ -266,6 +266,12 @@ def _generate_report(output_dir: Path, results: dict):
         lines.append("")
 
     report = "\n".join(lines)
+    return report
+
+
+def _generate_report(output_dir: Path, results: dict):
+    """Generate the final markdown report."""
+    report = build_report(results)
     report_path = output_dir / "report.md"
     with open(report_path, "w") as f:
         f.write(report)

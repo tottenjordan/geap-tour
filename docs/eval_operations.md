@@ -1,6 +1,6 @@
 # GEAP Evaluation Operations Guide
 
-This guide covers the end-to-end evaluation pipeline: batch evals, complexity routing with multi-model cost comparison, online monitors, and CI/CD integration with GitHub Actions using Workload Identity Federation.
+This guide covers the end-to-end evaluation pipeline: batch evals, complexity routing with multi-model cost comparison, online monitors, and the orchestrated eval DAG that runs as a Vertex AI Managed Pipeline (submitted via GitHub Actions using Workload Identity Federation).
 
 > **Official docs:**
 > - [Vertex AI Agent Evaluation](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/evaluate)
@@ -576,7 +576,16 @@ ALL_MONITORED_METRICS = [
 
 ---
 
-## 6. CI/CD with GitHub Actions + Workload Identity Federation
+## 6. Orchestrated Eval Pipeline on Vertex (KFP v2) + Workload Identity Federation
+
+The full eval suite — deploy → traffic → (batch ‖ simulated ‖ complexity) → monitor
+verify → report — runs as a single **Vertex AI Managed Pipeline** (KFP v2), submitted
+on demand. A thin GitHub Actions workflow (`eval_vertex.yaml`) only *compiles and
+submits* the pipeline; all eval compute runs on Vertex, observable in the Vertex
+Pipelines UI with lineage and artifacts. The runner still authenticates to GCP with
+Workload Identity Federation (no stored secrets).
+
+> **Source:** [`src/pipelines/eval_pipeline.py`](https://github.com/jswortz/geap-tour/blob/main/src/pipelines/eval_pipeline.py) · [`src/pipelines/submit.py`](https://github.com/jswortz/geap-tour/blob/main/src/pipelines/submit.py) · [`.github/workflows/eval_vertex.yaml`](https://github.com/jswortz/geap-tour/blob/main/.github/workflows/eval_vertex.yaml)
 
 ### How Federated Auth Works
 
@@ -617,47 +626,43 @@ paper-banana-figure-generator \
 1. GitHub Actions requests an OIDC token (no stored secrets)
 2. [`google-github-actions/auth@v2`](https://github.com/google-github-actions/auth) exchanges the OIDC token with GCP's Workload Identity Federation
 3. WIF validates the token and returns short-lived credentials mapped to a service account
-4. The workflow uses those credentials to call Vertex AI, Agent Engine, BigQuery, etc.
+4. The workflow uses those credentials to submit the `PipelineJob` to Vertex AI Pipelines (which then runs the eval DAG on Vertex compute)
 
-### Workflow
+### Submit Workflow
 
-> **Source:** [`.github/workflows/eval_pipeline.yaml`](https://github.com/jswortz/geap-tour/blob/main/.github/workflows/eval_pipeline.yaml)
+The GitHub Actions workflow is a thin, manual (`workflow_dispatch`) trigger. It does
+**not** run any evals on the runner — it authenticates with WIF, then compiles and
+submits the pipeline to Vertex, where the whole DAG runs.
+
+> **Source:** [`.github/workflows/eval_vertex.yaml`](https://github.com/jswortz/geap-tour/blob/main/.github/workflows/eval_vertex.yaml)
 
 ```yaml
-name: Comprehensive Eval Pipeline
+name: Vertex Eval Pipeline
 
 on:
-  pull_request:
-    branches: [main]
-    paths: ['src/agents/**', 'src/eval/**', 'src/router/**']
   workflow_dispatch:
     inputs:
       agent_id:
-        description: 'Agent Engine ID'
+        description: 'Existing Agent Engine ID (leave empty to deploy a temp engine)'
         required: false
+      skip_traffic:
+        description: 'Skip traffic generation'
+        type: boolean
+        default: false
 
 jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --extra dev
-      - run: uv run python -m pytest tests/test_multi_agent_eval.py -v
-
-  batch-evals:
-    needs: unit-tests
+  submit:
+    if: ${{ vars.WIF_PROVIDER != '' }}   # skip on forks without WIF configured
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Required for WIF
+      id-token: write            # Required for WIF
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
       - uses: astral-sh/setup-uv@v4
-      - run: uv sync
+      - run: uv sync --group pipelines
 
       # Federated auth — no secrets stored
       - uses: google-github-actions/auth@v2
@@ -665,23 +670,28 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
 
-      - name: Run batch evaluations
+      # Compiles the KFP spec and submits a PipelineJob; all eval compute runs on Vertex
+      - name: Submit eval pipeline
         run: |
-          uv run python -m src.eval.multi_agent_batch_eval \
-            --threshold 3.0 --output eval_outputs/batch_results.json
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: batch-eval-results
-          path: eval_outputs/
-
-  complexity-evals:
-    needs: unit-tests
-    runs-on: ubuntu-latest
-    permissions: { contents: read, id-token: write }
-    steps:
-      # ... auth + run complexity accuracy + cost eval ...
+          uv run python -m src.pipelines.submit \
+            ${{ inputs.agent_id && format('--agent-id {0}', inputs.agent_id) || '' }} \
+            ${{ inputs.skip_traffic && '--skip-traffic' || '' }}
 ```
+
+Submit the same pipeline locally (no CI needed):
+
+```bash
+# Reuse an existing engine, skip traffic (fastest — no deploy)
+uv run python -m src.pipelines.submit --agent-id "$AGENT_ENGINE_ID" --skip-traffic
+
+# Full parity with a fresh temp deploy (auto-cleaned by the exit handler)
+uv run python -m src.pipelines.submit --agent-module coordinator_agent
+```
+
+> One-time setup (Artifact Registry repo + runner image) and the KFP authoring gotchas
+> are documented in [`docs/notes/vertex-eval-pipeline.md`](notes/vertex-eval-pipeline.md).
+> Fast, cloud-free unit tests (including a KFP compile check) still gate every PR via
+> `tests.yaml`.
 
 ### Setting Up WIF
 
@@ -726,16 +736,18 @@ gcloud iam service-accounts add-iam-policy-binding \
 paper-banana-figure-generator \
   --figure_type "Component view" \
   --content_description "
-    Vertical flowchart, top to bottom:
-    1. PR opened/updated (trigger)
-    2. Unit Tests (pytest tests/test_multi_agent_eval.py) — must pass
-    3. Two parallel branches:
-       - Batch Evals (4 agents, 52 test cases)
-       - Complexity Evals (accuracy + cost, 12 prompts)
-    4. Monitor Check (verify BQ has recent eval scores)
-    5. Report (GITHUB_STEP_SUMMARY with tables + artifact upload)
-    Sequential dependency: 1->2->3(parallel)->4->5" \
-  --caption "CI/CD eval pipeline: unit tests gate parallel batch and complexity evaluations, followed by monitor verification and report generation." \
+    Vertical flowchart of a Vertex Managed Pipeline (KFP v2), wrapped in a dashed
+    ExitHandler(cleanup) box that always runs:
+    1. resolve-agent (reuse agent_id OR deploy a temp engine)
+    2. generate-traffic (gated by skip_traffic param)
+    3. Three parallel branches:
+       - batch-eval (4 agents, 52 test cases)
+       - simulated-eval (user-simulator, gates on score >= 3.0)
+       - complexity-eval (accuracy + cost, 12 prompts)
+    4. monitor-verify (runs after batch; verify BQ has recent eval scores)
+    5. report (report.md + full_results.json -> GCS)
+    Sequential dependency: 1->2->3(parallel)->4->5; cleanup deletes any temp engine" \
+  --caption "Vertex eval pipeline: resolve agent, optional traffic, parallel batch/simulated/complexity evals, monitor verification, report to GCS — cleanup runs via an exit handler." \
   --output_format SVG \
   --file_path docs/screenshots/fig-pipeline-flow.svg
 ```
@@ -743,33 +755,32 @@ paper-banana-figure-generator \
 </details>
 
 ```
-PR opened/updated
+submit.py  (manual: PipelineJob.submit → Vertex Pipelines)
     │
     ▼
-┌─────────────┐
-│ Unit Tests  │  pytest tests/test_multi_agent_eval.py
-└──────┬──────┘
-       │ pass
-       ▼
-┌──────────────┐    ┌──────────────────┐
-│ Batch Evals  │    │ Complexity Evals │   (parallel)
-│              │    │                  │
-│ 4 agents     │    │ accuracy + cost  │
-│ 52 test cases│    │ 12 prompts       │
-└──────┬───────┘    └────────┬─────────┘
-       │                     │
-       ▼                     ▼
-┌──────────────────────────────────┐
-│ Monitor Check                    │
-│ Verify BQ has recent eval scores │
-└──────────┬───────────────────────┘
-           │
-           ▼
-┌──────────────────────────────────┐
-│ Report                           │
-│ $GITHUB_STEP_SUMMARY with tables │
-│ + artifact upload                │
-└──────────────────────────────────┘
+┌───────────────  ExitHandler(cleanup) — always runs; deletes temp engine  ───────────────┐
+│                                                                                          │
+│  ┌──────────────┐     ┌──────────────────┐                                               │
+│  │ resolve-agent│────►│ generate-traffic │  (gated by skip_traffic)                      │
+│  │ reuse OR     │     └────────┬─────────┘                                               │
+│  │ deploy temp  │              │                                                         │
+│  └──────┬───────┘              ▼                                                         │
+│         │        ┌──────────────┐  ┌────────────────┐  ┌──────────────────┐             │
+│         └───────►│  batch-eval  │  │ simulated-eval │  │  complexity-eval │  (parallel)  │
+│                  │  4 agents    │  │ gate score≥3.0 │  │  accuracy + cost │             │
+│                  │  52 cases    │  │                │  │  12 prompts      │             │
+│                  └──────┬───────┘  └───────┬────────┘  └────────┬─────────┘             │
+│                         │ (after batch)    │                    │                        │
+│                         ▼                  │                    │                        │
+│                  ┌──────────────────────┐  │                    │                        │
+│                  │ monitor-verify       │  │                    │                        │
+│                  │ recent BQ eval scores│  │                    │                        │
+│                  └──────────┬───────────┘  │                    │                        │
+│                             ▼              ▼                    ▼                        │
+│                  ┌──────────────────────────────────────────────────┐                   │
+│                  │ report — report.md + full_results.json → GCS      │                   │
+│                  └──────────────────────────────────────────────────┘                   │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
