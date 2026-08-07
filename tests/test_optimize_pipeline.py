@@ -54,3 +54,14 @@ def test_optimize_pipeline_bakes_mcp_urls():
     assert "SEARCH_MCP_URL" in op._RUNTIME_ENV
     assert "BOOKING_MCP_URL" in op._RUNTIME_ENV
     assert "EXPENSE_MCP_URL" in op._RUNTIME_ENV
+
+
+def test_optimize_pipeline_enables_vertex_mode():
+    # GEPA runs the agent's model client in-container, so google-genai must be
+    # told to use Vertex (with project/location) — otherwise it defaults to the
+    # Developer API, finds no key, and every inference fails → 0.0 scores.
+    from src.pipelines import optimize_pipeline as op
+
+    assert op._RUNTIME_ENV.get("GOOGLE_GENAI_USE_VERTEXAI") == "1"
+    assert op._RUNTIME_ENV.get("GOOGLE_CLOUD_PROJECT")
+    assert op._RUNTIME_ENV.get("GOOGLE_CLOUD_LOCATION")

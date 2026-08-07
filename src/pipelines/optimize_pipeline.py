@@ -22,13 +22,20 @@ from src.config import (
     BOOKING_MCP_URL,
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
+    GCP_PROJECT_ID,
+    GCP_REGION,
     SEARCH_MCP_SERVER,
     SEARCH_MCP_URL,
 )
 from src.pipelines import components as c
 
-# GEPA runs the agent locally, so the component needs BOTH the Agent Registry
-# names and the Cloud Run URL fallbacks reachable.
+# GEPA runs the agent locally (in-container), so the component needs BOTH the
+# Agent Registry names and the Cloud Run URL fallbacks reachable. Unlike the eval
+# components (which score a *deployed* engine that gets Vertex mode from the Agent
+# Engine runtime), this container runs the agent's model client itself — so it
+# MUST set GOOGLE_GENAI_USE_VERTEXAI/PROJECT/LOCATION explicitly, or google-genai
+# defaults to the Gemini Developer API, finds no API key, and every inference
+# fails → coerced to 0.0 → GEPA sees no gradient and returns the seed unchanged.
 _RUNTIME_ENV = {
     "SEARCH_MCP_SERVER": SEARCH_MCP_SERVER,
     "BOOKING_MCP_SERVER": BOOKING_MCP_SERVER,
@@ -36,6 +43,9 @@ _RUNTIME_ENV = {
     "SEARCH_MCP_URL": SEARCH_MCP_URL,
     "BOOKING_MCP_URL": BOOKING_MCP_URL,
     "EXPENSE_MCP_URL": EXPENSE_MCP_URL,
+    "GOOGLE_GENAI_USE_VERTEXAI": "1",
+    "GOOGLE_CLOUD_PROJECT": GCP_PROJECT_ID,
+    "GOOGLE_CLOUD_LOCATION": GCP_REGION,
 }
 
 # Factor env baked at compile time so a DOE launcher can optimize a config
