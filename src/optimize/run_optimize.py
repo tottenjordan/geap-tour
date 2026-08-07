@@ -10,7 +10,6 @@ Usage:
 """
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -28,7 +27,8 @@ def _patch_adk():
     2. Patches LocalEvalService to skip eval cases with None inferences
        (MCP tool timeouts produce None instead of crashing len(None))
     """
-    from google.adk.evaluation import eval_case as _ec, eval_set as _es
+    from google.adk.evaluation import eval_case as _ec
+    from google.adk.evaluation import eval_set as _es
     for _mod in (_ec, _es):
         for _name in dir(_mod):
             _cls = getattr(_mod, _name)
@@ -89,6 +89,51 @@ def _patch_adk():
     log.info("ADK patches applied (extra fields + None inference + None score guard)")
 
 
+def summarize_gepa_result(optimization_result) -> dict:
+    """Extract a tidy, serializable summary from a GEPA optimization result.
+
+    Uses the authoritative field names rather than guesses:
+      * ``AgentWithScores.overall_score`` (data_types.py) — the best agent's score.
+      * ``GEPAResult.to_dict()`` keys ``val_aggregate_scores`` / ``best_idx`` /
+        ``candidates`` / ``total_metric_calls`` / ``num_full_val_evals``.
+
+    GEPA seeds candidate 0 with the initial prompt, so ``val_aggregate_scores[0]``
+    is the baseline and ``best_score - baseline_score`` is the measured lift
+    (0.0 when GEPA's best is the seed, i.e. no improvement found).
+    """
+    gepa = getattr(optimization_result, "gepa_result", None) or {}
+    val_scores = gepa.get("val_aggregate_scores") or []
+    best_idx = gepa.get("best_idx", 0)
+
+    agents = getattr(optimization_result, "optimized_agents", None) or []
+    best = None
+    if agents:
+        best = agents[best_idx] if best_idx < len(agents) else agents[0]
+    instruction = best.optimized_agent.instruction if best is not None else None
+
+    best_score = getattr(best, "overall_score", None) if best is not None else None
+    if best_score is None and 0 <= best_idx < len(val_scores):
+        best_score = val_scores[best_idx]
+    baseline_score = val_scores[0] if val_scores else None
+    lift = (
+        best_score - baseline_score
+        if best_score is not None and baseline_score is not None
+        else None
+    )
+
+    return {
+        "best_idx": best_idx,
+        "num_candidates": len(gepa.get("candidates") or []),
+        "baseline_score": baseline_score,
+        "best_score": best_score,
+        "lift": lift,
+        "val_aggregate_scores": val_scores,
+        "total_metric_calls": gepa.get("total_metric_calls"),
+        "num_full_val_evals": gepa.get("num_full_val_evals"),
+        "optimized_instruction": instruction,
+    }
+
+
 def _load_agent(agent_module_path: str):
     """Load root_agent from an agent module directory."""
     import importlib.util
@@ -147,7 +192,7 @@ def run_optimize(
     app_name = os.path.basename(agent_module_path)
     agents_dir = os.path.dirname(agent_module_path)
 
-    with open(sampler_config_path, "r") as f:
+    with open(sampler_config_path) as f:
         sampler_config = LocalEvalSamplerConfig.model_validate_json(f.read())
 
     if sampler_config.app_name != app_name:
@@ -156,7 +201,7 @@ def run_optimize(
         sampler_config.app_name = app_name
 
     if optimizer_config_path:
-        with open(optimizer_config_path, "r") as f:
+        with open(optimizer_config_path) as f:
             optimizer_config = GEPARootAgentPromptOptimizerConfig.model_validate_json(f.read())
     else:
         optimizer_config = GEPARootAgentPromptOptimizerConfig()
@@ -173,24 +218,25 @@ def run_optimize(
     print("[4/4] Results")
     print("=" * 80)
 
-    best_idx = optimization_result.gepa_result["best_idx"]
-    best_agent = optimization_result.optimized_agents[best_idx]
+    summary = summarize_gepa_result(optimization_result)
 
     print("Optimized root agent instruction:")
     print("-" * 80)
-    print(best_agent.optimized_agent.instruction)
+    print(summary["optimized_instruction"])
     print("-" * 80)
 
-    print(f"\nBest variant: {best_idx}")
-    best_scores = getattr(best_agent, "scores", getattr(best_agent, "score", None))
-    print(f"Scores: {best_scores}")
+    print(f"\nBest variant: {summary['best_idx']}")
+    print(
+        f"Best score: {summary['best_score']} "
+        f"(baseline {summary['baseline_score']}, lift {summary['lift']})"
+    )
 
-    if print_detailed and hasattr(optimization_result, "gepa_result"):
-        gepa = optimization_result.gepa_result
-        print(f"\nGEPA details:")
-        print(f"  Generations: {gepa.get('num_generations', '?')}")
-        print(f"  Population size: {gepa.get('population_size', '?')}")
-        print(f"  Best index: {best_idx}")
+    if print_detailed:
+        print("\nGEPA details:")
+        print(f"  Candidates: {summary['num_candidates']}")
+        print(f"  Full val evals: {summary['num_full_val_evals']}")
+        print(f"  Total metric calls: {summary['total_metric_calls']}")
+        print(f"  Best index: {summary['best_idx']}")
 
     print("\n✓ Optimization complete")
     return optimization_result

@@ -271,7 +271,7 @@ def optimize_agent(
         os.chdir("/app")
 
     from src.config import GCP_STAGING_BUCKET
-    from src.optimize.run_optimize import run_optimize
+    from src.optimize.run_optimize import run_optimize, summarize_gepa_result
 
     opt = run_optimize(
         agent_module_path=agent_opt_module,
@@ -280,22 +280,15 @@ def optimize_agent(
         print_detailed=True,
     )
 
-    gepa = getattr(opt, "gepa_result", {}) or {}
-    best_idx = gepa.get("best_idx", 0)
-    best = opt.optimized_agents[best_idx]
-    instruction = best.optimized_agent.instruction
-    scores = getattr(best, "scores", getattr(best, "score", None))
+    summary = summarize_gepa_result(opt)
+    instruction = summary["optimized_instruction"]
 
     payload = {
         "experiment_id": experiment_id,
         "agent": agent_tag,
         "agent_opt_module": agent_opt_module,
         "sampler_config_path": sampler_config_path,
-        "best_idx": best_idx,
-        "scores": scores,
-        "num_generations": gepa.get("num_generations"),
-        "population_size": gepa.get("population_size"),
-        "optimized_instruction": instruction,
+        **summary,
     }
     with open(result.path, "w") as f:
         json.dump(payload, f, indent=2, default=str)
