@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from kfp import dsl
 
-IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v2"
+IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v3"
 
 
 @dsl.component(base_image=IMAGE)
