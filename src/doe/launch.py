@@ -65,7 +65,7 @@ def submit_point(
     *,
     agent_module: str = "coordinator_agent",
     reuse_agent_id: str = "",
-    spec_dir: str = ".",
+    spec_dir: str = "build/pipeline_specs",
     dry_run: bool = False,
     runner=subprocess.run,
 ) -> dict:
@@ -169,7 +169,7 @@ def launch(
     kind: str = "screening",
     agent_module: str = "coordinator_agent",
     reuse_agent_id: str = "",
-    spec_dir: str = ".",
+    spec_dir: str = "build/pipeline_specs",
     out_dir: str | None = None,
     dry_run: bool = False,
     runner=subprocess.run,

@@ -17,6 +17,7 @@ into the agent as ``INSTRUCTION_GEPA`` and redeploy (human-in-the-loop).
 """
 
 import argparse
+import os
 
 from google.cloud import aiplatform
 from kfp import compiler
@@ -27,7 +28,8 @@ from src.pipelines.optimize_pipeline import optimize_pipeline
 # Reuse the project compute SA (same as the eval pipeline; least-privilege
 # scope-down is a tracked follow-up).
 DEFAULT_SERVICE_ACCOUNT = "934903580331-compute@developer.gserviceaccount.com"
-PIPELINE_SPEC = "optimize_pipeline.yaml"
+# Compiled specs are build artifacts (gitignored), kept out of the repo root.
+PIPELINE_SPEC = "build/pipeline_specs/optimize_pipeline.yaml"
 
 
 def main():
@@ -41,6 +43,7 @@ def main():
     parser.add_argument("--service-account", default=DEFAULT_SERVICE_ACCOUNT)
     args = parser.parse_args()
 
+    os.makedirs(os.path.dirname(args.spec_path) or ".", exist_ok=True)
     compiler.Compiler().compile(optimize_pipeline, args.spec_path)
 
     aiplatform.init(
