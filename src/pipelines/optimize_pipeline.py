@@ -23,19 +23,27 @@ from src.config import (
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
     GCP_PROJECT_ID,
-    GCP_REGION,
     SEARCH_MCP_SERVER,
     SEARCH_MCP_URL,
 )
 from src.pipelines import components as c
 
 # GEPA runs the agent locally (in-container), so the component needs BOTH the
-# Agent Registry names and the Cloud Run URL fallbacks reachable. Unlike the eval
-# components (which score a *deployed* engine that gets Vertex mode from the Agent
-# Engine runtime), this container runs the agent's model client itself — so it
-# MUST set GOOGLE_GENAI_USE_VERTEXAI/PROJECT/LOCATION explicitly, or google-genai
-# defaults to the Gemini Developer API, finds no API key, and every inference
-# fails → coerced to 0.0 → GEPA sees no gradient and returns the seed unchanged.
+# Agent Registry names and the Cloud Run URL fallbacks reachable, AND it runs the
+# agent's model client itself (unlike the eval components, which score a deployed
+# engine).
+#
+# Two env vars mirror the deployed-engine config (deploy_agents._build_config):
+#   * GOOGLE_GENAI_USE_VERTEXAI=1 — use Vertex, not the Developer API.
+#   * GOOGLE_CLOUD_PROJECT=<hybrid-vertex> — a Vertex Pipelines custom job's
+#     metadata-server project is the managed *tenant* project (…-tp), NOT ours,
+#     so predict calls land there and 403 with PERMISSION_DENIED on
+#     aiplatform.endpoints.predict. Pinning the project routes them back to ours.
+#
+# Deliberately NOT set: GOOGLE_CLOUD_LOCATION. resolve_model() wraps 3.x/Claude
+# models in LiteLlm(vertex_location="global") and leaves 2.x models regional;
+# a single GOOGLE_CLOUD_LOCATION env overrides that per-model choice and forces
+# everything to one region — which 404s the global-only 3.x agent models.
 _RUNTIME_ENV = {
     "SEARCH_MCP_SERVER": SEARCH_MCP_SERVER,
     "BOOKING_MCP_SERVER": BOOKING_MCP_SERVER,
@@ -45,7 +53,6 @@ _RUNTIME_ENV = {
     "EXPENSE_MCP_URL": EXPENSE_MCP_URL,
     "GOOGLE_GENAI_USE_VERTEXAI": "1",
     "GOOGLE_CLOUD_PROJECT": GCP_PROJECT_ID,
-    "GOOGLE_CLOUD_LOCATION": GCP_REGION,
 }
 
 # Factor env baked at compile time so a DOE launcher can optimize a config

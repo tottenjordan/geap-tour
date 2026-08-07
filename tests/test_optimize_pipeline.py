@@ -56,12 +56,20 @@ def test_optimize_pipeline_bakes_mcp_urls():
     assert "EXPENSE_MCP_URL" in op._RUNTIME_ENV
 
 
-def test_optimize_pipeline_enables_vertex_mode():
-    # GEPA runs the agent's model client in-container, so google-genai must be
-    # told to use Vertex (with project/location) — otherwise it defaults to the
-    # Developer API, finds no key, and every inference fails → 0.0 scores.
+def test_optimize_pipeline_pins_vertex_project():
+    # GEPA runs the agent's model client in-container. A Vertex Pipelines custom
+    # job's metadata project is the managed *tenant* project, so predict calls
+    # 403 there — pinning GOOGLE_CLOUD_PROJECT routes them back to ours.
     from src.pipelines import optimize_pipeline as op
 
     assert op._RUNTIME_ENV.get("GOOGLE_GENAI_USE_VERTEXAI") == "1"
     assert op._RUNTIME_ENV.get("GOOGLE_CLOUD_PROJECT")
-    assert op._RUNTIME_ENV.get("GOOGLE_CLOUD_LOCATION")
+
+
+def test_optimize_pipeline_does_not_force_a_region():
+    # GOOGLE_CLOUD_LOCATION must NOT be set: resolve_model() puts 3.x/Claude
+    # models on the global endpoint per-model (LiteLlm vertex_location="global").
+    # A single region env overrides that and 404s the global-only 3.x models.
+    from src.pipelines import optimize_pipeline as op
+
+    assert "GOOGLE_CLOUD_LOCATION" not in op._RUNTIME_ENV
