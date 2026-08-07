@@ -43,6 +43,16 @@ from src.config import (
     LITE_MODEL,
     FLASH_MODEL,
     COMPLEXITY_THRESHOLD_HIGH,
+    AGENT_MODEL,
+    COORDINATOR_MODEL,
+    TRAVEL_MODEL,
+    EXPENSE_MODEL,
+    ROUTER_MODEL,
+    COMPLEXITY_LOW,
+    COMPLEXITY_HIGH,
+    MEDIUM_SPLIT,
+    HIGH_SPLIT,
+    PROMPT_VARIANT,
 )
 
 REQUIREMENTS = [
@@ -114,6 +124,18 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "LITE_MODEL": LITE_MODEL,
         "FLASH_MODEL": FLASH_MODEL,
         "COMPLEXITY_THRESHOLD_HIGH": str(COMPLEXITY_THRESHOLD_HIGH),
+        # DOE factor env — baked into the engine so config-overridden variants
+        # take effect at import time inside the deployed container.
+        "AGENT_MODEL": AGENT_MODEL,
+        "COORDINATOR_MODEL": COORDINATOR_MODEL,
+        "TRAVEL_MODEL": TRAVEL_MODEL,
+        "EXPENSE_MODEL": EXPENSE_MODEL,
+        "ROUTER_MODEL": ROUTER_MODEL,
+        "COMPLEXITY_LOW": str(COMPLEXITY_LOW),
+        "COMPLEXITY_HIGH": str(COMPLEXITY_HIGH),
+        "MEDIUM_SPLIT": str(MEDIUM_SPLIT),
+        "HIGH_SPLIT": str(HIGH_SPLIT),
+        "PROMPT_VARIANT": PROMPT_VARIANT,
         "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "GOOGLE_GENAI_USE_VERTEXAI": "1",

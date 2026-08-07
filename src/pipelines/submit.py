@@ -37,13 +37,20 @@ def main():
     parser.add_argument("--scenario-count", type=int, default=5)
     parser.add_argument("--max-turns", type=int, default=3)
     parser.add_argument("--service-account", default=DEFAULT_SERVICE_ACCOUNT)
+    # DOE bookkeeping: tag the run so the report component writes to a
+    # deterministic per-design-point GCS prefix the harvester can find.
+    parser.add_argument("--experiment-id", default="")
+    parser.add_argument("--design-point", default="")
+    # Unique spec path per design point avoids the shared-file compile race when
+    # the DOE launcher submits many points concurrently.
+    parser.add_argument("--spec-path", default=PIPELINE_SPEC)
     args = parser.parse_args()
 
     # A fresh deploy gets a unique display_name so the exit-handler cleanup can
     # find and delete exactly this run's temp engine. Reuse runs skip cleanup.
     temp_display_name = "" if args.agent_id else f"geap-eval-temp-{uuid.uuid4().hex[:12]}"
 
-    compiler.Compiler().compile(eval_pipeline, PIPELINE_SPEC)
+    compiler.Compiler().compile(eval_pipeline, args.spec_path)
 
     aiplatform.init(
         project=GCP_PROJECT_ID,
@@ -52,7 +59,7 @@ def main():
     )
     job = aiplatform.PipelineJob(
         display_name="geap-eval",
-        template_path=PIPELINE_SPEC,
+        template_path=args.spec_path,
         pipeline_root=f"gs://{GCP_STAGING_BUCKET}/pipeline-root",
         parameter_values={
             "agent_id": args.agent_id,
@@ -63,11 +70,15 @@ def main():
             "scenario_count": args.scenario_count,
             "max_turns": args.max_turns,
             "temp_display_name": temp_display_name,
+            "experiment_id": args.experiment_id,
+            "design_point": args.design_point,
         },
     )
     job.submit(service_account=args.service_account)  # non-blocking
-    print(f"Submitted PipelineJob: {job.resource_name}")
     print(job._dashboard_uri())
+    # Keep the resource name as the LAST stdout line so the DOE launcher can
+    # parse it reliably from the subprocess output.
+    print(f"Submitted PipelineJob: {job.resource_name}")
 
 
 if __name__ == "__main__":

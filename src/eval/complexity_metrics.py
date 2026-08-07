@@ -7,7 +7,7 @@ from typing import Optional
 
 from vertexai import types as vtx_types
 
-from src.router.complexity import classify_complexity
+from src.router.complexity import classify_complexity, score_to_model_tier
 from src.router.cost_tracker import estimate_cost
 
 
@@ -160,12 +160,19 @@ async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
 
-MODEL_MAP = {
-    "low": LITE_MODEL,
-    "medium_low": FLASH_MODEL,
-    "medium": PRO_MODEL,
-    "medium_high": SONNET_MODEL,
-    "high": OPUS_MODEL,
+# Maps the router's five model tiers to concrete models. Keyed by the tier names
+# returned by ``score_to_model_tier`` (lite/flash/sonnet/pro/opus) so the cost
+# eval exercises the *real* 5-tier routing decision — including the within-tier
+# MEDIUM_SPLIT / HIGH_SPLIT cut-points. (The old version mapped the coarse 3-tier
+# ``.level`` to only lite/pro/opus, which made MEDIUM_SPLIT/HIGH_SPLIT — and thus
+# half of the DOE ``router_boundaries`` factor — inert. See
+# docs/notes/doe-router-boundaries-inert.md.)
+TIER_MODEL = {
+    "lite": LITE_MODEL,
+    "flash": FLASH_MODEL,
+    "sonnet": SONNET_MODEL,
+    "pro": PRO_MODEL,
+    "opus": OPUS_MODEL,
 }
 
 AVG_INPUT_TOKENS = 200
@@ -173,14 +180,20 @@ AVG_OUTPUT_TOKENS = 500
 
 
 async def run_cost_efficiency_eval(cases: list[dict]) -> dict:
-    """Compare smart-router cost vs all-Opus baseline."""
+    """Compare smart-router cost vs all-Opus baseline.
+
+    Uses the full 5-tier router (``score_to_model_tier``), so both the tier
+    boundaries (COMPLEXITY_LOW/HIGH) and the within-tier splits
+    (MEDIUM_SPLIT/HIGH_SPLIT) drive model selection and therefore cost.
+    """
     routed_cost = 0.0
     all_opus_cost = 0.0
     per_case = []
 
     for case in cases:
         result = await classify_complexity(case["prompt"])
-        model = MODEL_MAP.get(result.level, FLASH_MODEL)
+        tier = score_to_model_tier(result.score)
+        model = TIER_MODEL.get(tier, FLASH_MODEL)
         case_cost = estimate_cost(model, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
         classifier_cost = estimate_cost("classifier", len(case["prompt"].split()) * 2, 20)
         total_case_cost = case_cost + classifier_cost
@@ -192,6 +205,7 @@ async def run_cost_efficiency_eval(cases: list[dict]) -> dict:
         per_case.append({
             "prompt": case["prompt"][:60],
             "complexity": result.level,
+            "tier": tier,
             "model": model,
             "cost_usd": round(total_case_cost, 8),
             "opus_cost_usd": round(opus_cost, 8),

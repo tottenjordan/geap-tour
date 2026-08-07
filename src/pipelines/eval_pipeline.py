@@ -13,6 +13,8 @@ component. ``submit.py`` recompiles on every run, so the baked values always
 reflect the current ``.env``.
 """
 
+import os
+
 from kfp import dsl
 
 from src.config import (
@@ -31,10 +33,29 @@ _RUNTIME_ENV = {
     "ROUTER_ENGINE_ID": ROUTER_ENGINE_ID,
 }
 
+# DOE factor env keys. Read from os.environ *at compile time* so a submit.py
+# subprocess launched by the DOE launcher (which sets these vars) bakes that
+# design point's variant onto every task — including resolve_agent, which then
+# deploys the config-overridden engine. Keys absent from the environment are not
+# baked, so components fall back to src.config defaults.
+_FACTOR_ENV_KEYS = (
+    "AGENT_MODEL",
+    "COORDINATOR_MODEL",
+    "TRAVEL_MODEL",
+    "EXPENSE_MODEL",
+    "ROUTER_MODEL",
+    "COMPLEXITY_LOW",
+    "COMPLEXITY_HIGH",
+    "MEDIUM_SPLIT",
+    "HIGH_SPLIT",
+    "PROMPT_VARIANT",
+)
+_FACTOR_ENV = {k: os.environ[k] for k in _FACTOR_ENV_KEYS if k in os.environ}
+
 
 def _wire(task):
-    """Bake deployment env onto a task as static env vars."""
-    for key, value in _RUNTIME_ENV.items():
+    """Bake deployment + DOE-factor env onto a task as static env vars."""
+    for key, value in {**_RUNTIME_ENV, **_FACTOR_ENV}.items():
         task.set_env_variable(key, value)
     return task
 
@@ -52,6 +73,8 @@ def eval_pipeline(
     scenario_count: int = 5,
     max_turns: int = 3,
     temp_display_name: str = "",
+    experiment_id: str = "",
+    design_point: str = "",
 ):
     # cleanup is the exit task: it may only reference pipeline params (KFP forbids
     # exit tasks from depending on other tasks), so it takes agent_id +
@@ -91,5 +114,7 @@ def eval_pipeline(
                 sim_results=sim.outputs["results"],
                 complexity_results=comp.outputs["results"],
                 monitor_results=mon.outputs["results"],
+                experiment_id=experiment_id,
+                design_point=design_point,
             )
         )

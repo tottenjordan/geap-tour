@@ -154,6 +154,8 @@ def report(
     monitor_results: dsl.Input[dsl.Artifact],
     report_md: dsl.Output[dsl.Markdown],
     full_results: dsl.Output[dsl.Artifact],
+    experiment_id: str = "",
+    design_point: str = "",
 ):
     import json
 
@@ -174,6 +176,8 @@ def report(
         "timestamp": batch.get("timestamp", ""),
         "agent": batch.get("agent_engine", ""),
         "threshold": batch.get("score_threshold", 3.0),
+        "experiment_id": experiment_id,
+        "design_point": design_point,
         "batch": batch,
         "simulated": _load(sim_results.path),
         "complexity": _load(complexity_results.path),
@@ -192,7 +196,13 @@ def report(
 
         client = storage.Client()
         bucket = client.bucket(GCP_STAGING_BUCKET)
-        prefix = f"eval-results/{run_id}"
+        # DOE runs land under a deterministic experiment/design-point prefix so
+        # the harvester can find each design point's results; ad-hoc runs keep
+        # the per-run_id layout.
+        if experiment_id and design_point:
+            prefix = f"eval-results/doe/{experiment_id}/{design_point}"
+        else:
+            prefix = f"eval-results/{run_id}"
         bucket.blob(f"{prefix}/report.md").upload_from_filename(report_md.path)
         bucket.blob(f"{prefix}/full_results.json").upload_from_filename(
             full_results.path

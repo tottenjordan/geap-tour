@@ -12,3 +12,9 @@ file; keep this index short (< 200 lines).
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
   DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas
   (env-injection, import-time config, exit-handler cleanup).
+- [DOE framework for scaling experimentation](./doe-framework.md) — factor
+  registry → fractional-factorial design → one PipelineJob per point → harvest →
+  main-effects report; factor channels, subprocess-per-point, cost caveat.
+- [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
+  — why the first screening's routing/cost metrics were identical across all 9
+  runs, and wiring the cost eval to the real 5-tier router so the factor moves.

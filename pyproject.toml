@@ -49,6 +49,11 @@ dev = [
     "ruff>=0.16.1",
     "ty>=0.0.66",
 ]
+doe = [
+    "numpy>=2.5.1",
+    "pandas>=3.0.5",
+    "pydoe3>=1.6.2",
+]
 pipelines = [
     "kfp>=2.7",
 ]

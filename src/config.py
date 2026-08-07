@@ -37,6 +37,14 @@ OTEL_ENV_VARS = {
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
 
+# Per-agent model overrides (default to the shared AGENT_MODEL; overridable for DOE experiments)
+COORDINATOR_MODEL = os.environ.get("COORDINATOR_MODEL", AGENT_MODEL)
+TRAVEL_MODEL = os.environ.get("TRAVEL_MODEL", AGENT_MODEL)
+EXPENSE_MODEL = os.environ.get("EXPENSE_MODEL", AGENT_MODEL)
+
+# Prompt variant toggle: "gepa" (optimized, default) or "baseline"
+PROMPT_VARIANT = os.environ.get("PROMPT_VARIANT", "gepa")
+
 
 def resolve_model(model_str: str):
     """Resolve model string to an ADK-compatible model.
@@ -57,7 +65,19 @@ FLASH_MODEL = os.environ.get("FLASH_MODEL", "gemini-3.5-flash")
 PRO_MODEL = os.environ.get("PRO_MODEL", "gemini-3.1-pro-preview")
 SONNET_MODEL = os.environ.get("SONNET_MODEL", "claude-sonnet-4-6")
 OPUS_MODEL = os.environ.get("OPUS_MODEL", "claude-opus-4-6")
-COMPLEXITY_THRESHOLD_HIGH = float(os.environ.get("COMPLEXITY_THRESHOLD_HIGH", "0.65"))
+
+# Router model (defaults to LITE_MODEL; must be defined after LITE_MODEL so the default resolves)
+ROUTER_MODEL = os.environ.get("ROUTER_MODEL", LITE_MODEL)
+
+# Router complexity boundaries (defaults match src/router/complexity.py; overridable for DOE)
+COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.30"))
+COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.60"))
+MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.45"))
+HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.80"))
+
+# Backwards-compat alias: still imported by src/deploy/deploy_agents.py
+COMPLEXITY_THRESHOLD_HIGH = COMPLEXITY_HIGH
+
 CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemini-3.5-flash")
 SIMULATOR_MODEL = os.environ.get("SIMULATOR_MODEL", "gemini-2.5-flash")
 
