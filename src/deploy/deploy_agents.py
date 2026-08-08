@@ -55,15 +55,23 @@ from src.config import (
     PROMPT_VARIANT,
 )
 
+# Runtime dependency subset for the served Agent Engine. Keep the version floors
+# aligned with pyproject.toml (the stack we test + build the eval image against);
+# this hand-list exists only because the engine needs a trimmed set (no pytest,
+# kfp, pandas, matplotlib, etc.). Two deliberate deviations from pyproject:
+#   * No `evaluation`/`eval` extras — offline eval runs in the eval-runner image /
+#     Vertex pipeline, not in the served engine, and the evaluation extra caps
+#     litellm (<1.86.0), conflicting with our litellm floor → unresolvable build.
+#   * cloudpickle pinned <4 — Agent Engine serializes the app with cloudpickle.
 REQUIREMENTS = [
-    "google-cloud-aiplatform[adk,agent-engines,evaluation]>=1.153.1",
-    "google-genai>=1.66.0",
+    "google-cloud-aiplatform[adk,agent-engines]>=1.163.0",
+    "google-genai>=2",
     "google-auth>=2.52.0",
-    "google-adk[a2a, agent-identity]>=1.33.0",
+    "google-adk[agent-identity]>=2",
+    "a2a-sdk>=1",
     "fastmcp>=2.0.0",
     "python-dotenv>=1.0.0",
     "litellm>=1.83.14",
-    "a2a-sdk==0.3.26",
     "pydantic>=2.12.5",
     "cloudpickle>=3.0,<4.0",
     # "google-cloud-iamconnectorcredentials>=0.1.0",
