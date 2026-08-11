@@ -34,6 +34,11 @@ from src.eval.agent_eval_configs import (
     get_eval_cases,
     get_metrics,
 )
+from src.eval._sdk_patches import patch_evals_sdk
+
+# Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
+# and result loading before any inference/evaluation runs. See _sdk_patches.py.
+patch_evals_sdk()
 
 GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
 MAX_POLL_SECONDS = 1200
