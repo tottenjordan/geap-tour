@@ -33,8 +33,21 @@ stale placeholders).
    an **optional** export sink only (`verify_monitors.py --source bigquery`
    returns `no_table` gracefully when absent).
 3. **Monitoring workspace + alerts + dashboard** (observability) —
-   - alert policies: `uv run python -m src.eval.quality_alerts` (policies on
-     `custom.googleapis.com/agent_eval/*`, thresholds from `ALL_MONITORED_METRICS`).
+   - **Seed the metric descriptors first.** An alert policy cannot reference a
+     custom metric type that has never had a TimeSeries written — Cloud
+     Monitoring returns `404 Cannot find metric(s) that match type =
+     custom.googleapis.com/agent_eval/helpfulness`. Write one placeholder point
+     to each `agent_eval/*` series to materialize the descriptors:
+     ```bash
+     uv run python -c "from src.observability.metrics import write_quality_scores; from src.eval.quality_alerts import ALL_MONITORED_METRICS; write_quality_scores({n: 5.0 for n,_ in ALL_MONITORED_METRICS})"
+     ```
+     (New descriptors can take up to ~10 min to become queryable; in practice
+     the alert create below usually succeeds within seconds.)
+   - alert policies: `uv run python -m src.eval.quality_alerts all` — the `all`
+     subcommand creates a policy for every metric in `ALL_MONITORED_METRICS`
+     (helpfulness, tool_use_accuracy, policy_compliance,
+     complexity_routing_accuracy). NOTE: bare `quality_alerts` with no arg only
+     creates the single `helpfulness` policy.
    - dashboard-as-code: `uv run python -m src.observability.dashboard`
      (idempotent create/update; prints the console deep-link).
 4. **Governance backups (preview-optional, skip if unavailable):**

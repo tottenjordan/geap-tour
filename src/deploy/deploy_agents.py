@@ -161,6 +161,16 @@ def _build_app(agent):
     )
 
 
+def _tagged_display_name(agent, tag: str | None) -> str:
+    """Return the agent's console display name, optionally suffixed with ``tag``.
+
+    A ``--tag`` lets you group a deploy batch in the Agent Engine console
+    (e.g. ``coordinator_agent_demo1`` / ``router_agent_demo1``). Empty/None
+    tag leaves the bare ``agent.name`` unchanged.
+    """
+    return f"{agent.name}_{tag}" if tag else agent.name
+
+
 def _build_config(agent, display_name: str | None = None) -> dict:
     """Build the deployment config dict used for both create and update."""
     env_vars = {
@@ -340,13 +350,18 @@ def _update_env_file(env_var: str, value: str):
     print(f"  .env updated: {env_var}={engine_id}")
 
 
-def run_deploy(agent_set: str = "all", update: bool = False) -> dict[str, str]:
+def run_deploy(
+    agent_set: str = "all", update: bool = False, tag: str | None = None
+) -> dict[str, str]:
     """Deploy or update agents and return a map of name → resource name.
 
     Args:
         agent_set: "coordinator", "router", or "all" (default).
         update: If True, update existing agents using engine IDs from .env.
                 If False, create new agents.
+        tag: Optional suffix appended to each agent's console display name
+             (e.g. tag="demo1" → "coordinator_agent_demo1") to keep a deploy
+             batch grouped in the Agent Engine console.
     """
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}")
 
@@ -362,15 +377,16 @@ def run_deploy(agent_set: str = "all", update: bool = False) -> dict[str, str]:
             print(f"  Unknown agent set: {name}. Available: {list(AGENT_SETS)}")
             continue
         agent = entry["loader"]()
+        display_name = _tagged_display_name(agent, tag)
 
         if update:
             engine_id = entry["engine_id"]
             if not engine_id:
                 print(f"  No engine ID for {name} — set {entry['env_var']} in .env")
                 continue
-            deployed[agent.name] = update_agent(agent, engine_id)
+            deployed[agent.name] = update_agent(agent, engine_id, display_name)
         else:
-            resource_name = deploy_agent(agent)
+            resource_name = deploy_agent(agent, display_name)
             deployed[agent.name] = resource_name
             _update_env_file(entry["env_var"], resource_name)
 
@@ -382,9 +398,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deploy or update ADK agents on Agent Engine")
     parser.add_argument("agent_set", nargs="?", default="all", help="coordinator, router, or all (default: all)")
     parser.add_argument("--update", action="store_true", help="Update existing agents instead of creating new ones")
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="Suffix appended to each agent's console display name "
+             "(e.g. --tag demo1 → coordinator_agent_demo1) to group a deploy batch",
+    )
     args = parser.parse_args()
 
-    deployed = run_deploy(agent_set=args.agent_set, update=args.update)
+    deployed = run_deploy(agent_set=args.agent_set, update=args.update, tag=args.tag)
     print("\n=== Agent Resource Names ===")
     for name, resource in deployed.items():
         print(f"  {name}: {resource}")
