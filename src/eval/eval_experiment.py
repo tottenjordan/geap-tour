@@ -57,6 +57,33 @@ def eval_run_labels(agent_name: str, eval_kind: str) -> dict[str, str]:
     }
 
 
+def _find_existing_experiment(client) -> str | None:
+    """Resource name of an existing experiment matching ``EVAL_EXPERIMENT_NAME``.
+
+    Paginates the list (``list_evaluation_experiments`` returns a *response*
+    wrapper whose ``.evaluation_experiments`` holds the page, plus a
+    ``next_page_token``) and matches by display name. Tolerates a plain-iterable
+    return for test fakes. Returns ``None`` if not found.
+    """
+    page_token = None
+    while True:
+        config = {"page_size": 200}
+        if page_token:
+            config["page_token"] = page_token
+        resp = client.evals.list_evaluation_experiments(config=config)
+        # Real API: response wrapper with .evaluation_experiments; fall back to
+        # treating the result itself as the iterable of experiments.
+        items = getattr(resp, "evaluation_experiments", None)
+        if items is None:
+            items = resp
+        for exp in items:
+            if getattr(exp, "display_name", None) == EVAL_EXPERIMENT_NAME:
+                return getattr(exp, "name", None)
+        page_token = getattr(resp, "next_page_token", None)
+        if not page_token:
+            return None
+
+
 def ensure_eval_experiment(client=None, *, metadata: dict | None = None) -> str | None:
     """Create-or-get the standing ``EvaluationExperiment``; return its resource name.
 
@@ -71,9 +98,9 @@ def ensure_eval_experiment(client=None, *, metadata: dict | None = None) -> str 
 
             client = vertexai.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
 
-        for exp in client.evals.list_evaluation_experiments():
-            if getattr(exp, "display_name", None) == EVAL_EXPERIMENT_NAME:
-                return getattr(exp, "name", None)
+        existing = _find_existing_experiment(client)
+        if existing is not None:
+            return existing
 
         created = client.evals.create_evaluation_experiment(
             display_name=EVAL_EXPERIMENT_NAME,

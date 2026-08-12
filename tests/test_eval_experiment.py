@@ -44,8 +44,10 @@ class _FakeEvals:
         self._created_name = created_name
         self.create_calls = 0
 
-    def list_evaluation_experiments(self):
-        return self._existing
+    def list_evaluation_experiments(self, *, config=None):
+        # Mirror the real response wrapper: a page under .evaluation_experiments
+        # plus a next_page_token (single page here).
+        return SimpleNamespace(evaluation_experiments=list(self._existing), next_page_token=None)
 
     def create_evaluation_experiment(self, **kwargs):
         self.create_calls += 1
@@ -79,6 +81,33 @@ def test_ensure_experiment_creates_when_absent():
 
     assert name == "projects/p/locations/l/evaluationExperiments/new"
     assert evals.create_calls == 1
+
+
+def test_ensure_experiment_matches_across_pages():
+    # Match lives on the 2nd page — helper must follow next_page_token, not just
+    # read the first page (regression: reuse silently created duplicates).
+    match = SimpleNamespace(
+        display_name=ee.EVAL_EXPERIMENT_NAME,
+        name="projects/p/locations/l/evaluationExperiments/onpage2",
+    )
+    other = SimpleNamespace(display_name="something-else", name="projects/p/.../other")
+
+    class _PagedEvals:
+        def __init__(self):
+            self.create_calls = 0
+
+        def list_evaluation_experiments(self, *, config=None):
+            if not config or not config.get("page_token"):
+                return SimpleNamespace(evaluation_experiments=[other], next_page_token="tok2")
+            return SimpleNamespace(evaluation_experiments=[match], next_page_token=None)
+
+        def create_evaluation_experiment(self, **kwargs):
+            self.create_calls += 1
+            return SimpleNamespace(name="should-not-happen")
+
+    evals = _PagedEvals()
+    assert ee.ensure_eval_experiment(client=_FakeClient(evals)) == match.name
+    assert evals.create_calls == 0
 
 
 def test_ensure_experiment_returns_none_on_failure():
