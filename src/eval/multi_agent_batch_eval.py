@@ -36,6 +36,11 @@ from src.eval.agent_eval_configs import (
     get_metrics,
 )
 from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
+from src.eval.eval_experiment import (
+    ensure_eval_experiment,
+    eval_run_display_name,
+    eval_run_labels,
+)
 
 # Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
 # and result loading before any inference/evaluation runs. See _sdk_patches.py.
@@ -108,12 +113,14 @@ def _run_single_agent_eval(
 
     # Run evaluation
     print(f"  Running evaluation...")
+    ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=inference_result,
         agent=agent_resource_name,
         metrics=metrics,
         dest=GCS_EVAL_DEST,
-        labels=dict(RESOURCE_LABELS),
+        display_name=eval_run_display_name(agent_name, "batch"),
+        labels=eval_run_labels(agent_name, "batch"),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

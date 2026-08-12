@@ -21,7 +21,12 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, EVAL_OUTPUT_DIR, RESOURCE_LABELS
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, EVAL_OUTPUT_DIR
+from src.eval.eval_experiment import (
+    ensure_eval_experiment,
+    eval_run_display_name,
+    eval_run_labels,
+)
 from src.eval.agent_eval_configs import (
     TIER_EVAL_CASES,
     STANDALONE_AGENTS,
@@ -89,12 +94,14 @@ def run_single_eval(
     print(f" {elapsed:.0f}s")
 
     print(f"  [{agent_name} × {tier}] Evaluating...", end="", flush=True)
+    ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=inference_result,
         agent=agent_resource,
         metrics=metrics,
         dest=GCS_EVAL_DEST,
-        labels=dict(RESOURCE_LABELS),
+        display_name=eval_run_display_name(agent_name, f"cross_model_{tier}"),
+        labels=eval_run_labels(agent_name, f"cross_model_{tier}"),
     )
 
     poll_start = time.time()
