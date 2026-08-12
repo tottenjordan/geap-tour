@@ -54,6 +54,7 @@ from src.config import (
     HIGH_SPLIT,
     PROMPT_VARIANT,
     RESOURCE_LABELS,
+    DEPLOY_TAG,
 )
 
 # Runtime dependency subset for the served Agent Engine. Keep the version floors
@@ -184,11 +185,12 @@ def _tagged_display_name(agent, tag: str | None = None) -> str:
     """Return the agent's console display name, suffixed with ``tag``.
 
     A ``--tag`` groups a deploy batch in the Agent Engine console
-    (e.g. ``coordinator_agent_demo1`` / ``router_agent_demo1``). When no tag is
-    given it defaults to the project's solution label value (``geap-tour``), so
-    display names stay attributable and a plain ``--update`` never drops the tag.
+    (e.g. ``coordinator_agent_jt1`` / ``router_agent_jt1``). When no tag is
+    given it defaults to ``DEPLOY_TAG`` (``jt1``), so display names match the
+    rest of this operator's engines and a plain ``--update`` never drops it.
+    This is distinct from the ``solution`` resource label.
     """
-    tag = tag or "_".join(RESOURCE_LABELS.values())
+    tag = tag or DEPLOY_TAG
     return f"{agent.name}_{tag}" if tag else agent.name
 
 

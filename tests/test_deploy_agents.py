@@ -70,17 +70,16 @@ def test_tagged_display_name_appends_suffix():
     assert _tagged_display_name(_fake_agent("router_agent"), "demo1") == "router_agent_demo1"
 
 
-def test_tagged_display_name_defaults_to_solution_label():
-    """No explicit tag falls back to the project's solution label, so display
-    names are always attributable and a plain --update never drops the tag."""
+def test_tagged_display_name_defaults_to_deploy_tag():
+    """No explicit tag falls back to DEPLOY_TAG (jt1), so display names match
+    the rest of this operator's engines and a plain --update never drops it."""
     import src.config as cfg
-    solution = cfg.RESOURCE_LABELS["solution"]
-    assert _tagged_display_name(_fake_agent(), None) == f"coordinator_agent_{solution}"
-    assert _tagged_display_name(_fake_agent(), "") == f"coordinator_agent_{solution}"
+    assert _tagged_display_name(_fake_agent(), None) == f"coordinator_agent_{cfg.DEPLOY_TAG}"
+    assert _tagged_display_name(_fake_agent(), "") == f"coordinator_agent_{cfg.DEPLOY_TAG}"
 
 
 def test_tagged_display_name_explicit_tag_overrides_default():
-    """An explicit --tag still wins over the solution-label default."""
+    """An explicit --tag still wins over the DEPLOY_TAG default."""
     assert _tagged_display_name(_fake_agent(), "demo1") == "coordinator_agent_demo1"
 
 

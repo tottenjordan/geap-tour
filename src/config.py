@@ -21,6 +21,11 @@ LABEL_KEY = os.environ.get("LABEL_KEY") or "solution"
 LABEL_VALUE = os.environ.get("LABEL_VALUE") or "geap-tour"
 RESOURCE_LABELS = {LABEL_KEY: LABEL_VALUE}
 
+# Deploy tag: the suffix appended to Agent Engine console display names
+# (e.g. coordinator_agent_jt1) to group this operator's deploy batch. Distinct
+# from RESOURCE_LABELS — this is a display-name convention, not a GCP label.
+DEPLOY_TAG = os.environ.get("DEPLOY_TAG") or "jt1"
+
 
 def resource_labels_gcloud() -> str:
     """RESOURCE_LABELS as a gcloud --labels value: comma-joined key=value."""
