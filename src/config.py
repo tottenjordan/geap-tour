@@ -15,8 +15,11 @@ AGENT_GATEWAY_PATH = os.environ.get("AGENT_GATEWAY_PATH", "")
 AGENT_GATEWAY_EGRESS_PATH = os.environ.get("AGENT_GATEWAY_EGRESS_PATH", "")
 
 # Default resource label stamped onto every GCP resource we create, so demo
-# assets are filterable/attributable. Override the value with SOLUTION_LABEL.
-RESOURCE_LABELS = {"solution": os.environ.get("SOLUTION_LABEL", "geap-tour")}
+# assets are filterable/attributable. Key/value are env-driven via
+# LABEL_KEY/LABEL_VALUE (defaults: solution=geap-tour).
+LABEL_KEY = os.environ.get("LABEL_KEY") or "solution"
+LABEL_VALUE = os.environ.get("LABEL_VALUE") or "geap-tour"
+RESOURCE_LABELS = {LABEL_KEY: LABEL_VALUE}
 
 
 def resource_labels_gcloud() -> str:

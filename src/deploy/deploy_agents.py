@@ -180,13 +180,15 @@ def _build_app(agent):
     )
 
 
-def _tagged_display_name(agent, tag: str | None) -> str:
-    """Return the agent's console display name, optionally suffixed with ``tag``.
+def _tagged_display_name(agent, tag: str | None = None) -> str:
+    """Return the agent's console display name, suffixed with ``tag``.
 
-    A ``--tag`` lets you group a deploy batch in the Agent Engine console
-    (e.g. ``coordinator_agent_demo1`` / ``router_agent_demo1``). Empty/None
-    tag leaves the bare ``agent.name`` unchanged.
+    A ``--tag`` groups a deploy batch in the Agent Engine console
+    (e.g. ``coordinator_agent_demo1`` / ``router_agent_demo1``). When no tag is
+    given it defaults to the project's solution label value (``geap-tour``), so
+    display names stay attributable and a plain ``--update`` never drops the tag.
     """
+    tag = tag or "_".join(RESOURCE_LABELS.values())
     return f"{agent.name}_{tag}" if tag else agent.name
 
 

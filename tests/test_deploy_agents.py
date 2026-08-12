@@ -70,10 +70,18 @@ def test_tagged_display_name_appends_suffix():
     assert _tagged_display_name(_fake_agent("router_agent"), "demo1") == "router_agent_demo1"
 
 
-def test_tagged_display_name_no_tag_is_bare_name():
-    """No tag (None or empty) leaves the display name unchanged."""
-    assert _tagged_display_name(_fake_agent(), None) == "coordinator_agent"
-    assert _tagged_display_name(_fake_agent(), "") == "coordinator_agent"
+def test_tagged_display_name_defaults_to_solution_label():
+    """No explicit tag falls back to the project's solution label, so display
+    names are always attributable and a plain --update never drops the tag."""
+    import src.config as cfg
+    solution = cfg.RESOURCE_LABELS["solution"]
+    assert _tagged_display_name(_fake_agent(), None) == f"coordinator_agent_{solution}"
+    assert _tagged_display_name(_fake_agent(), "") == f"coordinator_agent_{solution}"
+
+
+def test_tagged_display_name_explicit_tag_overrides_default():
+    """An explicit --tag still wins over the solution-label default."""
+    assert _tagged_display_name(_fake_agent(), "demo1") == "coordinator_agent_demo1"
 
 
 def test_build_config_uses_tagged_display_name():
