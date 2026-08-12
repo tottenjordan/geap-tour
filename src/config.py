@@ -14,6 +14,23 @@ GCP_STAGING_BUCKET = os.environ.get("GCP_STAGING_BUCKET", f"{GCP_PROJECT_ID}-gea
 AGENT_GATEWAY_PATH = os.environ.get("AGENT_GATEWAY_PATH", "")
 AGENT_GATEWAY_EGRESS_PATH = os.environ.get("AGENT_GATEWAY_EGRESS_PATH", "")
 
+# Default resource label stamped onto every GCP resource we create, so demo
+# assets are filterable/attributable. Override the value with SOLUTION_LABEL.
+RESOURCE_LABELS = {"solution": os.environ.get("SOLUTION_LABEL", "geap-tour")}
+
+
+def resource_labels_gcloud() -> str:
+    """RESOURCE_LABELS as a gcloud --labels value: comma-joined key=value."""
+    return ",".join(f"{k}={v}" for k, v in RESOURCE_LABELS.items())
+
+
+def resource_labels_bq_flags() -> list[str]:
+    """RESOURCE_LABELS as repeated `bq` --label key:value flags."""
+    flags = []
+    for k, v in RESOURCE_LABELS.items():
+        flags += ["--label", f"{k}:{v}"]
+    return flags
+
 SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
 BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
 EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")
