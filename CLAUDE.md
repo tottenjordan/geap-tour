@@ -81,6 +81,10 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 `src/config.py` is the single shared config for all agents (standalone, coordinator, router) and eval — `resolve_model()`, model defaults, engine IDs, and env-var names all live here. It's bundled into every Agent Runtime deployment via `extra_packages=["src"]` (`src/deploy/deploy_agents.py`), so the router imports it directly. (The router previously carried a self-contained `src/router/config.py` copy; that duplication was removed.)
 
+### Memory Bank + Session wiring (deploy)
+
+Cross-session recall only persists if the deployed engine is backed by managed services. `deploy_agents._build_app()` wraps memory-enabled agents (detected via `_wants_memory()` — any agent holding a `PreloadMemoryTool`, i.e. the coordinator) in `vertexai.agent_engines.AdkApp(agent=..., memory_service_builder=_memory_service_builder, session_service_builder=_session_service_builder)` and passes that AdkApp to `agent_engines.create/update`. Non-memory agents (router, single-tier) deploy as raw agents — the runtime auto-wraps them in a default AdkApp with no persistent services. Both builders return Vertex services scoped to `AGENT_ENGINE_ID` (`VertexAiMemoryBankService` / `VertexAiSessionService`). Verify recall with `uv run python -m src.eval.verify_memory --user-id <id>` (reads back a user's persisted facts via `agent_engines.retrieve_memories`, scoped `{app_name, user_id}`).
+
 ### Evaluation
 
 - **Batch eval** (`src/eval/multi_agent_batch_eval.py`): offline eval using `AgentInfo` descriptors (no live MCP connections). 6 metrics: response quality, hallucination, safety, tool use, instruction following, response match.
