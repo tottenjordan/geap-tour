@@ -85,12 +85,18 @@ class TestBuildApp:
         assert app.kwargs["memory_service_builder"] is da._memory_service_builder
         assert app.kwargs["session_service_builder"] is da._session_service_builder
 
-    def test_passes_plain_agent_through_unwrapped(self, monkeypatch):
+    def test_wraps_plain_agent_with_session_only(self, monkeypatch):
+        """Non-memory agents still need a managed Session service scoped to
+        their own runtime id, or stream_query fails with "Failed to create
+        session". They get the session builder but NOT the memory builder."""
         _FakeAdkApp.instances.clear()
         monkeypatch.setattr(da.agent_engines, "AdkApp", _FakeAdkApp)
         agent = _plain_agent()
-        assert da._build_app(agent) is agent
-        assert _FakeAdkApp.instances == []
+        app = da._build_app(agent)
+        assert isinstance(app, _FakeAdkApp)
+        assert app.kwargs["agent"] is agent
+        assert app.kwargs["session_service_builder"] is da._session_service_builder
+        assert "memory_service_builder" not in app.kwargs
 
 
 class TestDeployWiring:
@@ -120,7 +126,8 @@ class TestDeployWiring:
         assert isinstance(passed, _FakeAdkApp)
         assert passed.kwargs["session_service_builder"] is da._session_service_builder
 
-    def test_deploy_agent_leaves_plain_agent_raw(self, monkeypatch):
+    def test_deploy_agent_wraps_plain_agent_with_session(self, monkeypatch):
+        """A raw agent deploys inside a session-only AdkApp (no memory)."""
         _FakeAdkApp.instances.clear()
         client = _FakeClient()
         monkeypatch.setattr(da.agent_engines, "AdkApp", _FakeAdkApp)
@@ -129,8 +136,11 @@ class TestDeployWiring:
         agent = _plain_agent()
         da.deploy_agent(agent)
 
-        assert client.agent_engines.create_kwargs["agent"] is agent
-        assert _FakeAdkApp.instances == []
+        passed = client.agent_engines.create_kwargs["agent"]
+        assert isinstance(passed, _FakeAdkApp)
+        assert passed.kwargs["agent"] is agent
+        assert passed.kwargs["session_service_builder"] is da._session_service_builder
+        assert "memory_service_builder" not in passed.kwargs
 
 
 class TestRuntimeEngineId:
