@@ -53,6 +53,7 @@ from src.config import (
     MEDIUM_SPLIT,
     HIGH_SPLIT,
     PROMPT_VARIANT,
+    RESOURCE_LABELS,
 )
 
 # Runtime dependency subset for the served Agent Engine. Keep the version floors
@@ -241,6 +242,7 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "display_name": display_name or agent.name,
         "env_vars": env_vars,
         "extra_packages": ["src"],
+        "labels": dict(RESOURCE_LABELS),
     }
 
     if ENABLE_AGENT_IDENTITY:

@@ -110,6 +110,11 @@ def test_build_config_env_values_are_all_strings():
         assert isinstance(value, str), f"{key} env value must be a str, got {type(value)}"
 
 
+def test_build_config_sets_resource_labels():
+    """Deployed engines carry the default solution resource label."""
+    assert _build_config(_fake_agent())["labels"] == cfg.RESOURCE_LABELS
+
+
 def test_build_config_enables_agent_engine_telemetry():
     """Deployed engines must enable telemetry so agent-side OTel spans export."""
     env = _build_config(_fake_agent())["env_vars"]
