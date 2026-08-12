@@ -22,6 +22,7 @@ echo "[2/3] Creating BigQuery dataset..."
 bq mk --dataset \
     --project_id="$PROJECT_ID" \
     --description="GEAP Workshop agent traces and eval results" \
+    --label solution:geap-tour \
     "$DATASET_NAME" \
     2>/dev/null || echo "  Dataset already exists, skipping."
 
@@ -30,7 +31,7 @@ echo "[3/3] Creating logging sink..."
 gcloud logging sinks create "$SINK_NAME" \
     "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_NAME}" \
     --project="$PROJECT_ID" \
-    --log-filter='resource.type="aiplatform.googleapis.com/AgentEngine"' \
+    --log-filter='resource.type="aiplatform.googleapis.com/ReasoningEngine"' \
     --description="Sink agent traces to BigQuery for evaluation" \
     2>/dev/null || echo "  Sink already exists, skipping."
 

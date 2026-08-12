@@ -18,6 +18,7 @@ gcloud services enable modelarmor.googleapis.com --project="$PROJECT_ID"
 # Create prompt screening template (input guardrails)
 echo "[2/4] Creating prompt screening template..."
 PROMPT_FILTER='{
+    "labels": {"solution": "geap-tour"},
     "filterConfig": {
         "raiSettings": {
             "raiFilters": [
@@ -46,6 +47,7 @@ curl -s -X POST \
 # Create response screening template (output guardrails)
 echo "[3/4] Creating response screening template..."
 RESPONSE_FILTER='{
+    "labels": {"solution": "geap-tour"},
     "filterConfig": {
         "raiSettings": {
             "raiFilters": [

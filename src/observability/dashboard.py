@@ -21,7 +21,7 @@ from __future__ import annotations
 from google.api_core import exceptions as gexc
 from google.cloud import monitoring_dashboard_v1 as dashboard_v1
 
-from src.config import GCP_PROJECT_ID
+from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 from src.observability.metrics import QUALITY_METRIC_TYPES, TRAFFIC_METRIC_TYPES
 
 DASHBOARD_DISPLAY_NAME = "GEAP Workshop: Agent Observability"
@@ -94,6 +94,7 @@ def build_dashboard() -> dashboard_v1.Dashboard:
     return dashboard_v1.Dashboard(
         display_name=DASHBOARD_DISPLAY_NAME,
         mosaic_layout=dashboard_v1.MosaicLayout(columns=_COLUMNS, tiles=tiles),
+        labels=dict(RESOURCE_LABELS),
     )
 
 
@@ -133,7 +134,7 @@ def create_or_update_dashboard(client=None, project_id: str = GCP_PROJECT_ID):
 
     if existing is not None:
         desired.name = existing.name
-        result = client.update_dashboard(dashboard=desired)
+        result = client.update_dashboard(request={"dashboard": desired})
         action = "Updated"
     else:
         result = client.create_dashboard(parent=parent, dashboard=desired)

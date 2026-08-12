@@ -14,6 +14,31 @@ GCP_STAGING_BUCKET = os.environ.get("GCP_STAGING_BUCKET", f"{GCP_PROJECT_ID}-gea
 AGENT_GATEWAY_PATH = os.environ.get("AGENT_GATEWAY_PATH", "")
 AGENT_GATEWAY_EGRESS_PATH = os.environ.get("AGENT_GATEWAY_EGRESS_PATH", "")
 
+# Default resource label stamped onto every GCP resource we create, so demo
+# assets are filterable/attributable. Key/value are env-driven via
+# LABEL_KEY/LABEL_VALUE (defaults: solution=geap-tour).
+LABEL_KEY = os.environ.get("LABEL_KEY") or "solution"
+LABEL_VALUE = os.environ.get("LABEL_VALUE") or "geap-tour"
+RESOURCE_LABELS = {LABEL_KEY: LABEL_VALUE}
+
+# Deploy tag: the suffix appended to Agent Engine console display names
+# (e.g. coordinator_agent_jt1) to group this operator's deploy batch. Distinct
+# from RESOURCE_LABELS — this is a display-name convention, not a GCP label.
+DEPLOY_TAG = os.environ.get("DEPLOY_TAG") or "jt1"
+
+
+def resource_labels_gcloud() -> str:
+    """RESOURCE_LABELS as a gcloud --labels value: comma-joined key=value."""
+    return ",".join(f"{k}={v}" for k, v in RESOURCE_LABELS.items())
+
+
+def resource_labels_bq_flags() -> list[str]:
+    """RESOURCE_LABELS as repeated `bq` --label key:value flags."""
+    flags = []
+    for k, v in RESOURCE_LABELS.items():
+        flags += ["--label", f"{k}:{v}"]
+    return flags
+
 SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
 BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
 EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")

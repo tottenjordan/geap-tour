@@ -4,6 +4,7 @@ A fake MetricServiceClient records every ``create_time_series`` call so we can
 assert on the emitted metric types, points, and resource — without credentials.
 """
 
+import src.config as cfg
 from src.eval.quality_alerts import ALL_MONITORED_METRICS
 from src.observability import metrics
 from src.observability.metrics import (
@@ -11,6 +12,12 @@ from src.observability.metrics import (
     MetricsWriter,
     emit_traffic_metrics,
 )
+
+
+def test_default_labels_include_solution():
+    labels = metrics._default_labels(None)
+    assert labels["solution"] == cfg.RESOURCE_LABELS["solution"]
+    assert "engine_id" in labels and "region" in labels
 
 
 class FakeMetricClient:

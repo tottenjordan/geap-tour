@@ -53,6 +53,8 @@ from src.config import (
     MEDIUM_SPLIT,
     HIGH_SPLIT,
     PROMPT_VARIANT,
+    RESOURCE_LABELS,
+    DEPLOY_TAG,
 )
 
 # Runtime dependency subset for the served Agent Engine. Keep the version floors
@@ -101,6 +103,24 @@ def _build_gateway_config() -> dict | None:
     }
 
 
+def _runtime_engine_id() -> str:
+    """The engine ID the Memory Bank / Session services must be scoped to.
+
+    These builders run *inside the deployed container*, where the Agent Engine
+    runtime injects the engine's OWN resource ID as ``GOOGLE_CLOUD_AGENT_ENGINE_ID``.
+    That is the correct scope for a self-hosted Session/Memory store — an engine's
+    sessions live on the engine itself.
+
+    We must NOT bake ``config.AGENT_ENGINE_ID`` here: on a fresh ``create`` the
+    engine's own ID does not exist yet, so ``AGENT_ENGINE_ID`` holds a stale/other
+    engine, and scoping the session service to a different engine makes
+    ``create_session`` fail at runtime ("Failed to create session"). Prefer the
+    runtime-provided own-ID; fall back to ``AGENT_ENGINE_ID`` only for local/test
+    runs where the runtime var is absent.
+    """
+    return os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID") or AGENT_ENGINE_ID
+
+
 def _memory_service_builder():
     """Build a VertexAiMemoryBankService for use with AdkApp.
 
@@ -112,7 +132,7 @@ def _memory_service_builder():
     return VertexAiMemoryBankService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
-        agent_engine_id=AGENT_ENGINE_ID,
+        agent_engine_id=_runtime_engine_id(),
     )
 
 
@@ -127,7 +147,7 @@ def _session_service_builder():
     return VertexAiSessionService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
-        agent_engine_id=AGENT_ENGINE_ID,
+        agent_engine_id=_runtime_engine_id(),
     )
 
 
@@ -161,13 +181,16 @@ def _build_app(agent):
     )
 
 
-def _tagged_display_name(agent, tag: str | None) -> str:
-    """Return the agent's console display name, optionally suffixed with ``tag``.
+def _tagged_display_name(agent, tag: str | None = None) -> str:
+    """Return the agent's console display name, suffixed with ``tag``.
 
-    A ``--tag`` lets you group a deploy batch in the Agent Engine console
-    (e.g. ``coordinator_agent_demo1`` / ``router_agent_demo1``). Empty/None
-    tag leaves the bare ``agent.name`` unchanged.
+    A ``--tag`` groups a deploy batch in the Agent Engine console
+    (e.g. ``coordinator_agent_jt1`` / ``router_agent_jt1``). When no tag is
+    given it defaults to ``DEPLOY_TAG`` (``jt1``), so display names match the
+    rest of this operator's engines and a plain ``--update`` never drops it.
+    This is distinct from the ``solution`` resource label.
     """
+    tag = tag or DEPLOY_TAG
     return f"{agent.name}_{tag}" if tag else agent.name
 
 
@@ -223,6 +246,7 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "display_name": display_name or agent.name,
         "env_vars": env_vars,
         "extra_packages": ["src"],
+        "labels": dict(RESOURCE_LABELS),
     }
 
     if ENABLE_AGENT_IDENTITY:
@@ -389,6 +413,11 @@ def run_deploy(
             resource_name = deploy_agent(agent, display_name)
             deployed[agent.name] = resource_name
             _update_env_file(entry["env_var"], resource_name)
+            # Durable fix: the coordinator IS the default engine. Keep
+            # AGENT_ENGINE_ID pointed at it so config-derived client-side
+            # defaults (a2a url, metric labels) never drift to a stale engine.
+            if name == "coordinator":
+                _update_env_file("AGENT_ENGINE_ID", resource_name)
 
     return deployed
 

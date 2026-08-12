@@ -21,7 +21,7 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, AGENT_ENGINE_ID
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, AGENT_ENGINE_ID, RESOURCE_LABELS
 
 # ---------------------------------------------------------------------------
 # GCS destination for persisted evaluation artifacts
@@ -454,6 +454,7 @@ def run_batch_eval(
             types.RubricMetric.SAFETY,
         ],
         dest=GCS_EVAL_DEST,
+        labels=dict(RESOURCE_LABELS),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

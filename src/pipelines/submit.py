@@ -19,7 +19,7 @@ import uuid
 from google.cloud import aiplatform
 from kfp import compiler
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, RESOURCE_LABELS
 from src.pipelines.eval_pipeline import eval_pipeline
 
 # Reuse the project compute SA (already provisioned; see docs note on
@@ -77,6 +77,7 @@ def main():
             "experiment_id": args.experiment_id,
             "design_point": args.design_point,
         },
+        labels=dict(RESOURCE_LABELS),
     )
     job.submit(service_account=args.service_account)  # non-blocking
     print(job._dashboard_uri())

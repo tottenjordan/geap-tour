@@ -22,7 +22,7 @@ import os
 from google.cloud import aiplatform
 from kfp import compiler
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, RESOURCE_LABELS
 from src.pipelines.optimize_pipeline import optimize_pipeline
 
 # Reuse the project compute SA (same as the eval pipeline; least-privilege
@@ -62,6 +62,7 @@ def main():
             "experiment_id": args.experiment_id,
             "agent_tag": args.agent_tag,
         },
+        labels=dict(RESOURCE_LABELS),
     )
     job.submit(service_account=args.service_account)  # non-blocking
     print(job._dashboard_uri())

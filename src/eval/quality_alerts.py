@@ -3,18 +3,15 @@
 from google.cloud import monitoring_v3
 from google.protobuf import duration_pb2
 
-from src.config import GCP_PROJECT_ID
+from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 
 
-def create_quality_alert(
-    metric_name: str = "helpfulness",
-    threshold: float = 3.0,
-    notification_channel: str | None = None,
-):
-    """Create a Cloud Monitoring alert policy for eval score drops."""
-    client = monitoring_v3.AlertPolicyServiceClient()
-    project_name = f"projects/{GCP_PROJECT_ID}"
-
+def _build_policy(
+    metric_name: str,
+    threshold: float,
+    channels: list[str],
+) -> monitoring_v3.AlertPolicy:
+    """Build the AlertPolicy proto (pure; no API calls) for one eval metric."""
     condition = monitoring_v3.AlertPolicy.Condition(
         display_name=f"Agent {metric_name} score below {threshold}",
         condition_threshold=monitoring_v3.AlertPolicy.Condition.MetricThreshold(
@@ -31,9 +28,7 @@ def create_quality_alert(
         ),
     )
 
-    channels = [notification_channel] if notification_channel else []
-
-    policy = monitoring_v3.AlertPolicy(
+    return monitoring_v3.AlertPolicy(
         display_name=f"GEAP Workshop: {metric_name} quality alert",
         documentation=monitoring_v3.AlertPolicy.Documentation(
             content=f"Agent evaluation score for '{metric_name}' dropped below {threshold}. "
@@ -44,7 +39,21 @@ def create_quality_alert(
         combiner=monitoring_v3.AlertPolicy.ConditionCombinerType.OR,
         notification_channels=channels,
         enabled=True,
+        user_labels=dict(RESOURCE_LABELS),
     )
+
+
+def create_quality_alert(
+    metric_name: str = "helpfulness",
+    threshold: float = 3.0,
+    notification_channel: str | None = None,
+):
+    """Create a Cloud Monitoring alert policy for eval score drops."""
+    client = monitoring_v3.AlertPolicyServiceClient()
+    project_name = f"projects/{GCP_PROJECT_ID}"
+
+    channels = [notification_channel] if notification_channel else []
+    policy = _build_policy(metric_name, threshold, channels)
 
     result = client.create_alert_policy(name=project_name, alert_policy=policy)
     print(f"✓ Alert policy created: {result.name}")

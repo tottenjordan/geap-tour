@@ -133,6 +133,28 @@ class TestDeployWiring:
         assert _FakeAdkApp.instances == []
 
 
+class TestRuntimeEngineId:
+    """The session/memory services must scope to the engine's OWN id at runtime.
+
+    Regression for the "Failed to create session" bug: baking config
+    AGENT_ENGINE_ID (a stale/other engine) made a freshly-created coordinator
+    point its Session service at the wrong engine. Inside the container the
+    runtime injects the engine's own id as GOOGLE_CLOUD_AGENT_ENGINE_ID.
+    """
+
+    def test_prefers_runtime_injected_own_id(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", "4181778621234413568")
+        assert da._runtime_engine_id() == "4181778621234413568"
+
+    def test_falls_back_to_config_id_when_runtime_var_absent(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+        assert da._runtime_engine_id() == da.AGENT_ENGINE_ID
+
+    def test_falls_back_when_runtime_var_empty(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", "")
+        assert da._runtime_engine_id() == da.AGENT_ENGINE_ID
+
+
 class TestServiceBuilders:
     def test_memory_service_builder_returns_memory_bank_service(self):
         svc = da._memory_service_builder()
@@ -141,6 +163,11 @@ class TestServiceBuilders:
     def test_session_service_builder_returns_session_service(self):
         svc = da._session_service_builder()
         assert type(svc).__name__ == "VertexAiSessionService"
+
+    def test_session_builder_scopes_to_runtime_own_id(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", "4181778621234413568")
+        svc = da._session_service_builder()
+        assert svc._get_reasoning_engine_id("app") == "4181778621234413568"
 
 
 class TestCoordinatorRegression:

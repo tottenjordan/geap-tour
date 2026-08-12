@@ -26,6 +26,32 @@ from src.config import (
     disable_pyopenssl,
 )
 
+
+def _extract_text(event) -> str:
+    """Pull the visible assistant text out of a stream_query event.
+
+    Events are dicts shaped ``{"content": {"parts": [{"text": ...}]}}``. Thought
+    parts and tool-call/response parts carry no user-facing answer, so skip them.
+    Falls back to a top-level ``text`` key or a ``.text`` attribute for older/
+    object-shaped chunks.
+    """
+    parts = None
+    if isinstance(event, dict):
+        content = event.get("content")
+        if isinstance(content, dict):
+            parts = content.get("parts")
+    if parts:
+        return "".join(
+            p["text"]
+            for p in parts
+            if isinstance(p, dict) and p.get("text") and not p.get("thought")
+        )
+    if isinstance(event, dict) and isinstance(event.get("text"), str):
+        return event["text"]
+    text_attr = getattr(event, "text", None)
+    return text_attr if isinstance(text_attr, str) else ""
+
+
 QUERIES = [
     # Travel — happy path
     ("Find me flights from SFO to JFK on June 15th", "alice", "low"),
@@ -197,12 +223,7 @@ def generate_traffic(
                     session_id=session["id"],
                     message=query,
                 )
-                full_response = ""
-                for chunk in response:
-                    if hasattr(chunk, "text"):
-                        full_response += chunk.text
-                    elif isinstance(chunk, dict) and "text" in chunk:
-                        full_response += chunk["text"]
+                full_response = "".join(_extract_text(chunk) for chunk in response)
                 print(f"  -> {full_response[:100]}...")
             except Exception as e:
                 errors += 1
@@ -231,12 +252,7 @@ def generate_traffic(
                     session_id=conv_session_id,
                     message=query,
                 )
-                full_response = ""
-                for chunk in response:
-                    if hasattr(chunk, "text"):
-                        full_response += chunk.text
-                    elif isinstance(chunk, dict) and "text" in chunk:
-                        full_response += chunk["text"]
+                full_response = "".join(_extract_text(chunk) for chunk in response)
                 print(f"     -> {full_response[:120]}...")
             except Exception as e:
                 errors += 1
@@ -303,12 +319,7 @@ def generate_router_traffic(
                     session_id=session["id"],
                     message=query,
                 )
-                full_response = ""
-                for chunk in response:
-                    if hasattr(chunk, "text"):
-                        full_response += chunk.text
-                    elif isinstance(chunk, dict) and "text" in chunk:
-                        full_response += chunk["text"]
+                full_response = "".join(_extract_text(chunk) for chunk in response)
                 print(f"  -> {full_response[:100]}...")
             except Exception as e:
                 errors += 1

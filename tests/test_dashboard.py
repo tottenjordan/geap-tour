@@ -9,12 +9,17 @@ import pytest
 from google.api_core import exceptions as gexc
 from google.cloud import monitoring_dashboard_v1 as dashboard_v1
 
+import src.config as cfg
 from src.observability.dashboard import (
     DASHBOARD_DISPLAY_NAME,
     build_dashboard,
     create_or_update_dashboard,
 )
 from src.observability.metrics import QUALITY_METRIC_TYPES, TRAFFIC_METRIC_TYPES
+
+
+def test_dashboard_has_resource_labels():
+    assert dict(build_dashboard().labels) == cfg.RESOURCE_LABELS
 
 
 def _all_filters(dashboard) -> str:
@@ -82,9 +87,12 @@ class FakeDashboardClient:
         self.created.append((parent, dashboard))
         return dashboard
 
-    def update_dashboard(self, dashboard=None):
-        self.updated.append(dashboard)
-        return dashboard
+    def update_dashboard(self, request=None):
+        # Mirror the real client: update_dashboard takes a request wrapping the
+        # dashboard, NOT a `dashboard=` kwarg (which raises TypeError live).
+        dash = request["dashboard"] if isinstance(request, dict) else request.dashboard
+        self.updated.append(dash)
+        return dash
 
 
 def test_create_when_not_found():
