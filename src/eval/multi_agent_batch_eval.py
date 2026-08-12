@@ -27,6 +27,7 @@ from src.config import (
     GCP_STAGING_BUCKET,
     AGENT_ENGINE_ID,
     EVAL_OUTPUT_DIR,
+    RESOURCE_LABELS,
 )
 from src.eval.agent_eval_configs import (
     ALL_AGENTS,
@@ -112,6 +113,7 @@ def _run_single_agent_eval(
         agent=agent_resource_name,
         metrics=metrics,
         dest=GCS_EVAL_DEST,
+        labels=dict(RESOURCE_LABELS),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

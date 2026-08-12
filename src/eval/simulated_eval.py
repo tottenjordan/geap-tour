@@ -110,7 +110,7 @@ def run_simulated_eval(
     print("  Inference complete")
 
     import time
-    from src.config import GCP_STAGING_BUCKET
+    from src.config import GCP_STAGING_BUCKET, RESOURCE_LABELS
     GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
     MAX_POLL_SECONDS = 600
 
@@ -120,6 +120,7 @@ def run_simulated_eval(
         agent=agent_resource_name,
         metrics=eval_metrics,
         dest=GCS_EVAL_DEST,
+        labels=dict(RESOURCE_LABELS),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

@@ -21,7 +21,7 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, EVAL_OUTPUT_DIR
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, EVAL_OUTPUT_DIR, RESOURCE_LABELS
 from src.eval.agent_eval_configs import (
     TIER_EVAL_CASES,
     STANDALONE_AGENTS,
@@ -94,6 +94,7 @@ def run_single_eval(
         agent=agent_resource,
         metrics=metrics,
         dest=GCS_EVAL_DEST,
+        labels=dict(RESOURCE_LABELS),
     )
 
     poll_start = time.time()
