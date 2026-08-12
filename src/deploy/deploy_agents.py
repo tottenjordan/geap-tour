@@ -101,6 +101,24 @@ def _build_gateway_config() -> dict | None:
     }
 
 
+def _runtime_engine_id() -> str:
+    """The engine ID the Memory Bank / Session services must be scoped to.
+
+    These builders run *inside the deployed container*, where the Agent Engine
+    runtime injects the engine's OWN resource ID as ``GOOGLE_CLOUD_AGENT_ENGINE_ID``.
+    That is the correct scope for a self-hosted Session/Memory store — an engine's
+    sessions live on the engine itself.
+
+    We must NOT bake ``config.AGENT_ENGINE_ID`` here: on a fresh ``create`` the
+    engine's own ID does not exist yet, so ``AGENT_ENGINE_ID`` holds a stale/other
+    engine, and scoping the session service to a different engine makes
+    ``create_session`` fail at runtime ("Failed to create session"). Prefer the
+    runtime-provided own-ID; fall back to ``AGENT_ENGINE_ID`` only for local/test
+    runs where the runtime var is absent.
+    """
+    return os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID") or AGENT_ENGINE_ID
+
+
 def _memory_service_builder():
     """Build a VertexAiMemoryBankService for use with AdkApp.
 
@@ -112,7 +130,7 @@ def _memory_service_builder():
     return VertexAiMemoryBankService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
-        agent_engine_id=AGENT_ENGINE_ID,
+        agent_engine_id=_runtime_engine_id(),
     )
 
 
@@ -127,7 +145,7 @@ def _session_service_builder():
     return VertexAiSessionService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
-        agent_engine_id=AGENT_ENGINE_ID,
+        agent_engine_id=_runtime_engine_id(),
     )
 
 
