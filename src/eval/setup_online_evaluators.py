@@ -328,11 +328,20 @@ def verify_evaluators():
     print("=" * 60)
 
     for label, engine_id in AGENTS.items():
+        # Native eval results are logged under the OnlineEvaluator resource
+        # (keyed by online_evaluator_id), NOT the ReasoningEngine — the source
+        # engine is carried in labels.agent_resource. Filtering by
+        # resource.type=ReasoningEngine (the old filter) matched nothing, so
+        # this check always reported 0 even while the evaluator was scoring.
+        agent_resource = (
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
+            f"/reasoningEngines/{engine_id}"
+        )
         body = {
             "resourceNames": [f"projects/{GCP_PROJECT_ID}"],
             "filter": (
-                f'resource.type="aiplatform.googleapis.com/ReasoningEngine" '
-                f'resource.labels.reasoning_engine_id="{engine_id}" '
+                f'resource.type="aiplatform.googleapis.com/OnlineEvaluator" '
+                f'labels.agent_resource="{agent_resource}" '
                 f'labels."event.name"="gen_ai.evaluation.result"'
             ),
             "orderBy": "timestamp desc",
@@ -346,13 +355,31 @@ def verify_evaluators():
         resp.raise_for_status()
         entries = resp.json().get("entries", [])
 
-        print(f"\n  {label} (engine {engine_id}): {len(entries)} eval result(s)")
-        if entries:
+        # An entry is either a score or an error (INSUFFICIENT_DATA when the
+        # trace lacks system_instruction, EVALUATION_ERROR when a judge returns
+        # unparseable output). Surface error counts rather than silently
+        # averaging over an empty set — a run that is all-errors is NOT healthy.
+        errors: dict[str, int] = {}
+        scored = [e for e in entries if not e.get("labels", {}).get("error.type")]
+        for e in entries:
+            etype = e.get("labels", {}).get("error.type")
+            if etype:
+                errors[etype] = errors.get(etype, 0) + 1
+
+        print(
+            f"\n  {label} (engine {engine_id}): {len(entries)} result(s) "
+            f"— {len(scored)} scored, {sum(errors.values())} errored"
+        )
+        for etype, n in sorted(errors.items()):
+            print(f"    ERROR {etype}: n={n}")
+        if scored:
             metrics_seen: dict[str, list[float]] = {}
-            for e in entries:
+            for e in scored:
                 elabels = e.get("labels", {})
                 metric = elabels.get("gen_ai.evaluation.name", "unknown")
-                score = elabels.get("gen_ai.evaluation.score.value")
+                score = elabels.get("gen_ai.evaluation.score.value") or elabels.get(
+                    "gen_ai.evaluation.score"
+                )
                 if metric not in metrics_seen:
                     metrics_seen[metric] = []
                 if score:

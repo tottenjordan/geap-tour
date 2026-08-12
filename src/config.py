@@ -56,9 +56,19 @@ MCP_SERVER_URLS = {
     EXPENSE_MCP_SERVER: EXPENSE_MCP_URL,
 }
 
+# Telemetry env baked into every deployed engine. The Online Evaluator rebuilds
+# an AgentConfig from each trace and reads the prompt/response + system_instruction
+# from ADK's native call_llm SPAN attributes (gcp.vertex.agent.llm_request/
+# llm_response). EVENT_ONLY routes that content to span *events* instead, leaving
+# the attributes empty ({}) — the evaluator then fails every cycle with
+# "system_instruction not present in any call_llm span" (INSUFFICIENT_DATA).
+# ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=true populates those attributes, and
+# SPAN_AND_EVENT keeps the gen_ai.* content on the span too (plain "true" is
+# invalid under gen_ai_latest_experimental — must use the SPAN_*/EVENT_* enum).
 OTEL_ENV_VARS = {
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
-    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_AND_EVENT",
+    "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS": "true",
 }
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
