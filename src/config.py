@@ -56,28 +56,21 @@ MCP_SERVER_URLS = {
     EXPENSE_MCP_SERVER: EXPENSE_MCP_URL,
 }
 
-# Telemetry env baked into every deployed engine. The Online Evaluator rebuilds
-# an AgentConfig from each trace and reads the prompt/response + system_instruction
-# from ADK's native call_llm SPAN attributes (gcp.vertex.agent.llm_request/
-# llm_response). EVENT_ONLY routes that content to span *events* instead, leaving
-# the attributes empty ({}) — the evaluator then fails every cycle with
-# "system_instruction not present in any call_llm span" (INSUFFICIENT_DATA).
-# ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=true populates those attributes, and
-# SPAN_AND_EVENT keeps the gen_ai.* content on the span too (plain "true" is
-# invalid under gen_ai_latest_experimental — must use the SPAN_*/EVENT_* enum).
+# Telemetry env baked into every deployed engine.
 #
-# ADK_TELEMETRY_IGNORE_RUN_CONFIG=1 is the linchpin: the Agent Engine managed
-# runtime injects a per-request RunConfig.telemetry whose capture_message_content
-# is non-span-bearing (EVENT_ONLY), and by ADK's precedence ladder that
-# per-request field OVERRIDES the ADK_CAPTURE_* env var — so the span stays {}
-# even with the env set. This lock makes ADK ignore the runtime's per-request
-# telemetry and resolve every knob from these env vars, so legacy-span content
-# actually lands (verified against google.adk 2.6.3 TelemetryConfig).
+# NOTE: the Agent Engine managed runtime does NOT honor ADK's content-capture
+# env vars (ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS / ADK_TELEMETRY_IGNORE_RUN_CONFIG
+# / SPAN_AND_EVENT). Verified 2026-08-12 against google.adk 2.6.3: setting them
+# had zero effect — call_llm spans still carry gcp.vertex.agent.llm_request={}
+# and execute_tool spans tool_call_args={}, so the native Online Evaluators
+# always return INSUFFICIENT_DATA. Content capture for LiteLlm-backed agents is
+# blocked at the platform level. Keep this minimal (EVENT_ONLY) — the extra vars
+# were reverted as no-ops. For agents on a *native* google.genai model, EVENT_ONLY
+# routes gen_ai.* content to log events (gen_ai.system_instructions), the one
+# path the evaluator can still parse.
 OTEL_ENV_VARS = {
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
-    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_AND_EVENT",
-    "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS": "true",
-    "ADK_TELEMETRY_IGNORE_RUN_CONFIG": "1",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
 }
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
