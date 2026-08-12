@@ -7,11 +7,30 @@ DOE factor must be forwarded through deploy_agents._build_config's env_vars.
 import types
 
 import src.config as cfg
-from src.deploy.deploy_agents import _build_config
+from src.deploy.deploy_agents import _build_config, _tagged_display_name
 
 
 def _fake_agent(name="coordinator_agent"):
     return types.SimpleNamespace(name=name)
+
+
+def test_tagged_display_name_appends_suffix():
+    """--tag suffixes the agent's display name for console grouping."""
+    assert _tagged_display_name(_fake_agent(), "demo1") == "coordinator_agent_demo1"
+    assert _tagged_display_name(_fake_agent("router_agent"), "demo1") == "router_agent_demo1"
+
+
+def test_tagged_display_name_no_tag_is_bare_name():
+    """No tag (None or empty) leaves the display name unchanged."""
+    assert _tagged_display_name(_fake_agent(), None) == "coordinator_agent"
+    assert _tagged_display_name(_fake_agent(), "") == "coordinator_agent"
+
+
+def test_build_config_uses_tagged_display_name():
+    """A tagged display name flows through to the deploy config."""
+    tagged = _tagged_display_name(_fake_agent(), "demo1")
+    config = _build_config(_fake_agent(), display_name=tagged)
+    assert config["display_name"] == "coordinator_agent_demo1"
 
 
 def test_build_config_includes_doe_factor_env():
