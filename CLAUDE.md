@@ -42,10 +42,19 @@ uv run python -m src.eval.simulated_eval --agent-id <ENGINE_ID> --agent-name coo
 uv run python -m src.eval.multi_agent_batch_eval coordinator_agent
 uv run python -m src.eval.run_all_evals
 
+# Continuous online evaluation (native Online Monitors — single supported flow)
+uv run python -m src.eval.setup_online_evaluators create      # create monitor over coordinator+router (optional trailing sample-rate %)
+uv run python -m src.eval.setup_online_evaluators verify      # read native results + bridge scores → agent_eval/*
+uv run python -m src.eval.verify_monitors --format json       # summarize agent_eval/* quality series (canonical source)
+
 # Vertex Managed Pipeline (runs the full eval DAG on Vertex Pipelines)
 bash scripts/build_eval_image.sh v1                                  # build+push runner image (one-time)
 uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)
 uv run python -m src.pipelines.submit --agent-module coordinator_agent        # full parity, fresh temp deploy
+
+# A2A agent card — register / discover the coordinator in Agent Registry (preview-optional)
+uv run python -m src.deploy.register_a2a              # publish the coordinator's agent card
+uv run python -m src.deploy.register_a2a --discover   # list A2A agents in the registry
 
 # Infrastructure setup (shell scripts)
 bash scripts/deploy_all.sh              # full end-to-end
@@ -68,6 +77,12 @@ Agents connect to MCP servers through two mechanisms in `src/registry.py`:
 
 The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_MCP_SERVER` hold Agent Registry resource names — these are NOT optional and will crash on import if missing.
 
+### A2A (Agent-to-Agent) — preview-optional
+
+`src/a2a/` makes the coordinator a discoverable A2A agent. `agent_card.py:build_agent_card()` builds an `a2a.types.AgentCard` (name `coordinator_agent`, five skills mirroring its real tools: flight/hotel search, booking, expense policy check, expense submission) whose endpoint derives from `config.coordinator_a2a_url()`; `agent_card_dict()` serializes it. `remote_agent.py:build_remote_coordinator()` returns an ADK `RemoteA2aAgent` (`google.adk.agents.remote_a2a_agent`) client, and `try_build_remote_coordinator()` returns `None` on any failure. `src/registry.py` adds `register_a2a_agent(card)` / `get_a2a_agents()` that reuse the same `AgentRegistry` client as the MCP flow. `src/deploy/register_a2a.py` is the CLI (register default, `--discover` to list).
+
+This is **preview-optional**: the A2A/registry create+discovery surface may not be enabled in every project. Every path degrades gracefully — it logs `A2A preview not enabled — skipping` and returns `None`/`[]` (the CLI exits 0) rather than crashing a live run. `a2a-sdk` 1.x models are protobuf, so serialization uses `protobuf.json_format.MessageToDict` (with a pydantic `model_dump` fallback).
+
 ### Model resolution
 
 `src/config.py:resolve_model()` handles the Gemini 2.x vs 3.x split: Gemini 2.x models pass as plain strings (regional endpoints), while Gemini 3.x and Claude models are wrapped in `LiteLlm(vertex_location="global")` because they require the global endpoint.
@@ -76,12 +91,17 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 `src/config.py` is the single shared config for all agents (standalone, coordinator, router) and eval — `resolve_model()`, model defaults, engine IDs, and env-var names all live here. It's bundled into every Agent Runtime deployment via `extra_packages=["src"]` (`src/deploy/deploy_agents.py`), so the router imports it directly. (The router previously carried a self-contained `src/router/config.py` copy; that duplication was removed.)
 
+### Memory Bank + Session wiring (deploy)
+
+Cross-session recall only persists if the deployed engine is backed by managed services. `deploy_agents._build_app()` wraps memory-enabled agents (detected via `_wants_memory()` — any agent holding a `PreloadMemoryTool`, i.e. the coordinator) in `vertexai.agent_engines.AdkApp(agent=..., memory_service_builder=_memory_service_builder, session_service_builder=_session_service_builder)` and passes that AdkApp to `agent_engines.create/update`. Non-memory agents (router, single-tier) deploy as raw agents — the runtime auto-wraps them in a default AdkApp with no persistent services. Both builders return Vertex services scoped to `AGENT_ENGINE_ID` (`VertexAiMemoryBankService` / `VertexAiSessionService`). Verify recall with `uv run python -m src.eval.verify_memory --user-id <id>` (reads back a user's persisted facts via `agent_engines.retrieve_memories`, scoped `{app_name, user_id}`).
+
 ### Evaluation
 
 - **Batch eval** (`src/eval/multi_agent_batch_eval.py`): offline eval using `AgentInfo` descriptors (no live MCP connections). 6 metrics: response quality, hallucination, safety, tool use, instruction following, response match.
 - **Simulated eval** (`src/eval/simulated_eval.py`): multi-turn eval against a deployed agent using Vertex AI's user simulator.
 - **Eval configs** (`src/eval/agent_eval_configs.py`): test cases per agent plus `build_agent_info()` which constructs `AgentInfo` for offline eval.
 - **Vertex eval pipeline** (`src/pipelines/`): the full eval DAG (deploy → traffic → batch ‖ simulated ‖ complexity → monitor → report) as a KFP v2 Managed Pipeline, submitted manually via `src.pipelines.submit` (workflow: `.github/workflows/eval_vertex.yaml`). Replaced the old GitHub-Actions eval job graph. See [docs/notes/vertex-eval-pipeline.md](docs/notes/vertex-eval-pipeline.md).
+- **Continuous online eval** — ONE canonical flow on native Online Monitors: `src/eval/setup_online_evaluators.py` (`create`/`verify`/`list`/`delete`/`cleanup`) creates an onlineEvaluator over the deployed coordinator + router (configurable sample rate + metric set) whose scores land in the console and Cloud Logging. `src/eval/publish_eval_metrics.py:publish_eval_metrics()` bridges those scores onto `custom.googleapis.com/agent_eval/*` (names strictly from `quality_alerts.ALL_MONITORED_METRICS` — no drift) so the alert policies + dashboard chart quality alongside traffic. `src/eval/verify_monitors.py` reads that `agent_eval/*` series (canonical source; optional guarded BigQuery export via `--source bigquery`). `src/eval/setup_online_monitors.py` is a deprecated shim that delegates to `setup_online_evaluators create`.
 
 ### GEPA optimization
 
@@ -89,7 +109,7 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 ### Security layers
 
-- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side `input_guardrail_callback` (blocklist patterns, length limits). Both the coordinator and the router import this single shared module (the router previously had a duplicate `src/router/armor.py`, now removed).
+- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side guardrail (blocklist patterns, length limits). This is the single shared module — both the coordinator and the router import it (the router previously had a duplicate `src/router/armor.py`, now removed). The pure validator `input_guardrail_callback` (Content|None) stays side-effect-free for testability; `guardrail_with_telemetry` wraps it to emit a `guardrail.blocked` OTel span event + a `custom.googleapis.com/agent_armor/blocked` metric on each block (telemetry is fully guarded and never changes the guard's decision). The coordinator wires `guardrail_with_telemetry` as its `before_agent_callback` and passes `generate_content_config=get_armored_generate_config()` for server-side armor; the router runs `input_guardrail_callback` inside its `complexity_router_callback`.
 
 ## Key Conventions
 

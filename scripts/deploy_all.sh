@@ -279,5 +279,5 @@ echo "  • View Agent Registry:   https://console.cloud.google.com/agent-platfo
 echo "  • View Agent Gateway:    https://console.cloud.google.com/agent-platform/gateways?project=${PROJECT_ID}"
 echo "  • View Policies:         https://console.cloud.google.com/agent-platform/policies?project=${PROJECT_ID}"
 echo "  • View Model Armor:      https://console.cloud.google.com/security/modelarmor?project=${PROJECT_ID}"
-echo "  • Setup online monitors: uv run python -m src.eval.setup_online_monitors ${AGENT_ENGINE_ID}"
 echo "  • Setup online evals:    uv run python -m src.eval.setup_online_evaluators create"
+echo "  • Verify online evals:   uv run python -m src.eval.verify_monitors --format json"

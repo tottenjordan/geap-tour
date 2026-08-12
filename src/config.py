@@ -1,6 +1,7 @@
 """Global configuration — GCP project settings, MCP server URLs, model configs, and eval params."""
 
 import os
+
 from dotenv import load_dotenv
 from google.adk.models.lite_llm import LiteLlm
 
@@ -90,6 +91,29 @@ EVAL_OUTPUT_DIR = os.environ.get("EVAL_OUTPUT_DIR", "eval_outputs")
 BQ_EVAL_DATASET = os.environ.get("BQ_EVAL_DATASET", "geap_workshop_logs")
 AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
 ROUTER_ENGINE_ID = os.environ.get("ROUTER_ENGINE_ID", "6023683798619652096")
+
+# A2A (Agent-to-Agent) — preview-optional. Identity for the coordinator's
+# published agent card and the derived A2A endpoint.
+A2A_AGENT_NAME = os.environ.get("A2A_AGENT_NAME", "coordinator_agent")
+A2A_AGENT_VERSION = os.environ.get("A2A_AGENT_VERSION", "1.0.0")
+
+
+def coordinator_a2a_url() -> str:
+    """Base A2A endpoint URL for the deployed coordinator.
+
+    Prefers an explicit ``A2A_ENDPOINT_URL`` override; otherwise derives the
+    Agent Engine (reasoning engine) resource URL from the configured project,
+    region, and engine id. The agent-card well-known path is appended by the
+    A2A client, not here.
+    """
+    override = os.environ.get("A2A_ENDPOINT_URL")
+    if override:
+        return override
+    return (
+        f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/"
+        f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/"
+        f"reasoningEngines/{AGENT_ENGINE_ID}"
+    )
 
 
 def disable_pyopenssl():

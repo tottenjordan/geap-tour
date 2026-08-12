@@ -12,15 +12,17 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content, Part
 
-from .complexity import classify_complexity, score_to_model_tier
+from .complexity import classify_complexity, score_to_model_tier, tier_to_model
 
 from src.armor.config import input_guardrail_callback
 from src.config import (
     SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER,
     LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL,
     ROUTER_MODEL,
+    COMPLEXITY_LOW, COMPLEXITY_HIGH, MEDIUM_SPLIT, HIGH_SPLIT,
     resolve_model,
 )
+from src.observability.tracing import set_span_attributes, traced
 from src.registry import get_mcp_tools
 from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
 from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
@@ -100,12 +102,30 @@ async def complexity_router_callback(callback_context=None, **kwargs):
     if guardrail_result is not None:
         return guardrail_result
 
-    result = await classify_complexity(user_message)
-    model_tier = score_to_model_tier(result.score)
-    callback_context.state["complexity_level"] = result.level
-    callback_context.state["complexity_score"] = result.score
-    callback_context.state["complexity_reason"] = result.reason
-    callback_context.state["model_tier"] = model_tier
+    # The money shot: a per-request span that records WHY this query routed
+    # where it did — score, chosen tier, resolved model, and the boundaries the
+    # decision was measured against. Transparent no-op when telemetry is off;
+    # routing behavior below is unchanged.
+    with traced("router.route"):
+        result = await classify_complexity(user_message)
+        model_tier = score_to_model_tier(result.score)
+        model_id = tier_to_model(model_tier)
+        set_span_attributes(
+            **{
+                "complexity.score": result.score,
+                "complexity.level": result.level,
+                "routing.tier": model_tier,
+                "model.id": model_id,
+                "boundaries.low": COMPLEXITY_LOW,
+                "boundaries.medium_split": MEDIUM_SPLIT,
+                "boundaries.high": COMPLEXITY_HIGH,
+                "boundaries.high_split": HIGH_SPLIT,
+            }
+        )
+        callback_context.state["complexity_level"] = result.level
+        callback_context.state["complexity_score"] = result.score
+        callback_context.state["complexity_reason"] = result.reason
+        callback_context.state["model_tier"] = model_tier
     return None
 
 

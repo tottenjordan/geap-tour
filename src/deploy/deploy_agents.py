@@ -104,15 +104,60 @@ def _build_gateway_config() -> dict | None:
 def _memory_service_builder():
     """Build a VertexAiMemoryBankService for use with AdkApp.
 
-    When deployed to Agent Runtime, the runtime automatically uses its own
-    Memory Bank. This builder is used for local development and testing so
-    that VertexAiMemoryBankService connects to the same backing store.
+    Attached (via ``_build_app``) to memory-enabled agents so the deployed
+    Agent Engine reads/writes Vertex Memory Bank rather than the default
+    in-memory store — this is what makes cross-session recall persist.
     """
     from google.adk.memory import VertexAiMemoryBankService
     return VertexAiMemoryBankService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
         agent_engine_id=AGENT_ENGINE_ID,
+    )
+
+
+def _session_service_builder():
+    """Build a VertexAiSessionService for use with AdkApp.
+
+    Mirrors ``_memory_service_builder``: attached to memory-enabled agents so
+    multi-turn sessions persist server-side on Vertex managed Sessions (the
+    write side that ``save_memories_callback`` flushes into Memory Bank).
+    """
+    from google.adk.sessions import VertexAiSessionService
+    return VertexAiSessionService(
+        project=GCP_PROJECT_ID,
+        location=GCP_REGION,
+        agent_engine_id=AGENT_ENGINE_ID,
+    )
+
+
+def _wants_memory(agent) -> bool:
+    """True if the agent reads Memory Bank (holds a PreloadMemoryTool).
+
+    Only agents that read/write Memory Bank (the coordinator) need the managed
+    memory + session services; single-tier agents and the router do not, so
+    they deploy unchanged.
+    """
+    from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+    tools = getattr(agent, "tools", None) or []
+    return any(isinstance(t, PreloadMemoryTool) for t in tools)
+
+
+def _build_app(agent):
+    """Return the object to deploy for ``agent``.
+
+    Memory-enabled agents are wrapped in an ``AdkApp`` bound to Vertex Memory
+    Bank + Session services so recall persists across sessions. Other agents
+    are returned unchanged — the Agent Engine runtime auto-wraps a raw
+    ``BaseAgent`` in a default ``AdkApp`` (no persistent services), which is the
+    correct behavior for agents that don't use Memory Bank.
+    """
+    if not _wants_memory(agent):
+        return agent
+    return agent_engines.AdkApp(
+        agent=agent,
+        memory_service_builder=_memory_service_builder,
+        session_service_builder=_session_service_builder,
     )
 
 
@@ -152,6 +197,15 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "EXPENSE_MCP_SERVER": EXPENSE_MCP_SERVER,
         "AGENT_REGISTRY_LOCATION": AGENT_REGISTRY_LOCATION,
     }
+
+    # Model Armor template names for server-side screening (read by
+    # src/armor/config.get_model_armor_config). Only bake when explicitly set so
+    # the deployed engine falls back to the project/region-derived defaults
+    # rather than being overridden with an empty string.
+    for armor_var in ("MODEL_ARMOR_PROMPT_TEMPLATE", "MODEL_ARMOR_RESPONSE_TEMPLATE"):
+        armor_val = os.environ.get(armor_var)
+        if armor_val:
+            env_vars[armor_var] = armor_val
 
     config = {
         "staging_bucket": f"gs://{GCP_STAGING_BUCKET}",
@@ -194,7 +248,7 @@ def deploy_agent(agent, display_name: str | None = None) -> str:
     print(f"\n--- Creating {agent.name} ---")
     config = _build_config(agent, display_name)
 
-    remote = _get_client().agent_engines.create(agent=agent, config=config)
+    remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, 'resource_name', None) or remote.api_resource.name
     print(f"  Created: {resource_name}")
     return resource_name
@@ -211,7 +265,7 @@ def update_agent(agent, engine_id: str, display_name: str | None = None) -> str:
 
     remote = _get_client().agent_engines.update(
         name=engine_id,
-        agent=agent,
+        agent=_build_app(agent),
         config=config,
     )
     resource_name = getattr(remote, 'resource_name', None) or remote.api_resource.name

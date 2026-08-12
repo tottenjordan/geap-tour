@@ -19,9 +19,14 @@ from src.config import (
     CLASSIFIER_MODEL,
     COMPLEXITY_HIGH,
     COMPLEXITY_LOW,
+    FLASH_MODEL,
     GCP_PROJECT_ID,
     HIGH_SPLIT,
+    LITE_MODEL,
     MEDIUM_SPLIT,
+    OPUS_MODEL,
+    PRO_MODEL,
+    SONNET_MODEL,
 )
 
 # Newer Gemini models (3.x) are only available via location=global
@@ -86,6 +91,22 @@ def score_to_model_tier(score: float) -> str:
         return "pro"
     else:
         return "opus"
+
+
+# Maps a routing tier to the concrete model id it dispatches to. Sourced from
+# src.config so DOE model-override env vars are reflected here (and in traces).
+_TIER_TO_MODEL = {
+    "lite": LITE_MODEL,
+    "flash": FLASH_MODEL,
+    "sonnet": SONNET_MODEL,
+    "pro": PRO_MODEL,
+    "opus": OPUS_MODEL,
+}
+
+
+def tier_to_model(tier: str) -> str:
+    """Return the concrete model id a routing tier dispatches to."""
+    return _TIER_TO_MODEL.get(tier, LITE_MODEL)
 
 
 RESPONSE_SCHEMA = {

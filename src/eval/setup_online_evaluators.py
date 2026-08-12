@@ -15,7 +15,8 @@ Usage:
     uv run python -m src.eval.setup_online_evaluators cleanup
 """
 
-import json
+import contextlib
+import os
 import sys
 import textwrap
 
@@ -24,9 +25,9 @@ import google.auth.transport.requests
 import requests
 
 from src.config import GCP_PROJECT_ID, GCP_REGION, PROJECT_NUMBER
+
 API_BASE = f"https://{GCP_REGION}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_NUMBER}/locations/{GCP_REGION}"
 
-import os
 COORDINATOR_ENGINE_ID = os.environ.get("COORDINATOR_AGENT_ID", "8296365537139621888")
 ROUTER_ENGINE_ID = os.environ.get("ROUTER_ENGINE_ID", os.environ.get("AGENT_ENGINE_ID", "4709107696450666496"))
 
@@ -198,11 +199,16 @@ def register_custom_metrics() -> list[str]:
 
 
 def _build_evaluator_config(
-    agent_label: str, engine_id: str, custom_metric_names: list[str]
+    agent_label: str,
+    engine_id: str,
+    custom_metric_names: list[str],
+    sample_rate: int = 100,
+    predefined_metrics: list[str] | None = None,
 ) -> dict:
+    predefined = PREDEFINED_METRICS if predefined_metrics is None else predefined_metrics
     metric_sources = [
         {"metric": {"predefinedMetricSpec": {"metricSpecName": m}}}
-        for m in PREDEFINED_METRICS
+        for m in predefined
     ]
     for name in custom_metric_names:
         metric_sources.append({"metricResourceName": name})
@@ -211,7 +217,7 @@ def _build_evaluator_config(
         "displayName": f"GEAP {agent_label.title()} Online Evaluator",
         "agentResource": _agent_resource(engine_id),
         "metricSources": metric_sources,
-        "config": {"randomSampling": {"percentage": 100}},
+        "config": {"randomSampling": {"percentage": sample_rate}},
         "cloudObservability": {
             "traceScope": {},
             "openTelemetry": {"semconvVersion": "1.39.0"},
@@ -248,7 +254,7 @@ def list_evaluators():
     return evaluators
 
 
-def create_evaluators():
+def create_evaluators(sample_rate: int = 100, predefined_metrics: list[str] | None = None):
     print("=== Step 1: Register Custom Metrics ===")
     custom_metric_names = register_custom_metrics()
 
@@ -256,7 +262,7 @@ def create_evaluators():
     existing = list_evaluators()
     existing_agents = {e.get("agentResource", "") for e in existing}
 
-    print("=== Step 3: Create Online Evaluators ===")
+    print(f"=== Step 3: Create Online Evaluators (sample rate {sample_rate}%) ===")
     headers = _get_headers()
     for label, engine_id in AGENTS.items():
         agent_res = _agent_resource(engine_id)
@@ -264,7 +270,10 @@ def create_evaluators():
             print(f"  {label}: evaluator already exists for agent {engine_id}, skipping")
             continue
 
-        config = _build_evaluator_config(label, engine_id, custom_metric_names)
+        config = _build_evaluator_config(
+            label, engine_id, custom_metric_names,
+            sample_rate=sample_rate, predefined_metrics=predefined_metrics,
+        )
         n_metrics = len(config["metricSources"])
         print(f"  Creating '{config['displayName']}' with {n_metrics} metrics...")
 
@@ -347,14 +356,26 @@ def verify_evaluators():
                 if metric not in metrics_seen:
                     metrics_seen[metric] = []
                 if score:
-                    try:
+                    with contextlib.suppress(ValueError):
                         metrics_seen[metric].append(float(score))
-                    except ValueError:
-                        pass
 
+            averages = {}
             for metric, scores in sorted(metrics_seen.items()):
                 avg = sum(scores) / len(scores) if scores else 0
+                averages[metric] = avg
                 print(f"    {metric}: n={len(scores)}, avg={avg:.2f}")
+
+            # Bridge scores onto custom.googleapis.com/agent_eval/* so the
+            # alert policies + dashboard see quality alongside traffic. Only
+            # names in ALL_MONITORED_METRICS are published (no metric drift).
+            try:
+                from src.eval.publish_eval_metrics import publish_eval_metrics
+
+                published = publish_eval_metrics(averages, extra_labels={"engine_id": engine_id})
+                if published:
+                    print(f"    Bridged to agent_eval/*: {sorted(published)}")
+            except Exception as bridge_err:
+                print(f"    (metric bridge skipped: {bridge_err})")
         else:
             print("    No results yet. Evaluators run every 10 min — wait and retry.")
 
@@ -405,7 +426,7 @@ def cleanup():
 
 COMMANDS = {
     "list": lambda args: list_evaluators(),
-    "create": lambda args: create_evaluators(),
+    "create": lambda args: create_evaluators(sample_rate=int(args[0]) if args else 100),
     "verify": lambda args: verify_evaluators(),
     "delete": lambda args: (
         delete_evaluator(args[0]) if args else print("Usage: delete <evaluator_id>")
@@ -415,7 +436,7 @@ COMMANDS = {
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(f"Usage: python -m src.eval.setup_online_evaluators <command> [args]")
+        print("Usage: python -m src.eval.setup_online_evaluators <command> [args]")
         print(f"Commands: {', '.join(COMMANDS)}")
         sys.exit(1)
     COMMANDS[sys.argv[1]](sys.argv[2:])

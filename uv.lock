@@ -998,6 +998,7 @@ dependencies = [
     { name = "google-cloud-aiplatform", extra = ["adk", "agent-engines", "evaluation"] },
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-monitoring" },
+    { name = "google-cloud-monitoring-dashboards" },
     { name = "google-genai" },
     { name = "litellm" },
     { name = "matplotlib" },
@@ -1032,6 +1033,7 @@ requires-dist = [
     { name = "google-cloud-aiplatform", extras = ["adk", "agent-engines", "evaluation"], specifier = ">=1.163.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.43.0" },
     { name = "google-cloud-monitoring", specifier = ">=2.31.0" },
+    { name = "google-cloud-monitoring-dashboards", specifier = ">=2.22.0" },
     { name = "google-genai", specifier = ">=2" },
     { name = "litellm", specifier = ">=1.85.7" },
     { name = "matplotlib", specifier = ">=3.11.1" },
@@ -1355,6 +1357,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/84/9d/9522e169db3887e7f354bb9aa544a6e26c435ce19337e32432598db18c6f/google_cloud_monitoring-2.31.0.tar.gz", hash = "sha256:b4c9d3528c8643d4eb4b9d688cbb3c5914bc5f69b314ff7c5e1b47bdc073a9ae", size = 404747, upload-time = "2026-06-03T15:28:24.938Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/30/aa6635296da9c1c14d2e64f64e1cacd4f4debf8ab7e646c0559545f0f70d/google_cloud_monitoring-2.31.0-py3-none-any.whl", hash = "sha256:64f3d56ead48f0a0674f650cb2828c47b936582a02a27c55f2836681a86281c3", size = 391010, upload-time = "2026-06-03T15:27:39.536Z" },
+]
+
+[[package]]
+name = "google-cloud-monitoring-dashboards"
+version = "2.22.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/f7/1fd4636d60e782b9c34b3de0837239b1d1e70aa67a9461ba0e61387ab65e/google_cloud_monitoring_dashboards-2.22.0.tar.gz", hash = "sha256:3243f1df5f1798913d75277151e70c5f868ef182f8e4761c96071903566f21a3", size = 115959, upload-time = "2026-06-22T23:21:54.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/84/bbfa46cf0753770705ff841c902791bc2d9ee364dc9be566b90cbd6d4bfc/google_cloud_monitoring_dashboards-2.22.0-py3-none-any.whl", hash = "sha256:e176edefa41063d7366fad88d4351c642ada826bda4f07e79299c8b75687608b", size = 141761, upload-time = "2026-06-22T23:19:43.096Z" },
 ]
 
 [[package]]

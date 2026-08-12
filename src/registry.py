@@ -9,7 +9,7 @@ from google.adk.integrations.agent_registry import AgentRegistry
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-from src.config import GCP_PROJECT_ID, AGENT_REGISTRY_LOCATION, MCP_SERVER_URLS
+from src.config import AGENT_REGISTRY_LOCATION, GCP_PROJECT_ID, MCP_SERVER_URLS
 
 log = logging.getLogger(__name__)
 
@@ -47,3 +47,60 @@ def get_mcp_tools(server_name: str):
         return McpToolset(connection_params=StreamableHTTPConnectionParams(
             url=url, timeout=MCP_TIMEOUT_SECONDS, sse_read_timeout=MCP_READ_TIMEOUT_SECONDS
         ))
+
+
+# --- A2A agents (preview-optional) -----------------------------------------
+# Registration/discovery of A2A agents reuses the SAME AgentRegistry client as
+# the MCP-server flow above. The create endpoint is a preview surface that may
+# not exist in every project, so both helpers degrade gracefully (logged skip +
+# None/[]) instead of raising, mirroring the MCP direct-URL fallback posture.
+A2A_PREVIEW_SKIP = "A2A preview not enabled — skipping"
+
+
+def _slug(name: str) -> str:
+    """Lowercase, hyphen-safe agent id derived from a display name."""
+    cleaned = "".join(c if c.isalnum() else "-" for c in name.lower())
+    return "-".join(part for part in cleaned.split("-") if part) or "agent"
+
+
+def register_a2a_agent(card, agent_id: str | None = None):
+    """Register an A2A agent card in Agent Registry (preview-optional).
+
+    Accepts either an ``a2a.types.AgentCard`` or an already-serialized dict.
+    Reuses ``get_registry()`` and its ``_make_request`` transport so auth/mTLS
+    are shared with the MCP flow. Returns the created resource dict, or ``None``
+    (logged skip) if the preview surface / credentials are unavailable.
+    """
+    try:
+        from src.a2a.agent_card import serialize_agent_card
+
+        card_dict = card if isinstance(card, dict) else serialize_agent_card(card)
+        display_name = card_dict.get("name", "agent")
+        agent_id = agent_id or _slug(display_name)
+        body = {
+            "displayName": display_name,
+            "description": card_dict.get("description", ""),
+            "card": {"type": "A2A_AGENT_CARD", "content": card_dict},
+        }
+        # agentId is a query param on the create call; _make_request forwards
+        # the query string embedded in the path for POST requests.
+        return get_registry()._make_request(
+            f"agents?agentId={agent_id}", method="POST", json_data=body
+        )
+    except Exception as exc:
+        log.info("%s (registration failed: %s)", A2A_PREVIEW_SKIP, exc)
+        return None
+
+
+def get_a2a_agents(filter_str: str | None = None) -> list:
+    """List registered A2A agents from Agent Registry (preview-optional).
+
+    Returns the list of agent resource dicts, or ``[]`` (logged skip) if the
+    preview surface / credentials are unavailable.
+    """
+    try:
+        response = get_registry().list_agents(filter_str=filter_str)
+        return response.get("agents", [])
+    except Exception as exc:
+        log.info("%s (discovery failed: %s)", A2A_PREVIEW_SKIP, exc)
+        return []
