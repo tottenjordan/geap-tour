@@ -9,7 +9,12 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import COORDINATOR_MODEL, SEARCH_MCP_SERVER, resolve_model
+from src.config import (
+    COORDINATOR_MODEL,
+    SEARCH_MCP_SERVER,
+    EXPENSE_MCP_SERVER,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
@@ -62,8 +67,21 @@ coordinator_agent = LlmAgent(
     name="coordinator_agent",
     instruction=INSTRUCTION,
     tools=[
+        # Direct MCP toolsets — the GEPA instruction's Section 1 drives the
+        # coordinator to call search_flights/search_hotels AND
+        # check_expense_policy/submit_expense/get_user_expenses DIRECTLY. The
+        # expense toolset is held here (not only inside expense_agent) because
+        # AgentTool delegation to a sub-agent that then makes a nested MCP call
+        # does not stream back through the deployed Agent Engine runtime (works
+        # in-process locally, stalls on the managed runtime). Keeping these
+        # direct turns them into the coordinator's own tool calls, which the
+        # deployed runtime streams correctly.
         get_mcp_tools(SEARCH_MCP_SERVER),
+        get_mcp_tools(EXPENSE_MCP_SERVER),
         PreloadMemoryTool(),
+        # Sub-agents remain for genuine hand-off flows the instruction reserves
+        # for them (Section 2): booking via travel_agent, complex expense
+        # inquiries via expense_agent.
         AgentTool(agent=travel_agent),
         AgentTool(agent=expense_agent),
     ],
