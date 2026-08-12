@@ -22,6 +22,9 @@ file; keep this index short (< 200 lines).
   — a transient live-poll stall could hang unattended for the 2h timeout with no
   output; fixed via GCS ground-truth fall-through, a heartbeat, and a download
   timeout.
+- [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
+  — one-time provisioning checklist + run-of-show for the four demo money-shots
+  (observability, trace debugging, continuous eval, governance blocking).
 - [Coordinator `tool_use_quality`: root cause & eval-harness fix](./coordinator-tool-use-quality.md)
   — the low score was mostly ~50% empty turns (SDK concurrency + cold start, no
   retry-on-empty); plus the dynamic-rubric ceiling, a real prompt gap, and the
