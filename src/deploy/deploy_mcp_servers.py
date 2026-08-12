@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from src.config import GCP_PROJECT_ID, GCP_REGION
+from src.config import GCP_PROJECT_ID, GCP_REGION, resource_labels_gcloud
 
 SERVERS = [
     {"name": "search-mcp", "path": "src/mcp_servers/search", "port": 8001},
@@ -12,20 +12,26 @@ SERVERS = [
 ]
 
 
-def deploy_server(server: dict) -> str:
-    """Deploy a single MCP server to Cloud Run and return the service URL."""
-    name = server["name"]
-    print(f"\n--- Deploying {name} ---")
-
-    cmd = [
-        "gcloud", "run", "deploy", name,
+def _build_deploy_cmd(server: dict) -> list[str]:
+    """Build the `gcloud run deploy` argv for a server, labels included."""
+    return [
+        "gcloud", "run", "deploy", server["name"],
         "--source", server["path"],
         "--region", GCP_REGION,
         "--project", GCP_PROJECT_ID,
         "--port", str(server["port"]),
         "--allow-unauthenticated",
+        "--labels", resource_labels_gcloud(),
         "--quiet",
     ]
+
+
+def deploy_server(server: dict) -> str:
+    """Deploy a single MCP server to Cloud Run and return the service URL."""
+    name = server["name"]
+    print(f"\n--- Deploying {name} ---")
+
+    cmd = _build_deploy_cmd(server)
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:

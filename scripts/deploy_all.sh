@@ -63,7 +63,8 @@ ok "APIs enabled"
 step "2/11" "Creating staging bucket"
 gcloud storage buckets create "gs://${STAGING_BUCKET}" \
     --project="$PROJECT_ID" --location="$REGION" \
-    --uniform-bucket-level-access 2>/dev/null && ok "Bucket created" || ok "Bucket already exists"
+    --uniform-bucket-level-access \
+    --labels=solution=geap-tour 2>/dev/null && ok "Bucket created" || ok "Bucket already exists"
 
 # ─── Step 3: Deploy MCP servers to Cloud Run ────────────────────────
 step "3/11" "Deploying MCP servers to Cloud Run (min-instances=1)"
@@ -78,6 +79,7 @@ deploy_mcp() {
         --port "$port" \
         --min-instances 1 \
         --allow-unauthenticated \
+        --labels solution=geap-tour \
         --quiet 2>&1 | tail -2
 }
 

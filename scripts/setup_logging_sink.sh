@@ -22,6 +22,7 @@ echo "[2/3] Creating BigQuery dataset..."
 bq mk --dataset \
     --project_id="$PROJECT_ID" \
     --description="GEAP Workshop agent traces and eval results" \
+    --label solution:geap-tour \
     "$DATASET_NAME" \
     2>/dev/null || echo "  Dataset already exists, skipping."
 

@@ -380,6 +380,7 @@ else
             --dns-name="geap-internal.example.com." \
             --visibility=private \
             --networks="${NETWORK_NAME}" \
+            --labels=solution=geap-tour \
             --project="${PROJECT_ID}" && ok "DNS zone created" || fail "DNS zone creation failed"
     fi
 
