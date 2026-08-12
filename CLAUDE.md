@@ -52,6 +52,10 @@ bash scripts/build_eval_image.sh v1                                  # build+pus
 uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)
 uv run python -m src.pipelines.submit --agent-module coordinator_agent        # full parity, fresh temp deploy
 
+# A2A agent card — register / discover the coordinator in Agent Registry (preview-optional)
+uv run python -m src.deploy.register_a2a              # publish the coordinator's agent card
+uv run python -m src.deploy.register_a2a --discover   # list A2A agents in the registry
+
 # Infrastructure setup (shell scripts)
 bash scripts/deploy_all.sh              # full end-to-end
 bash scripts/setup_governance_policies.sh --sgp   # IAM + SGP
@@ -72,6 +76,12 @@ Agents connect to MCP servers through two mechanisms in `src/registry.py`:
 - **Direct URL** (fallback): falls back to Cloud Run URLs from `MCP_SERVER_URLS` mapping in `src/config.py`.
 
 The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_MCP_SERVER` hold Agent Registry resource names — these are NOT optional and will crash on import if missing.
+
+### A2A (Agent-to-Agent) — preview-optional
+
+`src/a2a/` makes the coordinator a discoverable A2A agent. `agent_card.py:build_agent_card()` builds an `a2a.types.AgentCard` (name `coordinator_agent`, five skills mirroring its real tools: flight/hotel search, booking, expense policy check, expense submission) whose endpoint derives from `config.coordinator_a2a_url()`; `agent_card_dict()` serializes it. `remote_agent.py:build_remote_coordinator()` returns an ADK `RemoteA2aAgent` (`google.adk.agents.remote_a2a_agent`) client, and `try_build_remote_coordinator()` returns `None` on any failure. `src/registry.py` adds `register_a2a_agent(card)` / `get_a2a_agents()` that reuse the same `AgentRegistry` client as the MCP flow. `src/deploy/register_a2a.py` is the CLI (register default, `--discover` to list).
+
+This is **preview-optional**: the A2A/registry create+discovery surface may not be enabled in every project. Every path degrades gracefully — it logs `A2A preview not enabled — skipping` and returns `None`/`[]` (the CLI exits 0) rather than crashing a live run. `a2a-sdk` 1.x models are protobuf, so serialization uses `protobuf.json_format.MessageToDict` (with a pydantic `model_dump` fallback).
 
 ### Model resolution
 
