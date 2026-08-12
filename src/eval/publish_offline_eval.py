@@ -22,12 +22,14 @@ stream. ``complexity_routing_accuracy`` is a classifier-accuracy fraction scaled
 
 from __future__ import annotations
 
+import argparse
+import json
 from typing import TYPE_CHECKING
 
 from src.eval.publish_eval_metrics import publish_eval_metrics
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from src.observability.metrics import MetricsWriter
 
@@ -74,3 +76,106 @@ def publish_offline_scores(
 
     labels = {"eval_mode": "offline", **(extra_labels or {})}
     return publish_eval_metrics(raw, writer=writer, extra_labels=labels)
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+class _NoopMetricClient:
+    """Swallow ``create_time_series`` — used for ``--dry-run`` (no GCP)."""
+
+    def create_time_series(self, name=None, time_series=None):
+        return None
+
+
+def _load_results(path: str) -> tuple[dict, dict | None]:
+    """Load a bridge input file → ``(batch_results, complexity_results)``.
+
+    Accepts either a ``run_all_evals`` ``full_results.json`` (has ``batch`` /
+    ``complexity`` keys) or a raw ``batch_results_*.json`` (already the batch
+    dict, identified by a top-level ``agents`` key). Complexity is ``None`` for
+    the raw-batch shape.
+    """
+    with open(path) as f:
+        data = json.load(f)
+    if "batch" in data:
+        return data["batch"], data.get("complexity")
+    return data, None
+
+
+def _resolve_latest() -> str:
+    """Newest ``EVAL_OUTPUT_DIR/*/full_results.json`` by mtime."""
+    from pathlib import Path
+
+    from src.config import EVAL_OUTPUT_DIR
+
+    candidates = sorted(
+        Path(EVAL_OUTPUT_DIR).glob("*/full_results.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not candidates:
+        raise SystemExit(f"No run_*/full_results.json under {EVAL_OUTPUT_DIR}")
+    return str(candidates[-1])
+
+
+def _run_fresh() -> tuple[dict, dict]:
+    """Run a fresh coordinator batch eval + complexity accuracy eval."""
+    import asyncio
+
+    from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+    from src.eval.complexity_metrics import run_complexity_accuracy_eval
+    from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
+
+    batch = run_multi_agent_batch_eval(agents=[DEFAULT_COORDINATOR_AGENT])
+    accuracy = asyncio.run(run_complexity_accuracy_eval(ROUTER_EVAL_CASES))
+    return batch, {"accuracy": accuracy}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point for the offline-eval → ``agent_eval/*`` bridge."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    src = parser.add_mutually_exclusive_group()
+    src.add_argument(
+        "--from-json",
+        metavar="PATH",
+        help="load a run_all_evals full_results.json or a raw batch_results_*.json",
+    )
+    src.add_argument(
+        "--latest",
+        action="store_true",
+        help="use the newest EVAL_OUTPUT_DIR/*/full_results.json",
+    )
+    src.add_argument(
+        "--run",
+        action="store_true",
+        help="run a fresh coordinator batch + complexity eval (one run_inference)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="compute and print scores without writing to Cloud Monitoring",
+    )
+    args = parser.parse_args(argv)
+
+    if args.run:
+        batch, complexity = _run_fresh()
+    else:
+        path = _resolve_latest() if args.latest else args.from_json
+        if not path:
+            parser.error("one of --from-json, --latest, or --run is required")
+        batch, complexity = _load_results(path)
+
+    writer = None
+    if args.dry_run:
+        from src.observability.metrics import MetricsWriter
+
+        writer = MetricsWriter(client=_NoopMetricClient())
+
+    published = publish_offline_scores(batch, complexity_results=complexity, writer=writer)
+    prefix = "[dry-run] would publish" if args.dry_run else "published"
+    print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

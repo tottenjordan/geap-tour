@@ -124,3 +124,82 @@ def test_empty_batch_no_crash():
     published = off.publish_offline_scores({}, writer=writer)
     assert published == {}
     assert client.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# CLI load helper
+# --------------------------------------------------------------------------- #
+def test_load_results_full_results_shape(tmp_path):
+    import json
+
+    path = tmp_path / "full_results.json"
+    payload = {
+        "batch": _batch({"agent_engine_0/final_response_quality_v1": 0.9}),
+        "complexity": {"accuracy": {"accuracy": 0.85}},
+    }
+    path.write_text(json.dumps(payload))
+
+    batch, complexity = off._load_results(str(path))
+    assert batch == payload["batch"]
+    assert complexity == payload["complexity"]
+
+
+def test_load_results_batch_shape(tmp_path):
+    import json
+
+    path = tmp_path / "batch_results_x.json"
+    payload = _batch({"agent_engine_0/final_response_quality_v1": 0.9})
+    path.write_text(json.dumps(payload))
+
+    batch, complexity = off._load_results(str(path))
+    assert batch == payload
+    assert complexity is None
+
+
+def test_from_json_loads_and_publishes(tmp_path, monkeypatch):
+    import json
+
+    path = tmp_path / "full_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "batch": _batch({"agent_engine_0/final_response_quality_v1": 0.9}),
+                "complexity": {"accuracy": {"accuracy": 0.85}},
+            }
+        )
+    )
+
+    captured = {}
+    monkeypatch.setattr(
+        off,
+        "publish_offline_scores",
+        lambda batch, complexity_results=None, **k: (
+            captured.setdefault("call", (batch, complexity_results)) or {"helpfulness": 4.5}
+        ),
+    )
+
+    off.main(["--from-json", str(path)])
+    batch, complexity = captured["call"]
+    assert "agents" in batch
+    assert complexity == {"accuracy": {"accuracy": 0.85}}
+
+
+def test_dry_run_writes_nothing(tmp_path, capsys):
+    import json
+
+    path = tmp_path / "full_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "batch": _batch({"agent_engine_0/final_response_quality_v1": 0.9}),
+                "complexity": {"accuracy": {"accuracy": 0.85}},
+            }
+        )
+    )
+
+    # --dry-run must not touch Cloud Monitoring: a real MetricsWriter with no
+    # injected client would lazily build a live client on first write, so a
+    # successful dry run proves nothing was written.
+    off.main(["--from-json", str(path), "--dry-run"])
+    out = capsys.readouterr().out
+    assert "helpfulness" in out
