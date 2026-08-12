@@ -19,6 +19,9 @@ dependencies = [
     "matplotlib>=3.11.1",
     "paperbanana>=0.3.0",
     "google-cloud-monitoring-dashboards>=2.22.0",
+    "opentelemetry-instrumentation-google-genai>=0.7b1",
+    "opentelemetry-instrumentation-grpc>=0.63b1",
+    "opentelemetry-instrumentation-httpx>=0.63b1",
 ]
 
 [build-system]

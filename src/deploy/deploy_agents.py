@@ -77,6 +77,13 @@ REQUIREMENTS = [
     "litellm>=1.83.14",
     "pydantic>=2.12.5",
     "cloudpickle>=3.0,<4.0",
+    # OTel instrumentation — Agent Engine auto-enables telemetry, but without
+    # these the emitted spans carry no gen_ai.* prompt/response attributes, so
+    # Online Evaluators (which score {prompt}/{response} from gen_ai spans)
+    # silently produce zero results. google-genai is the one that unblocks eval.
+    "opentelemetry-instrumentation-google-genai",
+    "opentelemetry-instrumentation-grpc",
+    "opentelemetry-instrumentation-httpx",
     # "google-cloud-iamconnectorcredentials>=0.1.0",
 ]
 
