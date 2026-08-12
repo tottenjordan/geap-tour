@@ -118,6 +118,35 @@ def _resolve_latest() -> str:
     return str(candidates[-1])
 
 
+def _inject_policy_compliance(batch: dict) -> None:
+    """Score policy_compliance via the standalone judge and add it to ``batch``.
+
+    The custom ``client.evals`` policy metric is SDK-broken (see
+    :mod:`src.eval.policy_judge`), so we score it directly and splice the result
+    into the coordinator's metrics under the same key shape the bridge expects
+    (``agent_engine_0/policy_compliance`` → ``{"score": 0-1}``). Guarded: a
+    failure just leaves policy_compliance absent (the bridge skips it).
+    """
+    from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION
+    from src.eval.policy_judge import run_policy_compliance_eval
+
+    arn = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
+    result = run_policy_compliance_eval(arn)
+    score = result.get("score")
+    if score is None:
+        print(
+            f"  policy_compliance: not scored ({result.get('n_scored')}/{result.get('n_total')} cases)"
+        )
+        return
+    metrics = (
+        batch.setdefault("agents", {})
+        .setdefault(DEFAULT_COORDINATOR_AGENT, {})
+        .setdefault("metrics", {})
+    )
+    metrics["agent_engine_0/policy_compliance"] = {"score": score}
+    print(f"  policy_compliance: {score:.3f} (over {result.get('n_scored')} responses)")
+
+
 def _run_fresh() -> tuple[dict, dict]:
     """Run a fresh coordinator batch eval + complexity accuracy eval."""
     import asyncio
@@ -127,6 +156,10 @@ def _run_fresh() -> tuple[dict, dict]:
     from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
 
     batch = run_multi_agent_batch_eval(agents=[DEFAULT_COORDINATOR_AGENT])
+    try:
+        _inject_policy_compliance(batch)
+    except Exception as e:  # policy scoring is best-effort
+        print(f"  policy_compliance scoring failed: {e}")
     accuracy = asyncio.run(run_complexity_accuracy_eval(ROUTER_EVAL_CASES))
     return batch, {"accuracy": accuracy}
 
