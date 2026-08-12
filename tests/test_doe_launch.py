@@ -111,6 +111,35 @@ def test_submit_point_dry_run_does_not_call_runner():
     assert "cmd" in entry
 
 
+def test_write_manifest_skips_gcs_when_disabled(tmp_path, monkeypatch):
+    """upload_gcs=False writes locally and never touches google.cloud.storage."""
+    def _boom(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("GCS upload attempted during dry run")
+
+    # Any attempt to import/use storage would go through this attribute.
+    monkeypatch.setattr("google.cloud.storage.Client", _boom, raising=False)
+    manifest = {"experiment_id": "expdry", "kind": "screening", "points": []}
+    path = launch_mod.write_manifest(manifest, str(tmp_path / "out"), upload_gcs=False)
+    assert (tmp_path / "out" / "manifest.json").exists()
+    assert path == str(tmp_path / "out" / "manifest.json")
+
+
+def test_launch_dry_run_does_not_upload_manifest(tmp_path, monkeypatch):
+    """A dry-run launch keeps the manifest local-only (no GCS side effect)."""
+    monkeypatch.setattr("google.cloud.storage.Client",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no GCS in dry run")),
+                        raising=False)
+    factors = get_factors()
+    design = build_design(factors, "screening")
+    manifest = launch_mod.launch(
+        design, factors, "expdry2",
+        spec_dir=str(tmp_path / "spec"), out_dir=str(tmp_path / "out"),
+        dry_run=True,
+    )
+    assert manifest["num_points"] == 9
+    assert (tmp_path / "out" / "manifest.json").exists()
+
+
 def test_launch_writes_manifest(tmp_path, monkeypatch):
     factors = get_factors()
     design = build_design(factors, "screening")
