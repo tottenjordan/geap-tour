@@ -186,7 +186,7 @@ def label_dashboard() -> None:
         merged = {**dict(existing.labels), **RESOURCE_LABELS}
         existing.labels.clear()
         existing.labels.update(merged)
-        client.update_dashboard(dashboard=existing)
+        client.update_dashboard(request={"dashboard": existing})
         print(f"  patched: {existing.display_name}")
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"  ! failed dashboard: {e}")
@@ -219,14 +219,13 @@ def label_cloud_run_services() -> None:
 
 def label_gcs_bucket() -> None:
     print("GCS staging bucket:")
-    from src.config import resource_labels_gcloud
-
+    # `gcloud storage buckets update --update-labels` 400s on this project;
+    # `gsutil label ch -l k:v` merges labels reliably and is idempotent.
+    ch_flags = []
+    for k, v in RESOURCE_LABELS.items():
+        ch_flags += ["-l", f"{k}:{v}"]
     _gcloud_update_labels(
-        [
-            "gcloud", "storage", "buckets", "update",
-            f"gs://{GCP_STAGING_BUCKET}",
-            f"--update-labels={resource_labels_gcloud()}",
-        ],
+        ["gsutil", "label", "ch", *ch_flags, f"gs://{GCP_STAGING_BUCKET}"],
         GCP_STAGING_BUCKET,
     )
 
