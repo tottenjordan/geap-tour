@@ -16,38 +16,42 @@ class TestComplexityScoring:
         assert _score_to_level(0.29) == "low"
 
     def test_medium_score(self):
-        assert _score_to_level(0.30) == "medium"
-        assert _score_to_level(0.45) == "medium"
-        assert _score_to_level(0.59) == "medium"
+        # DOE-tuned defaults: medium = [COMPLEXITY_LOW=0.44, COMPLEXITY_HIGH=0.80)
+        assert _score_to_level(0.44) == "medium"
+        assert _score_to_level(0.60) == "medium"
+        assert _score_to_level(0.79) == "medium"
 
     def test_high_score(self):
-        assert _score_to_level(0.60) == "high"
         assert _score_to_level(0.80) == "high"
+        assert _score_to_level(0.90) == "high"
         assert _score_to_level(1.0) == "high"
 
     def test_model_tier_lite(self):
         assert score_to_model_tier(0.0) == "lite"
         assert score_to_model_tier(0.15) == "lite"
-        assert score_to_model_tier(0.29) == "lite"
+        assert score_to_model_tier(0.43) == "lite"
 
     def test_model_tier_flash(self):
-        assert score_to_model_tier(0.30) == "flash"
-        assert score_to_model_tier(0.40) == "flash"
+        # flash = [COMPLEXITY_LOW=0.44, MEDIUM_SPLIT=0.60)
         assert score_to_model_tier(0.44) == "flash"
+        assert score_to_model_tier(0.50) == "flash"
+        assert score_to_model_tier(0.59) == "flash"
 
     def test_model_tier_sonnet(self):
-        assert score_to_model_tier(0.45) == "sonnet"
-        assert score_to_model_tier(0.50) == "sonnet"
-        assert score_to_model_tier(0.59) == "sonnet"
+        # sonnet = [MEDIUM_SPLIT=0.60, COMPLEXITY_HIGH=0.80)
+        assert score_to_model_tier(0.60) == "sonnet"
+        assert score_to_model_tier(0.70) == "sonnet"
+        assert score_to_model_tier(0.79) == "sonnet"
 
     def test_model_tier_pro(self):
-        assert score_to_model_tier(0.60) == "pro"
-        assert score_to_model_tier(0.70) == "pro"
-        assert score_to_model_tier(0.79) == "pro"
+        # pro = [COMPLEXITY_HIGH=0.80, HIGH_SPLIT=0.95)
+        assert score_to_model_tier(0.80) == "pro"
+        assert score_to_model_tier(0.88) == "pro"
+        assert score_to_model_tier(0.94) == "pro"
 
     def test_model_tier_opus(self):
-        assert score_to_model_tier(0.80) == "opus"
-        assert score_to_model_tier(0.90) == "opus"
+        assert score_to_model_tier(0.95) == "opus"
+        assert score_to_model_tier(0.98) == "opus"
         assert score_to_model_tier(1.0) == "opus"
 
     def test_complexity_result_dataclass(self):

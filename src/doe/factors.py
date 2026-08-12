@@ -79,7 +79,10 @@ FACTORS: list[Factor] = [
         name="router_boundaries",
         channel="runner_env",
         description="Complexity cut-points; 'aggressive_savings' pushes traffic "
-        "to cheaper tiers.",
+        "to cheaper tiers. NB: after screening doe-screening-20260812-073603 the "
+        "'aggressive_savings' values became the src/config.py default, so this "
+        "factor's 'baseline' level now contrasts the OLD default against the "
+        "current one (a meaningful 'should we revert?' probe), not default-vs-new.",
         levels={
             "baseline": {
                 "COMPLEXITY_LOW": "0.30",

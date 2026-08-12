@@ -60,10 +60,10 @@ def test_defaults(reloaded_config, monkeypatch):
     assert cfg.TRAVEL_MODEL == cfg.AGENT_MODEL
     assert cfg.EXPENSE_MODEL == cfg.AGENT_MODEL
     assert cfg.ROUTER_MODEL == cfg.LITE_MODEL
-    assert cfg.COMPLEXITY_LOW == 0.30
-    assert cfg.COMPLEXITY_HIGH == 0.60
-    assert cfg.MEDIUM_SPLIT == 0.45
-    assert cfg.HIGH_SPLIT == 0.80
+    assert cfg.COMPLEXITY_LOW == 0.44
+    assert cfg.COMPLEXITY_HIGH == 0.80
+    assert cfg.MEDIUM_SPLIT == 0.60
+    assert cfg.HIGH_SPLIT == 0.95
     assert cfg.PROMPT_VARIANT == "gepa"
 
 

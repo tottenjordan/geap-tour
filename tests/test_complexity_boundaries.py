@@ -35,12 +35,12 @@ def test_default_cut_points(reloaded_complexity, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     cx = reloaded_complexity()
 
-    assert cx.THRESHOLDS == [0.30, 0.60]
-    assert cx.score_to_model_tier(0.29) == "lite"
-    assert cx.score_to_model_tier(0.30) == "flash"
-    assert cx.score_to_model_tier(0.45) == "sonnet"
-    assert cx.score_to_model_tier(0.60) == "pro"
-    assert cx.score_to_model_tier(0.80) == "opus"
+    assert cx.THRESHOLDS == [0.44, 0.80]
+    assert cx.score_to_model_tier(0.43) == "lite"
+    assert cx.score_to_model_tier(0.44) == "flash"
+    assert cx.score_to_model_tier(0.60) == "sonnet"
+    assert cx.score_to_model_tier(0.80) == "pro"
+    assert cx.score_to_model_tier(0.95) == "opus"
 
 
 def test_overridden_cut_points_shift(reloaded_complexity, monkeypatch):
@@ -123,8 +123,12 @@ def test_cost_eval_responds_to_boundary_factor(reloaded_cost_eval, monkeypatch):
     #   0.85 -> opus   (baseline) but pro   (aggressive)
     scores = [0.45, 0.85]
 
-    for var in _BOUNDARY_VARS:
-        monkeypatch.delenv(var, raising=False)
+    # Old (pre-DOE) baseline boundaries — set explicitly, since the config
+    # default is now the aggressive_savings set (adopted after screening).
+    monkeypatch.setenv("COMPLEXITY_LOW", "0.30")
+    monkeypatch.setenv("MEDIUM_SPLIT", "0.45")
+    monkeypatch.setenv("COMPLEXITY_HIGH", "0.60")
+    monkeypatch.setenv("HIGH_SPLIT", "0.80")
     cm = reloaded_cost_eval()
     base = _routed_cost(cm, monkeypatch, scores)
     assert [c["tier"] for c in base["per_case"]] == ["sonnet", "opus"]

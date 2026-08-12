@@ -69,11 +69,15 @@ OPUS_MODEL = os.environ.get("OPUS_MODEL", "claude-opus-4-6")
 # Router model (defaults to LITE_MODEL; must be defined after LITE_MODEL so the default resolves)
 ROUTER_MODEL = os.environ.get("ROUTER_MODEL", LITE_MODEL)
 
-# Router complexity boundaries (defaults match src/router/complexity.py; overridable for DOE)
-COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.30"))
-COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.60"))
-MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.45"))
-HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.80"))
+# Router complexity boundaries (overridable for DOE).
+# Defaults adopted from the DOE screening doe-screening-20260812-073603: the
+# "aggressive_savings" cut-points won +26pp cost savings (68.7% -> 94.7%) for a
+# ~0.04 quality dip and no other factor moved quality above eval noise. See
+# docs/notes/doe-router-boundaries-inert.md and the screening report.
+COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.44"))
+COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.80"))
+MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.60"))
+HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.95"))
 
 # Backwards-compat alias: still imported by src/deploy/deploy_agents.py
 COMPLEXITY_THRESHOLD_HIGH = COMPLEXITY_HIGH

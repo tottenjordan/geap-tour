@@ -58,7 +58,7 @@ bash scripts/setup_governance_policies.sh --sgp   # IAM + SGP
 
 1. **Coordinator agent** (`src/agents/coordinator_agent.py`) — domain router with two sub-agents: `travel_agent` (flights/hotels via search + booking MCP) and `expense_agent` (policy checks/submissions via expense MCP). Uses `AgentTool` for delegation and `PreloadMemoryTool` for Memory Bank.
 
-2. **Multi-model router** (`src/router/agents.py`) — 5-tier complexity router. A `before_agent_callback` calls the complexity classifier (`src/router/complexity.py`) which scores prompts 0–1, then routes to one of five sub-agents: lite (gemini-3.1-flash-lite) → flash (gemini-3.5-flash) → pro (gemini-3.1-pro-preview) → sonnet (claude-sonnet-4-6) → opus (claude-opus-4-6). The router itself runs on the lite model. Score boundaries: <0.30 lite, 0.30–0.45 flash, 0.45–0.60 sonnet, 0.60–0.80 pro, ≥0.80 opus.
+2. **Multi-model router** (`src/router/agents.py`) — 5-tier complexity router. A `before_agent_callback` calls the complexity classifier (`src/router/complexity.py`) which scores prompts 0–1, then routes to one of five sub-agents: lite (gemini-3.1-flash-lite) → flash (gemini-3.5-flash) → pro (gemini-3.1-pro-preview) → sonnet (claude-sonnet-4-6) → opus (claude-opus-4-6). The router itself runs on the lite model. Score boundaries (defaults, DOE-tuned for cost savings in screening doe-screening-20260812-073603): <0.44 lite, 0.44–0.60 flash, 0.60–0.80 sonnet, 0.80–0.95 pro, ≥0.95 opus. All four cut-points are env-overridable (`COMPLEXITY_LOW`/`MEDIUM_SPLIT`/`COMPLEXITY_HIGH`/`HIGH_SPLIT`).
 
 ### MCP server registration
 
