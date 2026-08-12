@@ -153,6 +153,15 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "AGENT_REGISTRY_LOCATION": AGENT_REGISTRY_LOCATION,
     }
 
+    # Model Armor template names for server-side screening (read by
+    # src/armor/config.get_model_armor_config). Only bake when explicitly set so
+    # the deployed engine falls back to the project/region-derived defaults
+    # rather than being overridden with an empty string.
+    for armor_var in ("MODEL_ARMOR_PROMPT_TEMPLATE", "MODEL_ARMOR_RESPONSE_TEMPLATE"):
+        armor_val = os.environ.get(armor_var)
+        if armor_val:
+            env_vars[armor_var] = armor_val
+
     config = {
         "staging_bucket": f"gs://{GCP_STAGING_BUCKET}",
         "requirements": REQUIREMENTS,

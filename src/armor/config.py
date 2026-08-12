@@ -1,15 +1,24 @@
 """Agent Armor configuration — Model Armor templates and guardrail callbacks.
 
-Provides two layers of protection:
+Single source of truth for the guardrail: both the coordinator and the router
+import this module (the router previously carried a duplicate ``src/router/armor.py``).
+
+Provides three layers of protection:
 1. ModelArmorConfig: Server-side screening via Model Armor templates (prompt injection,
    content safety, sensitive data, malicious URLs)
-2. before_agent_callback: Client-side input validation (blocklist, length limits)
+2. ``input_guardrail_callback``: pure client-side input validation (blocklist,
+   length limits) with a Content|None contract — trivially testable, no side effects.
+3. ``guardrail_with_telemetry``: a thin wrapper that runs the pure guardrail and,
+   on a block, emits demo observability (an OTel ``guardrail.blocked`` span event
+   plus a ``custom.googleapis.com/agent_armor/blocked`` metric). Telemetry is
+   fully guarded so a metric/OTel failure NEVER changes the guardrail's return.
 """
 
 import os
 import re
 
 from google.genai.types import GenerateContentConfig, ModelArmorConfig
+from opentelemetry import trace
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
 
@@ -50,33 +59,103 @@ BLOCKED_PATTERNS = [
 
 REJECTION_MESSAGE = "I'm sorry, I can't process that request. Please rephrase your question about travel or expenses."
 
+# Coarse, low-cardinality block reasons (used as metric labels + span-event attrs).
+REASON_TOO_LONG = "input_too_long"
+REASON_BLOCKED_PATTERN = "blocked_pattern"
+
+# Metric type emitted (once per block) so a governance BLOCK is observable in
+# Cloud Monitoring. Bare here; MetricsWriter normalizes to custom.googleapis.com/.
+ARMOR_BLOCKED_METRIC = "agent_armor/blocked"
+
+
+def _extract_user_message(callback_context) -> str:
+    """Pull the concatenated user text out of a callback context (Content|str)."""
+    from google.genai.types import Content
+
+    context = callback_context
+    user_message = ""
+    if context is not None and getattr(context, "user_content", None):
+        user_content = context.user_content
+        if isinstance(user_content, Content):
+            for part in user_content.parts or []:
+                if part.text:
+                    user_message += part.text
+        elif isinstance(user_content, str):
+            user_message = user_content
+    return user_message
+
+
+def classify_block(user_message: str) -> str | None:
+    """Return WHY a message would be blocked, or None if it passes.
+
+    Kept side-effect free so both ``input_guardrail_callback`` (for its return
+    Content) and ``guardrail_with_telemetry`` (for its reason label) can share it.
+    """
+    if not user_message:
+        return None
+    if len(user_message) > MAX_INPUT_LENGTH:
+        return REASON_TOO_LONG
+    for pattern in BLOCKED_PATTERNS:
+        if pattern.search(user_message):
+            return REASON_BLOCKED_PATTERN
+    return None
+
 
 def input_guardrail_callback(callback_context=None, **kwargs):
     """before_agent_callback that rejects suspicious or oversized inputs.
 
-    Returns a Content rejection if the input fails validation, or None to proceed.
-    This runs client-side before the request reaches Model Armor's server-side filters.
+    Pure validator: returns a Content rejection if the input fails validation, or
+    None to proceed. No telemetry side effects — see ``guardrail_with_telemetry``
+    for the observability-emitting wrapper. This runs client-side before the
+    request reaches Model Armor's server-side filters.
     """
     from google.genai.types import Content, Part
 
-    context = callback_context
-    user_message = ""
-    if context and context.user_content:
-        if isinstance(context.user_content, Content):
-            for part in context.user_content.parts or []:
-                if part.text:
-                    user_message += part.text
-        elif isinstance(context.user_content, str):
-            user_message = context.user_content
-
-    if not user_message:
-        return None
-
-    if len(user_message) > MAX_INPUT_LENGTH:
+    user_message = _extract_user_message(callback_context)
+    reason = classify_block(user_message)
+    if reason == REASON_TOO_LONG:
         return Content(parts=[Part(text=f"Input too long ({len(user_message)} chars, max {MAX_INPUT_LENGTH}). Please shorten your request.")])
-
-    for pattern in BLOCKED_PATTERNS:
-        if pattern.search(user_message):
-            return Content(parts=[Part(text=REJECTION_MESSAGE)])
-
+    if reason == REASON_BLOCKED_PATTERN:
+        return Content(parts=[Part(text=REJECTION_MESSAGE)])
     return None
+
+
+def _emit_block_telemetry(reason: str, metrics_writer=None) -> None:
+    """Emit a span event + metric for a governance block.
+
+    Each side is independently guarded so a failure in one (or in credentials for
+    the metric client) never propagates — the guardrail's decision must stand
+    regardless of whether observability succeeds.
+    """
+    try:
+        span = trace.get_current_span()
+        if span is not None and span.is_recording():
+            span.add_event("guardrail.blocked", {"guardrail.reason": reason})
+    except Exception:
+        pass
+
+    try:
+        writer = metrics_writer
+        if writer is None:
+            from src.observability.metrics import MetricsWriter
+
+            writer = MetricsWriter()
+        writer.write_gauge(ARMOR_BLOCKED_METRIC, 1, labels={"reason": reason})
+    except Exception:
+        pass
+
+
+def guardrail_with_telemetry(callback_context=None, metrics_writer=None, **kwargs):
+    """Telemetry-wrapping guardrail — the coordinator's before_agent_callback.
+
+    Runs the pure ``input_guardrail_callback`` and, on a block (non-None), adds a
+    ``guardrail.blocked`` OTel span event and increments the ``agent_armor/blocked``
+    metric. Returns exactly what the pure guardrail returned; telemetry is fully
+    guarded so it can never change the decision. ``metrics_writer`` is injectable
+    for tests.
+    """
+    result = input_guardrail_callback(callback_context=callback_context, **kwargs)
+    if result is not None:
+        reason = classify_block(_extract_user_message(callback_context)) or "blocked"
+        _emit_block_telemetry(reason, metrics_writer=metrics_writer)
+    return result

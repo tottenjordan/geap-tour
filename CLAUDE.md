@@ -95,7 +95,7 @@ The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_
 
 ### Security layers
 
-- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side `input_guardrail_callback` (blocklist patterns, length limits). Both the coordinator and the router import this single shared module (the router previously had a duplicate `src/router/armor.py`, now removed).
+- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side guardrail (blocklist patterns, length limits). This is the single shared module — both the coordinator and the router import it (the router previously had a duplicate `src/router/armor.py`, now removed). The pure validator `input_guardrail_callback` (Content|None) stays side-effect-free for testability; `guardrail_with_telemetry` wraps it to emit a `guardrail.blocked` OTel span event + a `custom.googleapis.com/agent_armor/blocked` metric on each block (telemetry is fully guarded and never changes the guard's decision). The coordinator wires `guardrail_with_telemetry` as its `before_agent_callback` and passes `generate_content_config=get_armored_generate_config()` for server-side armor; the router runs `input_guardrail_callback` inside its `complexity_router_callback`.
 
 ## Key Conventions
 

@@ -18,6 +18,7 @@ from src.config import (
 )
 from src.registry import get_mcp_tools
 from src.observability.tracing import set_span_attributes
+from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
 
@@ -63,10 +64,10 @@ async def save_memories_callback(callback_context: CallbackContext):
     """after_agent_callback: persist this session's events to Memory Bank.
 
     Also annotates the active request span with session/user correlation
-    attributes so a trace can be tied back to a specific session and user.
-    We do this here (in the existing after_agent_callback) rather than adding a
-    before_agent_callback: the coordinator deliberately has no
-    before_agent_callback, leaving that slot free for the governance feature.
+    attributes so a trace can be tied back to a specific session and user. The
+    coordinator's before_agent_callback slot is now the governance guardrail
+    (``guardrail_with_telemetry``); this after-callback keeps only the
+    memory-persist + correlation-attribute duties.
 
     Per-tool latency spans are emitted automatically by ADK's own
     instrumentation when telemetry is enabled, so we don't wrap the MCP tool
@@ -112,6 +113,16 @@ coordinator_agent = LlmAgent(
         AgentTool(agent=travel_agent),
         AgentTool(agent=expense_agent),
     ],
+    # Server-side Model Armor: templates screen prompt + response for injection,
+    # unsafe content, sensitive data, and malicious URLs. Enforcement is native
+    # for Gemini 2.x (plain-string) models; for LiteLlm-wrapped models (Gemini
+    # 3.x / Claude) the field is carried but honored only where the LiteLlm path
+    # forwards it — the client-side callback below is the guaranteed layer.
+    generate_content_config=get_armored_generate_config(),
+    # Client-side governance guardrail (must-have): rejects prompt-injection /
+    # oversized inputs BEFORE the model runs, and emits a span event + metric on
+    # each block so the BLOCK is observable. Telemetry never affects the decision.
+    before_agent_callback=guardrail_with_telemetry,
     after_agent_callback=save_memories_callback,
 )
 
