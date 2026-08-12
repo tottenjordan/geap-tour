@@ -433,6 +433,7 @@ def generate_load(
     on_dispatch=None,
     sleep=time.sleep,
     monotonic=time.monotonic,
+    emit_metrics: bool = False,
 ) -> dict:
     """Generate concurrent, ramped synthetic load against a deployed agent.
 
@@ -451,6 +452,10 @@ def generate_load(
     and randomness (``seed``) are injectable so the scheduler is deterministic
     under test; ``on_dispatch(user, message, injected)`` is an optional hook
     invoked in the scheduling thread for observability/testing.
+
+    When ``emit_metrics`` is True the summary is also written to Cloud Monitoring
+    as ``custom.googleapis.com/agent_traffic/*`` gauges (default False so tests
+    and existing callers are unaffected).
 
     Returns a summary dict with keys: offered, sent, errors, injected,
     achieved_qps, p50_latency, p95_latency, duration_s.
@@ -540,6 +545,18 @@ def generate_load(
     print(f"  Latency p50:  {summary['p50_latency'] * 1000:.0f} ms")
     print(f"  Latency p95:  {summary['p95_latency'] * 1000:.0f} ms")
     print(f"  Duration:     {actual_duration:.1f}s")
+
+    if emit_metrics:
+        # Imported lazily so the module (and its tests) never require the
+        # Cloud Monitoring client unless metric emission is explicitly on.
+        from src.observability.metrics import emit_traffic_metrics
+
+        try:
+            emit_traffic_metrics(summary)
+            print("  Metrics:      emitted to custom.googleapis.com/agent_traffic/*")
+        except Exception as e:  # demo tooling, never fail the run on metrics
+            print(f"  Metrics:      emission failed: {e}")
+
     return summary
 
 
@@ -558,6 +575,7 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=8, help="Concurrent workers for --load mode (default: 8)")
     parser.add_argument("--error-rate", type=float, default=0.0, help="Injected bad-query probability for --load (default: 0.0)")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)")
+    parser.add_argument("--emit-metrics", action="store_true", help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run")
     args = parser.parse_args()
 
     if args.load:
@@ -576,6 +594,7 @@ if __name__ == "__main__":
             workers=args.workers,
             error_injection=args.error_rate,
             seed=args.seed,
+            emit_metrics=args.emit_metrics,
         )
     elif args.steady:
         generate_steady_traffic(
