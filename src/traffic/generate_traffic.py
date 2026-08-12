@@ -586,7 +586,7 @@ def generate_scaling_profile(
     agent,
     *,
     stages=None,
-    workers=8,
+    workers=64,
     error_injection=0.0,
     user_pool=None,
     seed=None,
@@ -608,6 +608,12 @@ def generate_scaling_profile(
     ``target_qps`` labels, so the dashboard renders a scaling curve rather than a
     single flat run. ``seed`` is offset per stage so each step varies its query
     mix while the whole profile stays reproducible.
+
+    ``workers`` defaults high (64) because achieved QPS is capped by
+    ``workers / avg_latency`` — the coordinator's multi-second per-query latency
+    means a small pool saturates well below the target, flattening the staircase.
+    Size it to roughly ``peak_qps × avg_latency_s`` for the achieved curve to
+    track the offered one.
 
     ``agent`` and the injectable ``sleep``/``monotonic``/``seed`` behave exactly
     as in :func:`generate_load` (tests pass a fake agent + virtual clock).
@@ -695,7 +701,7 @@ if __name__ == "__main__":
     parser.add_argument("--load", action="store_true", help="Run in concurrent ramped load mode")
     parser.add_argument("--scaling", action="store_true", help="Run the multi-stage QPS scaling staircase (illustrates scaling)")
     parser.add_argument("--ramp", type=int, default=0, help="Ramp-up seconds for --load mode (default: 0)")
-    parser.add_argument("--workers", type=int, default=8, help="Concurrent workers for --load mode (default: 8)")
+    parser.add_argument("--workers", type=int, default=None, help="Concurrent workers (default: 8 for --load, 64 for --scaling)")
     parser.add_argument("--error-rate", type=float, default=0.0, help="Injected bad-query probability for --load (default: 0.0)")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)")
     parser.add_argument("--emit-metrics", action="store_true", help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run")
@@ -711,7 +717,7 @@ if __name__ == "__main__":
         scaling_agent = agent_engines.get(resource)
         generate_scaling_profile(
             scaling_agent,
-            workers=args.workers,
+            workers=args.workers if args.workers is not None else 64,
             error_injection=args.error_rate,
             seed=args.seed,
             emit_metrics=args.emit_metrics,
@@ -729,7 +735,7 @@ if __name__ == "__main__":
             target_qps=args.qps,
             duration_s=args.duration * 60,
             ramp_s=args.ramp,
-            workers=args.workers,
+            workers=args.workers if args.workers is not None else 8,
             error_injection=args.error_rate,
             seed=args.seed,
             emit_metrics=args.emit_metrics,
