@@ -65,7 +65,7 @@ def submit_point(
     *,
     agent_module: str = "coordinator_agent",
     reuse_agent_id: str = "",
-    spec_dir: str = ".",
+    spec_dir: str = "build/pipeline_specs",
     dry_run: bool = False,
     runner=subprocess.run,
 ) -> dict:
@@ -141,12 +141,21 @@ def build_manifest(
     }
 
 
-def write_manifest(manifest: dict, out_dir: str) -> str:
-    """Write the manifest locally and (best-effort) to GCS. Returns local path."""
+def write_manifest(manifest: dict, out_dir: str, upload_gcs: bool = True) -> str:
+    """Write the manifest locally and (best-effort) to GCS. Returns local path.
+
+    ``upload_gcs=False`` keeps the manifest local-only. A dry run uses this so it
+    stays truly side-effect-free (the local manifest is still a useful plan
+    preview; the GCS write is deferred to a real ``--execute`` launch).
+    """
     os.makedirs(out_dir, exist_ok=True)
     local_path = os.path.join(out_dir, "manifest.json")
     with open(local_path, "w") as f:
         json.dump(manifest, f, indent=2)
+
+    if not upload_gcs:
+        print(f"[dry-run] manifest written locally → {local_path} (GCS upload skipped)")
+        return local_path
 
     prefix = f"eval-results/doe/{manifest['experiment_id']}"
     try:
@@ -169,7 +178,7 @@ def launch(
     kind: str = "screening",
     agent_module: str = "coordinator_agent",
     reuse_agent_id: str = "",
-    spec_dir: str = ".",
+    spec_dir: str = "build/pipeline_specs",
     out_dir: str | None = None,
     dry_run: bool = False,
     runner=subprocess.run,
@@ -197,5 +206,5 @@ def launch(
         f"{len(design)} runs, {fresh} fresh-deploy (heaviest path), "
         f"{len(design) - fresh} reuse"
     )
-    write_manifest(manifest, out_dir)
+    write_manifest(manifest, out_dir, upload_gcs=not dry_run)
     return manifest

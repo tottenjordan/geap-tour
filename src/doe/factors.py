@@ -79,7 +79,10 @@ FACTORS: list[Factor] = [
         name="router_boundaries",
         channel="runner_env",
         description="Complexity cut-points; 'aggressive_savings' pushes traffic "
-        "to cheaper tiers.",
+        "to cheaper tiers. NB: after screening doe-screening-20260812-073603 the "
+        "'aggressive_savings' values became the src/config.py default, so this "
+        "factor's 'baseline' level now contrasts the OLD default against the "
+        "current one (a meaningful 'should we revert?' probe), not default-vs-new.",
         levels={
             "baseline": {
                 "COMPLEXITY_LOW": "0.30",
@@ -88,10 +91,16 @@ FACTORS: list[Factor] = [
                 "HIGH_SPLIT": "0.80",
             },
             "aggressive_savings": {
-                "COMPLEXITY_LOW": "0.45",
+                # Placed in the classifier's score-cluster gaps (observed temp=0
+                # scores: 0.10/0.15/0.20/0.45/0.75/0.85/0.90) so no cut-point
+                # coincides with an emitted score — with the router's strict `<`,
+                # a boundary sitting exactly on a score fails to reclassify it.
+                # This set moves 7/12 router eval cases, exercises all five tiers
+                # and eliminates opus. See docs/notes/doe-router-boundaries-inert.md.
+                "COMPLEXITY_LOW": "0.44",
                 "MEDIUM_SPLIT": "0.60",
-                "COMPLEXITY_HIGH": "0.75",
-                "HIGH_SPLIT": "0.90",
+                "COMPLEXITY_HIGH": "0.80",
+                "HIGH_SPLIT": "0.95",
             },
         },
     ),

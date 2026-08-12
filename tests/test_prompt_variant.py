@@ -3,6 +3,13 @@
 travel_agent/expense_agent bind INSTRUCTION from PROMPT_VARIANT at import time,
 so switching variants requires reloading src.config + the agent module. A fixture
 reloads with clean env on teardown to avoid cross-module pollution.
+
+src.registry must be reloaded between src.config and the agent modules: it binds
+MCP_SERVER_URLS from src.config at import time, and the agent modules resolve
+tools through registry's URL fallback. Without a registry reload the fallback map
+is keyed by the *collection-time* (pre-conftest) server names, so a credential-
+less environment (CI) misses the fallback and re-raises. See the URL fallback in
+src/registry.py:get_mcp_tools.
 """
 
 import importlib
@@ -12,10 +19,12 @@ import pytest
 import src.agents.expense_agent as expense_mod
 import src.agents.travel_agent as travel_mod
 import src.config
+import src.registry
 
 
 def _reload():
     importlib.reload(src.config)
+    importlib.reload(src.registry)
     return importlib.reload(travel_mod), importlib.reload(expense_mod)
 
 

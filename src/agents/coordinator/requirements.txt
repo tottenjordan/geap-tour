@@ -1,3 +1,6 @@
-google-cloud-aiplatform[adk,agent_engines]>=1.88.0
-google-genai>=1.14.0
+google-cloud-aiplatform[adk,agent-engines]>=1.163.0
+google-genai>=2
+google-adk[agent-identity]>=2
+litellm>=1.83.14
 fastmcp>=2.0.0
+python-dotenv>=1.0.0

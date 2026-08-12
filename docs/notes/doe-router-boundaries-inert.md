@@ -64,11 +64,27 @@ Projected against the observed scores, baseline vs aggressive now **diverges on
 
 Locked in by `tests/test_complexity_boundaries.py::test_cost_eval_responds_to_boundary_factor`.
 
+## Fix (#2): move the aggressive boundaries into the score-cluster gaps
+
+The original `aggressive_savings` set `{0.45, 0.60, 0.75, 0.90}` had three
+cut-points landing *exactly* on emitted scores (0.45, 0.75, 0.90); with the
+router's strict `<`, a prompt scoring on its boundary stays on the expensive side
+(most visibly, a 0.90 prompt stayed `opus`). Reset to `{0.44, 0.60, 0.80, 0.95}`
+— all in the gaps between clusters — so every knob reclassifies cleanly:
+
+| boundaries | tier distribution (12 cases) |
+|---|---|
+| baseline `[0.30,0.45,0.60,0.80]` | lite×5, sonnet×3, opus×3, pro×1 |
+| aggressive `[0.44,0.60,0.80,0.95]` | lite×5, flash×3, sonnet×1, pro×3, opus×0 |
+
+Moves **7/12** cases (was 5/12), exercises all five tiers, eliminates opus.
+Values live in `src/doe/factors.py::FACTORS[router_boundaries]`.
+
 ## Still-open follow-ups (not done here)
 
-The score-clustering (reason 2) still limits sensitivity. To fully exercise the
-factor: use boundaries that fall *between* score clusters, broaden
-`ROUTER_EVAL_CASES` with near-boundary prompts (or raise classifier
-temperature), or drop `router_boundaries`/`eval_fidelity` from the *coordinator*
-screen entirely — the coordinator doesn't route, so neither moves its quality
-metrics. See [the DOE framework note](./doe-framework.md).
+Sensitivity still depends on the current `ROUTER_EVAL_CASES` score distribution
+(the gap placement above is tuned to the 2026-08-06 quantized scores). To harden
+further: broaden `ROUTER_EVAL_CASES` with near-boundary prompts (or raise
+classifier temperature), or drop `router_boundaries`/`eval_fidelity` from the
+*coordinator* screen entirely — the coordinator doesn't route, so neither moves
+its quality metrics. See [the DOE framework note](./doe-framework.md).

@@ -27,7 +27,7 @@ def test_build_point_env_merges_env_channels():
         },
     )
     env = launch_mod.build_point_env(point, factors)
-    assert env["COMPLEXITY_LOW"] == "0.45"          # runner_env
+    assert env["COMPLEXITY_LOW"] == "0.44"          # runner_env
     assert env["COORDINATOR_MODEL"] == "gemini-3.1-pro-preview"  # engine_env
     assert env["PROMPT_VARIANT"] == "gepa"          # engine_env
     assert "scenario_count" not in env              # param channel excluded
@@ -109,6 +109,35 @@ def test_submit_point_dry_run_does_not_call_runner():
     assert calls == []  # nothing submitted
     assert entry["job_resource"] is None
     assert "cmd" in entry
+
+
+def test_write_manifest_skips_gcs_when_disabled(tmp_path, monkeypatch):
+    """upload_gcs=False writes locally and never touches google.cloud.storage."""
+    def _boom(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("GCS upload attempted during dry run")
+
+    # Any attempt to import/use storage would go through this attribute.
+    monkeypatch.setattr("google.cloud.storage.Client", _boom, raising=False)
+    manifest = {"experiment_id": "expdry", "kind": "screening", "points": []}
+    path = launch_mod.write_manifest(manifest, str(tmp_path / "out"), upload_gcs=False)
+    assert (tmp_path / "out" / "manifest.json").exists()
+    assert path == str(tmp_path / "out" / "manifest.json")
+
+
+def test_launch_dry_run_does_not_upload_manifest(tmp_path, monkeypatch):
+    """A dry-run launch keeps the manifest local-only (no GCS side effect)."""
+    monkeypatch.setattr("google.cloud.storage.Client",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no GCS in dry run")),
+                        raising=False)
+    factors = get_factors()
+    design = build_design(factors, "screening")
+    manifest = launch_mod.launch(
+        design, factors, "expdry2",
+        spec_dir=str(tmp_path / "spec"), out_dir=str(tmp_path / "out"),
+        dry_run=True,
+    )
+    assert manifest["num_points"] == 9
+    assert (tmp_path / "out" / "manifest.json").exists()
 
 
 def test_launch_writes_manifest(tmp_path, monkeypatch):

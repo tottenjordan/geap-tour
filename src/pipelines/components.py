@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from kfp import dsl
 
-IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v1"
+IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v3"
 
 
 @dsl.component(base_image=IMAGE)
@@ -241,3 +241,70 @@ def cleanup(agent_id: str, display_name: str):
             print(f"deleted temp engine: {name}")
     except Exception as e:
         print(f"cleanup skipped: {e}")
+
+
+@dsl.component(base_image=IMAGE)
+def optimize_agent(
+    result: dsl.Output[dsl.Artifact],
+    optimized_prompt: dsl.Output[dsl.Artifact],
+    agent_opt_module: str = "src/agents/coordinator",
+    sampler_config_path: str = "src/optimize/sampler_config.json",
+    optimizer_config_path: str = "",
+    experiment_id: str = "",
+    agent_tag: str = "coordinator",
+):
+    """Run GEPA prompt optimization as a managed-pipeline task.
+
+    Unlike the eval components (which score a *deployed* engine), this runs the
+    agent *locally inside the container* via ``run_optimize`` — so the container
+    needs the MCP servers reachable (their Cloud Run URLs are baked as env by the
+    pipeline's ``_wire``). Emits the best optimized instruction as both a JSON
+    result and a plain-text prompt artifact, and mirrors them to a deterministic
+    GCS prefix so the outcome can be harvested and pasted back into the agent.
+    """
+    import json
+    import os
+
+    # The eval image COPYs the repo to /app; run_optimize resolves the agent
+    # module + eval-set paths relative to CWD, so anchor there.
+    if os.path.isdir("/app/src"):
+        os.chdir("/app")
+
+    from src.config import GCP_STAGING_BUCKET
+    from src.optimize.run_optimize import run_optimize, summarize_gepa_result
+
+    opt = run_optimize(
+        agent_module_path=agent_opt_module,
+        sampler_config_path=sampler_config_path,
+        optimizer_config_path=optimizer_config_path or None,
+        print_detailed=True,
+    )
+
+    summary = summarize_gepa_result(opt)
+    instruction = summary["optimized_instruction"]
+
+    payload = {
+        "experiment_id": experiment_id,
+        "agent": agent_tag,
+        "agent_opt_module": agent_opt_module,
+        "sampler_config_path": sampler_config_path,
+        **summary,
+    }
+    with open(result.path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
+    with open(optimized_prompt.path, "w") as f:
+        f.write(instruction or "")
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(GCP_STAGING_BUCKET)
+        prefix = f"optimize-results/{experiment_id or 'adhoc'}/{agent_tag}"
+        bucket.blob(f"{prefix}/result.json").upload_from_filename(result.path)
+        bucket.blob(f"{prefix}/optimized_instruction.txt").upload_from_filename(
+            optimized_prompt.path
+        )
+        print(f"uploaded optimize results to gs://{GCP_STAGING_BUCKET}/{prefix}/")
+    except Exception as e:
+        print(f"optimize result upload skipped: {e}")

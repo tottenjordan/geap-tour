@@ -13,6 +13,7 @@ the ``PipelineJob``.
 """
 
 import argparse
+import os
 import uuid
 
 from google.cloud import aiplatform
@@ -24,7 +25,9 @@ from src.pipelines.eval_pipeline import eval_pipeline
 # Reuse the project compute SA (already provisioned; see docs note on
 # least-privilege follow-up).
 DEFAULT_SERVICE_ACCOUNT = "934903580331-compute@developer.gserviceaccount.com"
-PIPELINE_SPEC = "eval_pipeline.yaml"
+# Compiled specs are build artifacts (gitignored), kept out of the repo root.
+# DOE runs override --spec-path to nest under doe_runs/<experiment_id>/.
+PIPELINE_SPEC = "build/pipeline_specs/eval_pipeline.yaml"
 
 
 def main():
@@ -50,6 +53,7 @@ def main():
     # find and delete exactly this run's temp engine. Reuse runs skip cleanup.
     temp_display_name = "" if args.agent_id else f"geap-eval-temp-{uuid.uuid4().hex[:12]}"
 
+    os.makedirs(os.path.dirname(args.spec_path) or ".", exist_ok=True)
     compiler.Compiler().compile(eval_pipeline, args.spec_path)
 
     aiplatform.init(
