@@ -8,7 +8,6 @@ litellm.suppress_debug_info = True
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content, Part
 
@@ -139,7 +138,8 @@ async def save_memories_callback(callback_context: CallbackContext = None, **kwa
 
 
 ROUTER_INSTRUCTION = """\
-You are a routing coordinator. You MUST always delegate to a specialist agent.
+You are a routing coordinator. You MUST always hand the request to a specialist
+agent — never answer the user yourself.
 
 A complexity classifier has assessed the user's request:
 - Level: {complexity_level}
@@ -147,28 +147,30 @@ A complexity classifier has assessed the user's request:
 - Model tier: {model_tier}
 - Reason: {complexity_reason}
 
-You MUST call the appropriate specialist agent tool based on the model_tier:
-- "lite" → use the lite_agent tool
-- "flash" → use the flash_agent tool
-- "pro" → use the pro_agent tool
-- "sonnet" → use the sonnet_agent tool
-- "opus" → use the opus_agent tool
+Transfer control to the specialist agent that matches the model_tier by calling
+transfer_to_agent with the agent_name:
+- "lite" → transfer_to_agent(agent_name="lite_agent")
+- "flash" → transfer_to_agent(agent_name="flash_agent")
+- "pro" → transfer_to_agent(agent_name="pro_agent")
+- "sonnet" → transfer_to_agent(agent_name="sonnet_agent")
+- "opus" → transfer_to_agent(agent_name="opus_agent")
 
-Never answer the user's question yourself. Always use a specialist agent tool.\
+Your ONLY action is that transfer. Do not produce any other text.\
 """
 
+# Delegation is ADK agent transfer (sub_agents), NOT AgentTool tools. AgentTool
+# runs a sub-agent as a nested tool call whose nested MCP output must bubble back
+# up through the parent — and that nested stream does NOT come back through the
+# deployed Agent Engine runtime (works in-process, stalls on the managed
+# runtime; see the same note in coordinator_agent.py). transfer_to_agent instead
+# makes the chosen specialist the active agent, so its own MCP events stream out
+# as top-level events the runtime forwards correctly.
 router_agent = LlmAgent(
     model=resolve_model(ROUTER_MODEL),
     name="router_agent",
     instruction=ROUTER_INSTRUCTION,
-    tools=[
-        PreloadMemoryTool(),
-        AgentTool(agent=lite_agent),
-        AgentTool(agent=flash_agent),
-        AgentTool(agent=pro_agent),
-        AgentTool(agent=sonnet_agent),
-        AgentTool(agent=opus_agent),
-    ],
+    tools=[PreloadMemoryTool()],
+    sub_agents=[lite_agent, flash_agent, pro_agent, sonnet_agent, opus_agent],
     before_agent_callback=complexity_router_callback,
     after_agent_callback=save_memories_callback,
 )

@@ -149,19 +149,29 @@ class TestAgentConfig:
         result2 = resolve_model("claude-sonnet-4-6")
         assert isinstance(result2, LiteLlm)
 
-    def test_router_has_five_agent_tools(self):
+    def test_router_has_five_sub_agents(self):
+        # The router delegates via ADK agent transfer (sub_agents), NOT AgentTool
+        # tools: AgentTool delegation to a sub-agent that makes nested MCP calls
+        # does not stream back through the deployed Agent Engine runtime, so the
+        # deployed router returned empty. Transferred sub-agents become the active
+        # streaming agent, so their MCP events stream through.
         from src.router.agents import router_agent
-        from google.adk.tools.agent_tool import AgentTool
 
-        agent_tools = [t for t in router_agent.tools if isinstance(t, AgentTool)]
-        assert len(agent_tools) == 5
+        assert len(router_agent.sub_agents) == 5
 
     def test_sub_agent_names(self):
         from src.router.agents import router_agent
+
+        names = {a.name for a in router_agent.sub_agents}
+        assert names == {"lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"}
+
+    def test_router_has_no_agent_tools(self):
+        # Guardrail: no AgentTool sub-agent delegation should sneak back in — it's
+        # the exact pattern that stalls on the deployed runtime.
+        from src.router.agents import router_agent
         from google.adk.tools.agent_tool import AgentTool
 
-        names = {t.agent.name for t in router_agent.tools if isinstance(t, AgentTool)}
-        assert names == {"lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"}
+        assert not any(isinstance(t, AgentTool) for t in router_agent.tools)
 
     def test_router_has_callback(self):
         from src.router.agents import router_agent
