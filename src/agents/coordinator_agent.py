@@ -17,6 +17,7 @@ from src.config import (
     resolve_model,
 )
 from src.registry import get_mcp_tools
+from src.observability.tracing import set_span_attributes
 from src.agents.travel_agent import travel_agent
 from src.agents.expense_agent import expense_agent
 
@@ -59,7 +60,25 @@ When a request comes in, first determine if you can fulfill it directly using yo
 
 
 async def save_memories_callback(callback_context: CallbackContext):
-    """after_agent_callback: persist this session's events to Memory Bank."""
+    """after_agent_callback: persist this session's events to Memory Bank.
+
+    Also annotates the active request span with session/user correlation
+    attributes so a trace can be tied back to a specific session and user.
+    We do this here (in the existing after_agent_callback) rather than adding a
+    before_agent_callback: the coordinator deliberately has no
+    before_agent_callback, leaving that slot free for the governance feature.
+
+    Per-tool latency spans are emitted automatically by ADK's own
+    instrumentation when telemetry is enabled, so we don't wrap the MCP tool
+    calls by hand here — this callback only adds the correlation attributes.
+    """
+    session = getattr(callback_context, "session", None)
+    set_span_attributes(
+        **{
+            "session.id": getattr(session, "id", None),
+            "user.id": getattr(callback_context, "user_id", None),
+        }
+    )
     try:
         await callback_context.add_session_to_memory()
     except Exception:

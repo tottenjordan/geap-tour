@@ -39,3 +39,9 @@ def test_build_config_env_values_are_all_strings():
     env = _build_config(_fake_agent())["env_vars"]
     for key, value in env.items():
         assert isinstance(value, str), f"{key} env value must be a str, got {type(value)}"
+
+
+def test_build_config_enables_agent_engine_telemetry():
+    """Deployed engines must enable telemetry so agent-side OTel spans export."""
+    env = _build_config(_fake_agent())["env_vars"]
+    assert env["GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"] == "true"
