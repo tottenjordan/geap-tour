@@ -407,6 +407,11 @@ def run_deploy(
             resource_name = deploy_agent(agent, display_name)
             deployed[agent.name] = resource_name
             _update_env_file(entry["env_var"], resource_name)
+            # Durable fix: the coordinator IS the default engine. Keep
+            # AGENT_ENGINE_ID pointed at it so config-derived client-side
+            # defaults (a2a url, metric labels) never drift to a stale engine.
+            if name == "coordinator":
+                _update_env_file("AGENT_ENGINE_ID", resource_name)
 
     return deployed
 
