@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING
 from google.api import metric_pb2, monitored_resource_pb2
 from google.cloud import monitoring_v3
 
-from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION
+from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, RESOURCE_LABELS
 from src.eval.quality_alerts import ALL_MONITORED_METRICS
 
 if TYPE_CHECKING:
@@ -140,7 +140,7 @@ class MetricsWriter:
 
 def _default_labels(extra_labels: Mapping[str, str] | None) -> dict[str, str]:
     """Base metric labels (engine + region) plus any caller-supplied extras."""
-    labels = {"engine_id": AGENT_ENGINE_ID, "region": GCP_REGION}
+    labels = {"engine_id": AGENT_ENGINE_ID, "region": GCP_REGION, **RESOURCE_LABELS}
     if extra_labels:
         labels.update(extra_labels)
     return labels
