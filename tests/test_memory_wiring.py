@@ -204,6 +204,42 @@ class TestCoordinatorRegression:
         assert da._wants_memory(coordinator_agent) is True
 
 
+class TestMemoryBankToggle:
+    """The `memory_bank` DOE factor: ENABLE_MEMORY_BANK=0 deploys the coordinator
+    without Memory Bank (no PreloadMemoryTool, no memory-save callback), so a run
+    measures the recall uplift. Default (unset) keeps current behavior."""
+
+    def test_default_on_wires_memory(self):
+        from src.agents.coordinator_agent import (
+            coordinator_agent,
+            save_memories_callback,
+        )
+
+        assert any(isinstance(t, PreloadMemoryTool) for t in coordinator_agent.tools)
+        assert coordinator_agent.after_agent_callback is save_memories_callback
+
+    def test_disabled_removes_memory(self, monkeypatch):
+        import importlib
+
+        monkeypatch.setenv("ENABLE_MEMORY_BANK", "0")
+        import src.config as cfg
+        import src.agents.coordinator_agent as ca
+
+        importlib.reload(cfg)
+        importlib.reload(ca)
+        try:
+            assert cfg.ENABLE_MEMORY_BANK is False
+            assert not any(
+                isinstance(t, PreloadMemoryTool) for t in ca.coordinator_agent.tools
+            )
+            assert ca.coordinator_agent.after_agent_callback is None
+            assert da._wants_memory(ca.coordinator_agent) is False
+        finally:
+            monkeypatch.delenv("ENABLE_MEMORY_BANK", raising=False)
+            importlib.reload(cfg)
+            importlib.reload(ca)
+
+
 # --- verify_memory helper ---------------------------------------------------
 
 

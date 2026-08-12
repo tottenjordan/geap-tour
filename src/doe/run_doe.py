@@ -29,6 +29,17 @@ from src.doe.factors import get_factors, requires_fresh_deploy
 from src.doe.harvest import harvest
 from src.doe.launch import launch
 
+# The established default experiment: the 4-factor resolution-IV screen. Newer
+# factors (e.g. `memory_bank`) are opt-in via --factors so the default run stays
+# stable and always maps to a defined screening generator. The 4-run coordinator
+# screen is an explicit call: --factors model_tier,prompt_variant,memory_bank.
+DEFAULT_FACTOR_NAMES = [
+    "router_boundaries",
+    "model_tier",
+    "prompt_variant",
+    "eval_fidelity",
+]
+
 
 def _default_experiment_id(kind: str, now: datetime | None = None) -> str:
     now = now or datetime.now()
@@ -55,7 +66,7 @@ def run_experiment(
     Returns a summary dict with the experiment id, manifest, and (when run) the
     harvested DataFrame + report markdown.
     """
-    factors = get_factors(factor_names)
+    factors = get_factors(factor_names or DEFAULT_FACTOR_NAMES)
     experiment_id = experiment_id or _default_experiment_id(kind)
     out_dir = out_dir or f"doe_runs/{experiment_id}"
     # Colocate the per-point compiled specs with the run's other artifacts
@@ -117,7 +128,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--factors",
         default="",
-        help="Comma-separated factor names (default: all registered factors)",
+        help="Comma-separated factor names (default: the 4-factor Res-IV screen "
+        "router_boundaries,model_tier,prompt_variant,eval_fidelity). The 4-run "
+        "coordinator screen: --factors model_tier,prompt_variant,memory_bank",
     )
     parser.add_argument("--experiment-id", default="")
     parser.add_argument(

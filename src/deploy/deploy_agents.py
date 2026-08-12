@@ -53,6 +53,7 @@ from src.config import (
     MEDIUM_SPLIT,
     HIGH_SPLIT,
     PROMPT_VARIANT,
+    ENABLE_MEMORY_BANK,
     RESOURCE_LABELS,
     DEPLOY_TAG,
 )
@@ -221,6 +222,7 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "MEDIUM_SPLIT": str(MEDIUM_SPLIT),
         "HIGH_SPLIT": str(HIGH_SPLIT),
         "PROMPT_VARIANT": PROMPT_VARIANT,
+        "ENABLE_MEMORY_BANK": "1" if ENABLE_MEMORY_BANK else "0",
         "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "GOOGLE_GENAI_USE_VERTEXAI": "1",

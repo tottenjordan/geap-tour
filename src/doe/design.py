@@ -24,6 +24,7 @@ from src.doe.factors import Factor
 
 # Resolution-IV generators keyed by factor count for screening designs.
 _SCREENING_GENERATORS = {
+    3: "a b ab",  # 2^(3-1), 4 runs, resolution III (the 4-run screen)
     4: "a b c abc",  # 2^(4-1), 8 runs, resolution IV
 }
 

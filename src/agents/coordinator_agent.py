@@ -14,6 +14,7 @@ from src.config import (
     SEARCH_MCP_SERVER,
     BOOKING_MCP_SERVER,
     EXPENSE_MCP_SERVER,
+    ENABLE_MEMORY_BANK,
     resolve_model,
 )
 from src.registry import get_mcp_tools
@@ -87,6 +88,13 @@ async def save_memories_callback(callback_context: CallbackContext):
     return None
 
 
+# Memory Bank is a DOE factor (`memory_bank`): when ENABLE_MEMORY_BANK is off the
+# coordinator drops the PreloadMemoryTool (no recall) and the memory-save
+# after-callback (no write), which also makes deploy._wants_memory() False so the
+# engine is wrapped session-only with no Memory Bank service. Default is on.
+_memory_tools = [PreloadMemoryTool()] if ENABLE_MEMORY_BANK else []
+_after_callback = save_memories_callback if ENABLE_MEMORY_BANK else None
+
 coordinator_agent = LlmAgent(
     model=resolve_model(COORDINATOR_MODEL),
     name="coordinator_agent",
@@ -105,7 +113,7 @@ coordinator_agent = LlmAgent(
         get_mcp_tools(SEARCH_MCP_SERVER),
         get_mcp_tools(BOOKING_MCP_SERVER),
         get_mcp_tools(EXPENSE_MCP_SERVER),
-        PreloadMemoryTool(),
+        *_memory_tools,
         # Sub-agents remain for genuine conversational hand-offs the instruction
         # reserves for them (Section 2): complex expense inquiries via
         # expense_agent. travel_agent is retained for parity/back-compat but the
@@ -123,7 +131,7 @@ coordinator_agent = LlmAgent(
     # oversized inputs BEFORE the model runs, and emits a span event + metric on
     # each block so the BLOCK is observable. Telemetry never affects the decision.
     before_agent_callback=guardrail_with_telemetry,
-    after_agent_callback=save_memories_callback,
+    after_agent_callback=_after_callback,
 )
 
 root_agent = coordinator_agent

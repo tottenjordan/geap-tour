@@ -139,6 +139,18 @@ FACTORS: list[Factor] = [
             "thorough": {"scenario_count": 8, "max_turns": 4},
         },
     ),
+    Factor(
+        name="memory_bank",
+        channel="engine_env",
+        description="Vertex Memory Bank on the coordinator: off (no "
+        "PreloadMemoryTool, no cross-session recall, engine wrapped session-only) "
+        "vs on (managed Memory Bank). Measures the personalization/recall uplift "
+        "against its cost + latency overhead.",
+        levels={
+            "off": {"ENABLE_MEMORY_BANK": "0"},
+            "on": {"ENABLE_MEMORY_BANK": "1"},
+        },
+    ),
 ]
 
 FACTORS_BY_NAME: dict[str, Factor] = {f.name: f for f in FACTORS}

@@ -7,7 +7,12 @@ from src.doe.factors import get_factors
 
 
 def _all_factors():
-    return get_factors()  # the four seed factors
+    # The 4-factor resolution-IV screen these tests are written around. Pinned
+    # explicitly so registry growth (e.g. adding `memory_bank`) doesn't change
+    # what a "full run" of these design assertions covers.
+    return get_factors(
+        ["router_boundaries", "model_tier", "prompt_variant", "eval_fidelity"]
+    )
 
 
 def test_screening_has_eight_plus_baseline():
@@ -59,6 +64,20 @@ def test_fewer_factors_falls_back_to_full():
     two = get_factors(["router_boundaries", "model_tier"])
     points = build_design(two, kind="screening")
     assert len(points) == 4 + 1  # 2^2 full + baseline
+
+
+def test_three_factor_screening_is_four_run_fraction():
+    # The 4-run coordinator screen: 2^(3-1) resolution-III fraction + baseline
+    # reference. Exactly 4 fractional runs (half of the 2^3=8 full factorial).
+    three = get_factors(["model_tier", "prompt_variant", "memory_bank"])
+    points = build_design(three, kind="screening")
+    assert len(points) == 4 + 1
+    assert points[-1].is_baseline
+    frac = points[:-1]
+    assert len(frac) == 4
+    # Resolution III still exercises both levels of every factor.
+    for f in three:
+        assert {p.assignments[f.name] for p in frac} == set(f.labels)
 
 
 def test_unknown_kind_raises():

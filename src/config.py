@@ -71,6 +71,14 @@ EXPENSE_MODEL = os.environ.get("EXPENSE_MODEL", AGENT_MODEL)
 # Prompt variant toggle: "gepa" (optimized, default) or "baseline"
 PROMPT_VARIANT = os.environ.get("PROMPT_VARIANT", "gepa")
 
+# Memory Bank toggle (DOE factor `memory_bank`). Default on = current behavior;
+# ENABLE_MEMORY_BANK=0 deploys the coordinator with no PreloadMemoryTool and no
+# memory-save callback, so a DOE run can measure the cross-session-recall uplift
+# against its cost/latency. With no PreloadMemoryTool the deploy also wraps the
+# engine session-only (see deploy_agents._wants_memory), so no Memory Bank
+# service is provisioned for that variant.
+ENABLE_MEMORY_BANK = os.environ.get("ENABLE_MEMORY_BANK", "1") not in ("0", "false", "False", "")
+
 
 def resolve_model(model_str: str):
     """Resolve model string to an ADK-compatible model.

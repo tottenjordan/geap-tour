@@ -4,7 +4,17 @@ import types
 
 from src.doe import launch as launch_mod
 from src.doe.design import DesignPoint, build_design
-from src.doe.factors import get_factors
+from src.doe.factors import get_factors as _get_factors
+
+
+# Pin the launcher tests to the stable 4-factor Res-IV screen so registry growth
+# (e.g. adding the opt-in `memory_bank` factor) doesn't change the design under
+# test. Callers that need a specific subset still pass names explicitly.
+_DEFAULT_FACTORS = ["router_boundaries", "model_tier", "prompt_variant", "eval_fidelity"]
+
+
+def get_factors(names=None):
+    return _get_factors(names if names is not None else _DEFAULT_FACTORS)
 
 
 def _fake_runner(recorder, *, returncode=0, job="projects/p/locations/l/pipelineJobs/123"):
