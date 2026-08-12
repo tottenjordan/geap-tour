@@ -107,6 +107,99 @@ def test_poll_jobs_terminates_with_injected_state():
     assert states == {"dp01": "PIPELINE_STATE_SUCCEEDED", "dp02": "PIPELINE_STATE_SUCCEEDED"}
 
 
+def test_poll_falls_through_to_gcs_when_state_errors():
+    # The observed hang: job actually done + results in GCS, but the PipelineJob
+    # API stalls/raises. Poll must infer completion from the results artifact
+    # instead of spinning to the timeout.
+    manifest = {
+        "points": [
+            {
+                "design_point": "dp01",
+                "job_resource": "res/1",
+                "gcs_results": "gs://b/dp01/full_results.json",
+            }
+        ]
+    }
+
+    def boom(_resource):
+        raise RuntimeError("API stall")
+
+    states = h.poll_jobs(
+        manifest,
+        interval_s=0,
+        get_state=boom,
+        results_exist=lambda _uri: True,
+        sleep=lambda _s: None,
+    )
+    assert states == {"dp01": "PIPELINE_STATE_SUCCEEDED"}
+
+
+def test_poll_infers_done_from_gcs_when_state_nonterminal():
+    manifest = {
+        "points": [
+            {
+                "design_point": "dp01",
+                "job_resource": "res/1",
+                "gcs_results": "gs://b/x",
+            }
+        ]
+    }
+    states = h.poll_jobs(
+        manifest,
+        interval_s=0,
+        get_state=lambda _r: "PIPELINE_STATE_RUNNING",
+        results_exist=lambda _uri: True,
+        sleep=lambda _s: None,
+    )
+    assert states == {"dp01": "PIPELINE_STATE_SUCCEEDED"}
+
+
+def test_poll_times_out_bounded_when_neither_state_nor_results():
+    # Neither a terminal state nor a results artifact: must give up at the
+    # wall-clock timeout, not spin forever.
+    manifest = {
+        "points": [
+            {"design_point": "dp01", "job_resource": "res/1", "gcs_results": "gs://b/x"}
+        ]
+    }
+    calls = {"n": 0}
+
+    def sleep(_s):
+        calls["n"] += 1
+
+    states = h.poll_jobs(
+        manifest,
+        interval_s=1,
+        timeout_s=3,
+        get_state=lambda _r: "PIPELINE_STATE_RUNNING",
+        results_exist=lambda _uri: False,
+        sleep=sleep,
+    )
+    assert states == {"dp01": "PIPELINE_STATE_TIMEOUT"}
+    assert calls["n"] <= 4  # bounded by timeout_s/interval_s, not infinite
+
+
+def test_fetch_results_passes_timeout_to_download():
+    seen = {}
+
+    class _Blob:
+        def download_as_text(self, timeout=None):
+            seen["timeout"] = timeout
+            return "{}"
+
+    class _Bucket:
+        def blob(self, _p):
+            return _Blob()
+
+    class _Client:
+        def bucket(self, _b):
+            return _Bucket()
+
+    out = h.fetch_results("gs://b/p.json", client=_Client(), timeout=42)
+    assert out == {}
+    assert seen["timeout"] == 42
+
+
 def test_harvest_forwards_poll_timeout(tmp_path):
     manifest = {"experiment_id": "exp1", "factors": [], "points": []}
     seen = {}

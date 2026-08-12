@@ -109,8 +109,12 @@ def parse_results(results: dict, agent: str = DEFAULT_AGENT) -> dict[str, float]
 
 # --- GCS + polling (injectable for tests) -----------------------------------
 
-def fetch_results(gcs_uri: str, *, client=None) -> dict:
-    """Download and parse a full_results.json from a gs:// URI (malformed -> {})."""
+def fetch_results(gcs_uri: str, *, client=None, timeout: float = 300) -> dict:
+    """Download and parse a full_results.json from a gs:// URI (malformed -> {}).
+
+    ``timeout`` bounds the GCS read so a stalled download can't hang the harvest
+    indefinitely (the download leg had no timeout, a latent forever-hang).
+    """
     try:
         from google.cloud import storage
 
@@ -118,7 +122,7 @@ def fetch_results(gcs_uri: str, *, client=None) -> dict:
         assert gcs_uri.startswith("gs://")
         bucket_name, _, blob_path = gcs_uri[len("gs://"):].partition("/")
         blob = client.bucket(bucket_name).blob(blob_path)
-        return json.loads(blob.download_as_text())
+        return json.loads(blob.download_as_text(timeout=timeout))
     except Exception as e:
         print(f"fetch_results failed for {gcs_uri}: {e}")
         return {}
@@ -130,6 +134,26 @@ def _get_job_state(resource_name: str) -> str:
     return aiplatform.PipelineJob.get(resource_name).state.name
 
 
+def _results_exist(gcs_uri: str, *, client=None) -> bool:
+    """True if a run's full_results.json is already present in GCS.
+
+    This is the ground truth the harvest actually needs (the artifact it will
+    download next), so it lets the poll infer completion even when the
+    PipelineJob API stalls or errors on a job that has in fact finished.
+    """
+    if not gcs_uri:
+        return False
+    try:
+        from google.cloud import storage
+
+        client = client or storage.Client()
+        assert gcs_uri.startswith("gs://")
+        bucket_name, _, blob_path = gcs_uri[len("gs://"):].partition("/")
+        return client.bucket(bucket_name).blob(blob_path).exists()
+    except Exception:
+        return False
+
+
 def poll_jobs(
     manifest: dict,
     *,
@@ -137,31 +161,58 @@ def poll_jobs(
     timeout_s: int = 3600,
     get_state=_get_job_state,
     sleep=time.sleep,
+    results_exist=_results_exist,
 ) -> dict[str, str]:
-    """Block until every submitted job reaches a terminal state (or timeout)."""
+    """Block until every submitted job reaches a terminal state (or timeout).
+
+    Two robustness guards over a naive state poll (both defend against the
+    observed unattended hang, where jobs finished but the wait never returned):
+
+      * **GCS fall-through.** If ``get_state`` stalls, errors, or lags behind on
+        a job whose ``full_results.json`` is already present, the job is treated
+        as done — the results artifact is what the next step consumes anyway.
+      * **Visible heartbeat.** Each round prints (flushed) how many jobs remain,
+        so a working long poll is distinguishable from a hang even when stdout
+        is buffered by a background runner.
+    """
     pending = {
-        e["design_point"]: e["job_resource"]
+        e["design_point"]: {
+            "resource": e["job_resource"],
+            "gcs_results": e.get("gcs_results", ""),
+        }
         for e in manifest["points"]
         if e.get("job_resource")
     }
     states: dict[str, str] = {}
     waited = 0
     while pending and waited <= timeout_s:
-        for dp, resource in list(pending.items()):
+        for dp, job in list(pending.items()):
+            state = None
             try:
-                state = get_state(resource)
+                state = get_state(job["resource"])
             except Exception as e:
-                print(f"poll {dp}: {e}")
-                continue
+                print(f"poll {dp}: {e}", flush=True)
             if state in _TERMINAL_STATES:
                 states[dp] = state
                 del pending[dp]
-                print(f"  {dp}: {state}")
+                print(f"  {dp}: {state}", flush=True)
+                continue
+            # Ground truth: results already written => done, whatever the API says.
+            if results_exist(job["gcs_results"]):
+                states[dp] = "PIPELINE_STATE_SUCCEEDED"
+                del pending[dp]
+                print(f"  {dp}: results present (job state={state})", flush=True)
         if pending:
+            print(
+                f"  … {len(pending)} job(s) pending after {waited}s: "
+                f"{', '.join(sorted(pending))}",
+                flush=True,
+            )
             sleep(interval_s)
             waited += interval_s
     for dp in pending:
         states[dp] = "PIPELINE_STATE_TIMEOUT"
+        print(f"  {dp}: PIPELINE_STATE_TIMEOUT (gave up after {waited}s)", flush=True)
     return states
 
 
