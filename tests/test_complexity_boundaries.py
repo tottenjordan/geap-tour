@@ -129,10 +129,10 @@ def test_cost_eval_responds_to_boundary_factor(reloaded_cost_eval, monkeypatch):
     base = _routed_cost(cm, monkeypatch, scores)
     assert [c["tier"] for c in base["per_case"]] == ["sonnet", "opus"]
 
-    monkeypatch.setenv("COMPLEXITY_LOW", "0.45")
+    monkeypatch.setenv("COMPLEXITY_LOW", "0.44")
     monkeypatch.setenv("MEDIUM_SPLIT", "0.60")
-    monkeypatch.setenv("COMPLEXITY_HIGH", "0.75")
-    monkeypatch.setenv("HIGH_SPLIT", "0.90")
+    monkeypatch.setenv("COMPLEXITY_HIGH", "0.80")
+    monkeypatch.setenv("HIGH_SPLIT", "0.95")
     cm = reloaded_cost_eval()
     aggressive = _routed_cost(cm, monkeypatch, scores)
     assert [c["tier"] for c in aggressive["per_case"]] == ["flash", "pro"]

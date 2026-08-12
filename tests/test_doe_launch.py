@@ -27,7 +27,7 @@ def test_build_point_env_merges_env_channels():
         },
     )
     env = launch_mod.build_point_env(point, factors)
-    assert env["COMPLEXITY_LOW"] == "0.45"          # runner_env
+    assert env["COMPLEXITY_LOW"] == "0.44"          # runner_env
     assert env["COORDINATOR_MODEL"] == "gemini-3.1-pro-preview"  # engine_env
     assert env["PROMPT_VARIANT"] == "gepa"          # engine_env
     assert "scenario_count" not in env              # param channel excluded
