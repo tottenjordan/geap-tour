@@ -22,6 +22,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
+from src.eval.quality_alerts import ALL_MONITORED_METRICS
 
 METRIC_PREFIX = "custom.googleapis.com/agent_eval/"
 DEFAULT_THRESHOLD = 3.0
@@ -56,7 +57,15 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 
 def _query_monitoring_series(client, hours: int):
-    """Return the raw ``agent_eval/*`` TimeSeries over the trailing window."""
+    """Yield the raw ``agent_eval/*`` TimeSeries over the trailing window.
+
+    ``list_time_series`` requires the filter to resolve to a *single* metric
+    type — a ``starts_with`` prefix that matches more than one metric 400s
+    ("TimeSeries data are limited to a single metric per request"). So we query
+    each monitored metric with an exact ``metric.type`` match and chain the
+    results. Metric names come from the canonical ``ALL_MONITORED_METRICS`` (the
+    same set the bridge publishes and the alerts read) — no drift.
+    """
     from google.cloud import monitoring_v3
 
     now = datetime.now(tz=UTC)
@@ -64,13 +73,14 @@ def _query_monitoring_series(client, hours: int):
         start_time=now - timedelta(hours=hours),
         end_time=now,
     )
-    request = {
-        "name": f"projects/{GCP_PROJECT_ID}",
-        "filter": f'metric.type = starts_with("{METRIC_PREFIX}")',
-        "interval": interval,
-        "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
-    }
-    return client.list_time_series(request=request)
+    for name, _threshold in ALL_MONITORED_METRICS:
+        request = {
+            "name": f"projects/{GCP_PROJECT_ID}",
+            "filter": f'metric.type = "{METRIC_PREFIX}{name}"',
+            "interval": interval,
+            "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+        }
+        yield from client.list_time_series(request=request)
 
 
 def _window_avg(scores: list[float], epochs: list[float], now: float, max_hours: float) -> float | None:

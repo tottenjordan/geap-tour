@@ -80,12 +80,26 @@ def _make_series(metric_type: str, values, now=None):
 
 
 class FakeMonitoringClient:
+    """Stand-in that honors the single-metric filter the real API enforces.
+
+    Cloud Monitoring's ``list_time_series`` requires the filter to resolve to
+    exactly one ``metric.type`` (a ``starts_with`` prefix that matches multiple
+    metrics 400s), so this fake returns only the series whose metric type
+    matches an exact ``metric.type = "..."`` filter.
+    """
+
     def __init__(self, series):
         self._series = series
         self.requests = []
 
     def list_time_series(self, request=None, **kwargs):
-        self.requests.append(request or kwargs)
+        import re
+
+        req = request or kwargs
+        self.requests.append(req)
+        match = re.search(r'metric\.type = "([^"]+)"', req.get("filter", ""))
+        if match:
+            return [s for s in self._series if s.metric.type == match.group(1)]
         return list(self._series)
 
 
@@ -202,6 +216,27 @@ def test_verify_reads_from_monitoring_series():
     # It must query Cloud Monitoring for the agent_eval/* series.
     assert client.requests
     assert "agent_eval" in client.requests[0]["filter"]
+
+
+def test_verify_queries_one_exact_metric_per_request():
+    # Regression: list_time_series 400s if the filter matches >1 metric type,
+    # so verify must issue an exact-match request per monitored metric rather
+    # than a single starts_with prefix that fans out across all agent_eval/*.
+    series = [
+        _make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0, 5.0]),
+        _make_series("custom.googleapis.com/agent_eval/policy_compliance", [3.0]),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    # One request per monitored metric, each an exact metric.type match.
+    assert len(client.requests) == len(ALL_MONITORED_METRICS)
+    for req in client.requests:
+        assert "starts_with" not in req["filter"]
+        assert req["filter"].startswith("metric.type = ")
+    # No double counting despite multiple per-metric requests.
+    assert data["total_evals"] == 3
 
 
 def test_verify_monitoring_empty_series_no_crash():
