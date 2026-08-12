@@ -18,3 +18,7 @@ file; keep this index short (< 200 lines).
 - [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
   — why the first screening's routing/cost metrics were identical across all 9
   runs, and wiring the cost eval to the real 5-tier router so the factor moves.
+- [Coordinator `tool_use_quality`: root cause & eval-harness fix](./coordinator-tool-use-quality.md)
+  — the low score was mostly ~50% empty turns (SDK concurrency + cold start, no
+  retry-on-empty); plus the dynamic-rubric ceiling, a real prompt gap, and the
+  nested-delegation runtime limitation behind the booking flatten.
