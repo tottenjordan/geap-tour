@@ -87,9 +87,12 @@ class FakeDashboardClient:
         self.created.append((parent, dashboard))
         return dashboard
 
-    def update_dashboard(self, dashboard=None):
-        self.updated.append(dashboard)
-        return dashboard
+    def update_dashboard(self, request=None):
+        # Mirror the real client: update_dashboard takes a request wrapping the
+        # dashboard, NOT a `dashboard=` kwarg (which raises TypeError live).
+        dash = request["dashboard"] if isinstance(request, dict) else request.dashboard
+        self.updated.append(dash)
+        return dash
 
 
 def test_create_when_not_found():

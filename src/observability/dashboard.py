@@ -134,7 +134,7 @@ def create_or_update_dashboard(client=None, project_id: str = GCP_PROJECT_ID):
 
     if existing is not None:
         desired.name = existing.name
-        result = client.update_dashboard(dashboard=desired)
+        result = client.update_dashboard(request={"dashboard": desired})
         action = "Updated"
     else:
         result = client.create_dashboard(parent=parent, dashboard=desired)
