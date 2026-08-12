@@ -146,7 +146,8 @@ src/
 │   ├── complexity_metrics.py        # Router accuracy + cost efficiency
 │   ├── cross_model_experiment.py    # All models × all tiers
 │   ├── run_all_evals.py             # Full eval orchestration
-│   ├── setup_online_monitors.py, verify_monitors.py  # Online monitoring
+│   ├── setup_online_evaluators.py, verify_monitors.py  # Native online monitors + verify
+│   ├── publish_eval_metrics.py       # Bridge eval scores → agent_eval/* metrics
 │   ├── agent_eval_configs.py        # Eval cases + metrics
 │   └── evalsets/, scenarios/        # Test cases + simulator scenarios
 ├── armor/                     # Model Armor config + guardrail callbacks
