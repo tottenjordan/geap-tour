@@ -109,6 +109,20 @@ class TestEvalCaseRequiredFields:
             assert "expected_tool" in case, f"Missing 'expected_tool' field in case: {case}"
 
 
+class TestGetMetrics:
+    def test_get_metrics_includes_policy_for_coordinator(self):
+        from src.eval.agent_eval_configs import get_metrics
+        from src.eval.batch_eval import POLICY_COMPLIANCE_METRIC
+
+        assert POLICY_COMPLIANCE_METRIC in get_metrics("coordinator_agent")
+
+    def test_get_metrics_excludes_policy_for_travel(self):
+        from src.eval.agent_eval_configs import get_metrics
+        from src.eval.batch_eval import POLICY_COMPLIANCE_METRIC
+
+        assert POLICY_COMPLIANCE_METRIC not in get_metrics("travel_agent")
+
+
 class TestComplexityMetricDefined:
     def test_complexity_routing_metric_exists(self):
         from src.eval.complexity_metrics import COMPLEXITY_ROUTING_METRIC

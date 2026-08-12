@@ -528,8 +528,15 @@ def get_eval_cases(agent_name: str) -> list[dict]:
 
 
 def get_metrics(agent_name: str) -> list:
-    """Return the appropriate evaluation metrics for the given agent."""
-    return [
+    """Return the appropriate evaluation metrics for the given agent.
+
+    The coordinator additionally scores the custom ``policy_compliance`` rubric
+    (its eval cases include expense/policy scenarios). This rides the coordinator's
+    existing ``run_inference`` — one extra rubric, no extra inference — and is what
+    feeds the ``policy_compliance`` monitored metric via the offline-eval bridge
+    (see ``publish_offline_eval.py``).
+    """
+    metrics = [
         types.RubricMetric.FINAL_RESPONSE_QUALITY,
         types.RubricMetric.HALLUCINATION,
         types.RubricMetric.SAFETY,
@@ -537,3 +544,6 @@ def get_metrics(agent_name: str) -> list:
         types.RubricMetric.INSTRUCTION_FOLLOWING,
         types.RubricMetric.FINAL_RESPONSE_MATCH,
     ]
+    if agent_name == "coordinator_agent":
+        metrics.append(POLICY_COMPLIANCE_METRIC)
+    return metrics
