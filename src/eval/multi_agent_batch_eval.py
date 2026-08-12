@@ -34,7 +34,7 @@ from src.eval.agent_eval_configs import (
     get_eval_cases,
     get_metrics,
 )
-from src.eval._sdk_patches import patch_evals_sdk
+from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
 
 # Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
 # and result loading before any inference/evaluation runs. See _sdk_patches.py.
@@ -85,6 +85,15 @@ def _run_single_agent_eval(
     print(f"{'─' * 60}")
 
     eval_df = _build_eval_dataset(cases)
+
+    # Warm the engine before the batched fan-out so cold-start empties don't
+    # drop items (throttle + retry-on-empty in _sdk_patches cover the rest).
+    try:
+        engine = client.agent_engines.get(name=agent_resource_name)
+        warmed = warm_agent_engine(engine)
+        print(f"  Warmed engine ({warmed} warmup queries returned content)")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"  Warmup skipped: {e}")
 
     # Run inference
     print(f"  Running inference...")

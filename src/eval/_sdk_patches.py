@@ -1,7 +1,7 @@
 """Runtime patches for the Vertex AI evals SDK (vertexai._genai).
 
-Two independent bugs surface when evaluating agents that run on Gemini 3.x
-(thought-signature function calls) with the modern aiplatform/genai stack:
+Four independent issues surface when evaluating agents that run on Gemini 3.x
+(thought-signature function calls) on a deployed Agent Engine:
 
 1. Response parsing (`_evals_common._process_single_turn_agent_response`):
    the SDK extracts the final text as `resp_item[-1]["content"]["parts"][0]["text"]`,
@@ -18,12 +18,64 @@ Two independent bugs surface when evaluating agents that run on Gemini 3.x
    on the eval types (the same approach already used in simulated_eval and
    run_optimize) so unknown/extra fields are tolerated.
 
-Call `patch_evals_sdk()` once before running inference/evaluation.
+3. Inference concurrency (`_evals_common.AGENT_MAX_WORKERS = 20`): the SDK fans
+   every prompt out at once (20 concurrent `stream_query` calls). A cold or
+   single-instance engine drops ~half of them, returning empty turns that can't
+   be scored — this alone tanked coordinator `tool_use_quality` (10/20 items
+   dropped; a serial warm re-run recovered 9/10). Fix: throttle the agent worker
+   pool to a safe default (env `EVAL_AGENT_MAX_WORKERS`, default 4).
+
+4. Empty-turn no-retry (`_evals_common._execute_agent_run_with_retry`): its retry
+   loop only retries on *exceptions* — when `stream_query` completes normally but
+   yields no content events, it returns `[]` immediately with no retry, so a
+   transient empty turn becomes a permanent unscored item. Fix: wrap it to treat
+   an empty list as transient and retry with backoff (env `EVAL_EMPTY_RETRIES`,
+   default 4).
+
+Call `patch_evals_sdk()` once before running inference/evaluation. Optionally call
+`warm_agent_engine()` first to spin the engine up before the batched fan-out.
 """
 
 import json
+import os
+import time
 
 _PATCHED = False
+
+# Cap concurrent stream_query fan-out at the deployed engine (SDK default is 20).
+_AGENT_MAX_WORKERS = int(os.environ.get("EVAL_AGENT_MAX_WORKERS", "4"))
+# How many times to re-run an item whose turn came back empty (no content events).
+_EMPTY_RETRIES = int(os.environ.get("EVAL_EMPTY_RETRIES", "4"))
+# Base backoff (seconds) between empty-turn retries; grows linearly with attempt.
+_EMPTY_BACKOFF = float(os.environ.get("EVAL_EMPTY_BACKOFF", "2.0"))
+
+
+def _is_empty_turn(result) -> bool:
+    """True when an agent run returned no content events (an empty turn).
+
+    The SDK's per-item inference returns a list of content events on success or a
+    ``{"error": ...}`` dict on failure. An empty list means the engine's stream
+    completed without yielding any content — the transient drop we retry on.
+    """
+    return isinstance(result, list) and len(result) == 0
+
+
+def _run_with_empty_retry(fn, retries: int, sleep_fn) -> object:
+    """Call ``fn`` until it returns a non-empty result, up to ``retries`` times.
+
+    ``fn`` is a zero-arg callable returning the SDK's per-item inference result.
+    Errors (dicts) and non-empty event lists are returned as-is; only empty turns
+    (see :func:`_is_empty_turn`) trigger a retry. ``sleep_fn(attempt)`` is called
+    between attempts (injectable so tests can run without sleeping).
+    """
+    last = None
+    for attempt in range(retries):
+        last = fn()
+        if not _is_empty_turn(last):
+            return last
+        if attempt < retries - 1:
+            sleep_fn(attempt)
+    return last
 
 
 def _flip_extra_to_ignore() -> int:
@@ -137,11 +189,55 @@ def _patch_single_turn_parser() -> None:
     ec._process_single_turn_agent_response = _patched
 
 
+def _throttle_agent_concurrency() -> None:
+    """Cap the agent inference worker pool (SDK default AGENT_MAX_WORKERS=20)."""
+    from vertexai._genai import _evals_common as ec
+
+    ec.AGENT_MAX_WORKERS = _AGENT_MAX_WORKERS
+
+
+def _patch_retry_on_empty() -> None:
+    """Wrap agent-engine inference to retry empty turns (SDK retries only errors)."""
+    from vertexai._genai import _evals_common as ec
+
+    orig = ec._execute_agent_run_with_retry
+
+    def _wrapped(row, contents, agent_engine, max_retries: int = 3):
+        return _run_with_empty_retry(
+            lambda: orig(row, contents, agent_engine, max_retries=max_retries),
+            retries=_EMPTY_RETRIES,
+            sleep_fn=lambda attempt: time.sleep(_EMPTY_BACKOFF * (attempt + 1)),
+        )
+
+    ec._execute_agent_run_with_retry = _wrapped
+
+
+def warm_agent_engine(agent_engine, n: int = 2, message: str = "ping") -> int:
+    """Send a few throwaway queries to spin the engine up before batched inference.
+
+    Returns the number of warmup queries that returned at least one content event.
+    Best-effort: swallows errors so a warmup failure never blocks the eval.
+    """
+    warmed = 0
+    for i in range(n):
+        try:
+            got_content = False
+            for event in agent_engine.stream_query(user_id=f"warmup-{i}", message=message):
+                if event and (event.get("content") or {}).get("parts"):
+                    got_content = True
+            warmed += int(got_content)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+    return warmed
+
+
 def patch_evals_sdk() -> None:
-    """Apply both evals-SDK patches (idempotent)."""
+    """Apply all evals-SDK patches (idempotent)."""
     global _PATCHED
     if _PATCHED:
         return
     _flip_extra_to_ignore()
     _patch_single_turn_parser()
+    _throttle_agent_concurrency()
+    _patch_retry_on_empty()
     _PATCHED = True
