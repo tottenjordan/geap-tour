@@ -118,11 +118,23 @@ ALL_MONITORED_METRICS = [
 # Router efficiency series (native units, ``agent_router/*``). Unlike coordinator
 # quality these are NOT on a 1-5 axis and don't all alert in the same direction:
 # routing accuracy / cost savings alert on the FLOOR (LT); classifier latency
-# alerts on the CEILING (GT). Thresholds are tunable placeholders.
+# alerts on the CEILING (GT).
+#
+# Thresholds are data-driven from the router eval set (observed: accuracy
+# 92-100%, cost savings 60-63% vs an all-Opus baseline, classifier avg latency
+# ~4200ms — the classifier makes a real LLM call to a thinking model, so
+# multi-second latency is normal). Chosen with headroom for normal variance so
+# alerts page on genuine degradation rather than noise:
+#   - routing_accuracy_pct  < 80%    (~12pp below observed; robust to single-
+#                                     case flips on a small eval set)
+#   - cost_savings_pct      < 50%    (~10pp margin; catches routing drifting
+#                                     toward expensive tiers)
+#   - classifier_latency_ms > 8000ms (~2x observed avg; catches a real slowdown
+#                                     without firing on the normal ~4200ms)
 ROUTER_MONITORED_METRICS = [
     ("routing_accuracy_pct", 80.0, "LT"),
-    ("cost_savings_pct", 40.0, "LT"),
-    ("classifier_latency_ms", 2000.0, "GT"),
+    ("cost_savings_pct", 50.0, "LT"),
+    ("classifier_latency_ms", 8000.0, "GT"),
 ]
 
 
