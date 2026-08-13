@@ -180,10 +180,7 @@ def _run_publish_phase(results: dict):
     """
     print("[Phase 6/7] PUBLISH OFFLINE EVAL SCORES")
     try:
-        published = publish_offline_scores(
-            results.get("batch", {}),
-            complexity_results=results.get("complexity"),
-        )
+        published = publish_offline_scores(results.get("batch", {}))
         results["published_metrics"] = published
         if published:
             for name, value in sorted(published.items()):

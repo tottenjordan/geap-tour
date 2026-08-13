@@ -1,9 +1,10 @@
-"""Offline tests for the offline-eval -> agent_eval/* monitoring bridge.
+"""Offline tests for the coordinator offline-eval -> agent_eval/* bridge.
 
-``publish_offline_eval.publish_offline_scores`` extracts the four monitored
-metrics from a ``run_multi_agent_batch_eval`` result (plus the complexity
-accuracy eval), scales them 0-1 -> 1-5, and delegates to the shared
-``publish_eval_metrics`` bridge. All Cloud Monitoring clients are faked.
+``publish_offline_eval.publish_offline_scores`` extracts the coordinator's
+monitored quality metrics from a ``run_multi_agent_batch_eval`` result, scales
+them 0-1 -> 1-5, and delegates to the shared ``publish_eval_metrics`` bridge.
+Router efficiency is a separate surface (see test_publish_router_efficiency).
+All Cloud Monitoring clients are faked.
 """
 
 from src.eval import publish_offline_eval as off
@@ -54,7 +55,7 @@ def test_strip_engine_prefix():
 # --------------------------------------------------------------------------- #
 # Extraction + publish
 # --------------------------------------------------------------------------- #
-def test_extract_and_publish_all_four():
+def test_extract_and_publish_coordinator_metrics():
     client = FakeMetricClient()
     writer = MetricsWriter(project_id="proj-x", client=client)
 
@@ -66,22 +67,18 @@ def test_extract_and_publish_all_four():
             "agent_engine_0/safety_v1": 1.0,  # not monitored -> dropped
         }
     )
-    published = off.publish_offline_scores(
-        batch, complexity_results={"accuracy": {"accuracy": 0.85}}, writer=writer
-    )
+    published = off.publish_offline_scores(batch, writer=writer)
 
     assert published == {
         "helpfulness": 4.5,
         "tool_use_accuracy": 4.0,
         "policy_compliance": 3.5,
-        "complexity_routing_accuracy": 4.25,
     }
     emitted = {ts.metric.type for ts in client.flatten()}
     assert emitted == {
         "custom.googleapis.com/agent_eval/helpfulness",
         "custom.googleapis.com/agent_eval/tool_use_accuracy",
         "custom.googleapis.com/agent_eval/policy_compliance",
-        "custom.googleapis.com/agent_eval/complexity_routing_accuracy",
     }
     assert "custom.googleapis.com/agent_eval/safety" not in emitted
 
@@ -107,17 +104,6 @@ def test_missing_metrics_no_crash():
     assert len(client.flatten()) == 1
 
 
-def test_none_complexity_skipped():
-    client = FakeMetricClient()
-    writer = MetricsWriter(project_id="proj-x", client=client)
-    published = off.publish_offline_scores(
-        _batch({"agent_engine_0/final_response_quality_v1": 0.9}),
-        complexity_results=None,
-        writer=writer,
-    )
-    assert "complexity_routing_accuracy" not in published
-
-
 def test_empty_batch_no_crash():
     client = FakeMetricClient()
     writer = MetricsWriter(project_id="proj-x", client=client)
@@ -139,9 +125,8 @@ def test_load_results_full_results_shape(tmp_path):
     }
     path.write_text(json.dumps(payload))
 
-    batch, complexity = off._load_results(str(path))
+    batch = off._load_results(str(path))
     assert batch == payload["batch"]
-    assert complexity == payload["complexity"]
 
 
 def test_load_results_batch_shape(tmp_path):
@@ -151,9 +136,8 @@ def test_load_results_batch_shape(tmp_path):
     payload = _batch({"agent_engine_0/final_response_quality_v1": 0.9})
     path.write_text(json.dumps(payload))
 
-    batch, complexity = off._load_results(str(path))
+    batch = off._load_results(str(path))
     assert batch == payload
-    assert complexity is None
 
 
 def test_from_json_loads_and_publishes(tmp_path, monkeypatch):
@@ -173,15 +157,12 @@ def test_from_json_loads_and_publishes(tmp_path, monkeypatch):
     monkeypatch.setattr(
         off,
         "publish_offline_scores",
-        lambda batch, complexity_results=None, **k: (
-            captured.setdefault("call", (batch, complexity_results)) or {"helpfulness": 4.5}
-        ),
+        lambda batch, **k: captured.setdefault("call", batch) or {"helpfulness": 4.5},
     )
 
     off.main(["--from-json", str(path)])
-    batch, complexity = captured["call"]
+    batch = captured["call"]
     assert "agents" in batch
-    assert complexity == {"accuracy": {"accuracy": 0.85}}
 
 
 def test_dry_run_writes_nothing(tmp_path, capsys):

@@ -51,17 +51,15 @@ def test_build_report_does_no_file_io(tmp_path):
 def test_publish_phase_populates_published_metrics(monkeypatch):
     seen = {}
 
-    def _fake(batch, complexity_results=None):
-        seen["call"] = (batch, complexity_results)
+    def _fake(batch, **kwargs):
+        seen["call"] = batch
         return {"helpfulness": 4.5}
 
     monkeypatch.setattr(rae, "publish_offline_scores", _fake)
     results = _minimal_results()
     rae._run_publish_phase(results)
     assert results["published_metrics"] == {"helpfulness": 4.5}
-    batch, complexity = seen["call"]
-    assert "agents" in batch
-    assert complexity == results["complexity"]
+    assert "agents" in seen["call"]
 
 
 def test_publish_phase_guards_exceptions(monkeypatch):

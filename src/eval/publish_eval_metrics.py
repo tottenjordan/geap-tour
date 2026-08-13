@@ -36,7 +36,6 @@ EVAL_METRIC_ALIASES: dict[str, str] = {
     "tool_use": "tool_use_accuracy",
     "GEAP Policy Compliance": "policy_compliance",
     "policy": "policy_compliance",
-    "complexity_routing": "complexity_routing_accuracy",
 }
 
 

@@ -106,11 +106,13 @@ def list_quality_alerts():
         print(f"    {p.name}")
 
 
+# Coordinator quality series (``agent_eval/*``, 1-5 rubric axis, alert on the
+# floor with LT). This is ONLY the coordinator (a task executor) — the router's
+# efficiency numbers live on their own series (see ROUTER_MONITORED_METRICS).
 ALL_MONITORED_METRICS = [
     ("helpfulness", 3.0),
     ("tool_use_accuracy", 3.0),
     ("policy_compliance", 3.0),
-    ("complexity_routing_accuracy", 3.0),
 ]
 
 # Router efficiency series (native units, ``agent_router/*``). Unlike coordinator

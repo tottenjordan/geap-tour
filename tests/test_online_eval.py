@@ -141,7 +141,9 @@ def test_create_evaluators_posts_coordinator_monitor(monkeypatch):
     posted = [json for url, json in fake.posts if url.endswith("/onlineEvaluators")]
     assert posted, "expected at least one onlineEvaluator POST"
     coordinator = [
-        p for p in posted if p["agentResource"].endswith(f"reasoningEngines/{soe.COORDINATOR_ENGINE_ID}")
+        p
+        for p in posted
+        if p["agentResource"].endswith(f"reasoningEngines/{soe.COORDINATOR_ENGINE_ID}")
     ]
     assert len(coordinator) == 1
     assert coordinator[0]["config"]["randomSampling"]["percentage"] == 42
@@ -159,7 +161,6 @@ def test_bridge_publishes_only_monitored_metric_names():
             "helpfulness": 4.5,
             "tool_use_accuracy": 4.1,
             "policy_compliance": 3.8,
-            "complexity_routing_accuracy": 4.9,
             "some_unmonitored_metric": 2.0,  # must be dropped
         },
         writer=writer,
