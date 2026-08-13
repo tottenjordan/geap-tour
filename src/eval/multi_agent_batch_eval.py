@@ -56,6 +56,16 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
+def _select_cases(agent_name: str, limit: int | None) -> list[dict]:
+    """Eval cases for an agent, capped to ``limit`` (None = all).
+
+    The CI eval gate passes a small ``limit`` to keep a run ~3-5 min; slicing an
+    empty limit is a no-op so normal full runs are unaffected.
+    """
+    cases = get_eval_cases(agent_name)
+    return cases[:limit] if limit else cases
+
+
 def _build_eval_dataset(cases: list[dict]) -> pd.DataFrame:
     session_inputs = types.evals.SessionInput(user_id="eval-batch-user", state={})
     rows = []
@@ -79,9 +89,10 @@ def _run_single_agent_eval(
     agent_name: str,
     agent_resource_name: str,
     score_threshold: float,
+    limit: int | None = None,
 ) -> dict:
     """Run batch evaluation for a single agent."""
-    cases = get_eval_cases(agent_name)
+    cases = _select_cases(agent_name, limit)
     agent_info = build_agent_info(agent_name)
     metrics = get_metrics(agent_name)
 
@@ -220,6 +231,7 @@ def run_multi_agent_batch_eval(
     agent_id: str = AGENT_ENGINE_ID,
     score_threshold: float = 3.0,
     output_path: str | None = None,
+    limit: int | None = None,
 ) -> dict:
     """Run batch evaluations for multiple agents."""
     if agents is None:
@@ -253,6 +265,7 @@ def run_multi_agent_batch_eval(
                 agent_name=agent_name,
                 agent_resource_name=agent_resource_name,
                 score_threshold=score_threshold,
+                limit=limit,
             )
             agent_results[agent_name] = result
         except Exception as e:
@@ -347,6 +360,12 @@ def main():
         help="Output JSON file path.",
     )
     parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Cap cases per agent (e.g. 8 for a fast CI gate). Default: all cases.",
+    )
+    parser.add_argument(
         "--list-cases",
         action="store_true",
         help="Print all test cases and exit.",
@@ -364,6 +383,7 @@ def main():
         agent_id=args.agent_id,
         score_threshold=args.threshold,
         output_path=args.output,
+        limit=args.limit,
     )
 
     if not results["all_passed"]:
