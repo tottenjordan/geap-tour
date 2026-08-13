@@ -232,6 +232,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["FL001", "Alice Johnson", "Grand Hyatt", "Budget Inn"],
+        "reference_trajectory": ["book_flight", "search_hotels"],
         "description": "Sequential booking then hotel search in one turn",
     },
     {
@@ -240,6 +241,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["FL001", "450", "Budget Inn", "120"],
+        "reference_trajectory": ["search_flights", "search_hotels"],
         "description": "Two travel searches with a cheapest-option constraint",
     },
     {
@@ -248,6 +250,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["FL003", "180", "within", "200"],
+        "reference_trajectory": ["search_flights", "check_expense_policy"],
         "description": "Travel search plus expense policy check across both sub-agents",
     },
     {
@@ -256,6 +259,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["HT002", "Bob Smith", "EMP001", "400"],
+        "reference_trajectory": ["book_hotel", "submit_expense"],
         "description": "Booking plus expense submission at the exact policy boundary",
     },
     {
@@ -264,6 +268,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["Fontainebleau", "exceeds", "150", "entertainment"],
+        "reference_trajectory": ["search_hotels", "check_expense_policy"],
         "description": "Hotel search plus an over-limit policy check in one turn",
     },
     {
@@ -272,6 +277,7 @@ EVAL_CASES = [
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["FL005", "150", "EMP001"],
+        "reference_trajectory": ["search_flights", "book_flight", "get_user_expenses"],
         "description": "Three chained intents: search, book, then history",
     },
     # ── Adversarial / prompt injection / policy bypass / out-of-scope ──────
@@ -465,6 +471,40 @@ EVAL_CASES = [
         "description": "General reimbursement question — route to expense sub-agent",
     },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Reference trajectories for the deterministic trajectory eval
+# ---------------------------------------------------------------------------
+# The trajectory metrics (src/eval/trajectory_eval.py) score the ordered
+# tool-call path against a ground-truth `reference_trajectory` of *bare* ADK
+# tool names — the names that appear in stream_query `function_call` events and
+# the curated evalsets, NOT the `search_mcp_*` prefixed `expected_tool` form.
+# Single-tool cases derive their trajectory from `expected_tool` via this map;
+# multi-step cases carry a curated ordered trajectory inline (above). Cases with
+# expected_tool "multiple" (uncurated) or "none" get no trajectory and are
+# skipped by the trajectory metrics.
+_BARE_TOOL = {
+    "search_mcp_search_flights": "search_flights",
+    "search_mcp_search_hotels": "search_hotels",
+    "booking_mcp_book_flight": "book_flight",
+    "booking_mcp_book_hotel": "book_hotel",
+    "expense_mcp_check_expense_policy": "check_expense_policy",
+    "expense_mcp_submit_expense": "submit_expense",
+    "expense_mcp_get_user_expenses": "get_user_expenses",
+}
+
+# Every valid bare tool name a reference_trajectory may reference.
+KNOWN_BARE_TOOLS = set(_BARE_TOOL.values())
+
+for _case in EVAL_CASES:
+    _expected = _case["expected_tool"]
+    if (
+        "reference_trajectory" not in _case
+        and isinstance(_expected, str)
+        and _expected in _BARE_TOOL
+    ):
+        _case["reference_trajectory"] = [_BARE_TOOL[_expected]]
 
 
 # ---------------------------------------------------------------------------

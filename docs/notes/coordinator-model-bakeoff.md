@@ -84,6 +84,29 @@ one-line verdict (e.g. "claude-sonnet-5 wins offline quality by 0.150 avg
 rubric; wins SxS at 60%; costs 5.0x more; adds 1000 ms p95"). Any per-model
 input may be empty (offline-only run) → missing cells render `n/a`.
 
+## Experiments record (durable side-by-side)
+
+Beyond the markdown report, `run_bakeoff` records **one Vertex AI Experiments run
+per backbone** so the comparison survives as a queryable, console-viewable
+artifact — open **Vertex AI → Experiments → `coordinator-bakeoff` → Compare
+runs** to see gemini vs claude side-by-side. Each run logs params
+(`backbone=<model_id>`, `role=baseline|candidate`) and scalar metrics (rubric
+means, the backbone's own `pairwise_win_rate`, `p50/p95_latency`, `error_rate`,
+`cost_per_request`) via `src/observability/experiments.py:log_run` — a thin,
+best-effort wrapper over `google.cloud.aiplatform` (`init → start_run →
+log_params → log_metrics`). Summary metrics need **no** Managed TensorBoard.
+
+- **Separation is strict.** The coordinator logs to `coordinator-bakeoff`; the
+  router's efficiency series belongs in a **separate** `router-efficiency`
+  experiment — the two are never mixed in one run. `log_run` is generic; the
+  caller picks the experiment name.
+- **Dormant by default, best-effort always.** `log_run` is a clean no-op (no SDK
+  call, no billable resource) when no experiment name is passed; the bake-off's
+  CLI defaults `--experiment-name coordinator-bakeoff` so live `--execute` runs
+  record, and `--experiment-name ''` disables it. A logging failure only prints a
+  warning — a completed report and engine teardown are never undone by the
+  side-record.
+
 ## One command
 
 `src/doe/run_bakeoff.py` chains all phases, **dry-run by default** (prints the
@@ -103,7 +126,8 @@ uv run --group doe python -m src.doe.run_bakeoff --execute --keep-engines
 ```
 
 Every phase entrypoint is injectable (`preflight_fn`/`deploy_fn`/`score_fn`/
-`usage_fn`/`pairwise_fn`/`verify_fn`/`traffic_runner`/`teardown_fn`), so the
+`usage_fn`/`pairwise_fn`/`verify_fn`/`traffic_runner`/`teardown_fn`/`log_run_fn`),
+so the
 orchestration wiring — including guaranteed teardown on mid-run failure — is
 unit-tested without touching GCP. (`--wait` is a no-op kept for CLI compatibility;
 the persistent-deploy path is synchronous.)

@@ -31,6 +31,9 @@ def publish_router_efficiency(
     cost_results: Mapping | None,
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
+    experiment_name: str | None = None,
+    experiment_run: str = "offline",
+    log_run_fn=None,
 ) -> dict[str, float]:
     """Publish router efficiency scores to ``agent_router/*``; return what was written.
 
@@ -39,6 +42,11 @@ def publish_router_efficiency(
     :func:`run_cost_efficiency_eval` result (``{"savings_pct": 0-100}``). Missing
     inputs or keys are skipped (never zeroed), so a partial run publishes only
     what it has. Values are native units — no 0-1 -> 1-5 scaling.
+
+    When ``experiment_name`` is set, the same native-unit scores are also recorded
+    as one Vertex AI Experiments run (best-effort) into the router's **own**
+    experiment — kept strictly separate from the coordinator's ``coordinator-bakeoff``
+    series. Dormant by default (no experiment name → no Vertex resource).
     """
     accuracy_results = accuracy_results or {}
     cost_results = cost_results or {}
@@ -59,6 +67,17 @@ def publish_router_efficiency(
 
     labels = {"eval_mode": "offline", **(extra_labels or {})}
     write_router_metrics(scores, writer=writer, extra_labels=labels)
+
+    # Optional durable record — the router's economic-optimizer metrics in their
+    # own experiment, never mixed with the coordinator's quality axis. Best-effort.
+    if log_run_fn is None:
+        from src.observability.experiments import log_run as log_run_fn
+    log_run_fn(
+        experiment=experiment_name,
+        run=experiment_run,
+        params={"surface": "router"},
+        metrics=scores,
+    )
     return scores
 
 
@@ -97,6 +116,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--label model=gemini-3.6-flash keeps a bake-off's snapshots separable)",
     )
     parser.add_argument(
+        "--experiment-name",
+        default="",
+        help="also record one Vertex Experiments run into this experiment "
+        "(e.g. router-efficiency, kept separate from coordinator-bakeoff); off by default",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and print scores without writing to Cloud Monitoring",
@@ -106,13 +131,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     accuracy, cost = _load_results(args.from_json)
 
     writer = None
+    log_run_fn = None
     if args.dry_run:
         writer = MetricsWriter(client=_NoopMetricClient())
+        log_run_fn = lambda **_k: False  # noqa: E731 — no Vertex writes in a dry run
 
     from src.observability.metrics import parse_labels
 
     published = publish_router_efficiency(
-        accuracy, cost, writer=writer, extra_labels=parse_labels(args.label)
+        accuracy,
+        cost,
+        writer=writer,
+        extra_labels=parse_labels(args.label),
+        experiment_name=args.experiment_name or None,
+        log_run_fn=log_run_fn,
     )
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")

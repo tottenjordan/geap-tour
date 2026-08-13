@@ -66,18 +66,18 @@ def run_simulated_eval(
     _patch_evals_extra_fields()
 
     import vertexai
-    from vertexai import Client, types
+    from vertexai import Client
     from src.config import GCP_PROJECT_ID, GCP_REGION, SIMULATOR_MODEL
-    from src.eval.agent_eval_configs import build_agent_info
+    from src.eval.agent_eval_configs import build_agent_info, get_multi_turn_metrics
 
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
     from src.config import disable_pyopenssl
     disable_pyopenssl()
 
-    eval_metrics = [
-        types.RubricMetric.MULTI_TURN_TRAJECTORY_QUALITY,
-    ]
+    # Multi-turn task success + tool-use + trajectory quality
+    # (see agent_eval_configs.get_multi_turn_metrics).
+    eval_metrics = get_multi_turn_metrics()
 
     agent_info = build_agent_info(agent_name)
 
