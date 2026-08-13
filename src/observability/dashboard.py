@@ -4,7 +4,8 @@ Builds a Cloud Monitoring dashboard proto whose widgets chart the custom metrics
 emitted by ``src/observability/metrics.py``:
 
 * traffic: request latency (p50/p95), achieved QPS, error rate, injected count
-* quality: the ``agent_eval/*`` scores that ``quality_alerts.py`` alerts on
+* quality: the coordinator ``agent_eval/*`` scores (1-5 rubric axis)
+* router: the ``agent_router/*`` efficiency scores (native units: %, ms)
 
 ``build_dashboard()`` is a pure function (no API calls) so tests assert on the
 proto directly. ``create_or_update_dashboard()`` is an idempotent apply: it finds
@@ -22,7 +23,11 @@ from google.api_core import exceptions as gexc
 from google.cloud import monitoring_dashboard_v1 as dashboard_v1
 
 from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
-from src.observability.metrics import QUALITY_METRIC_TYPES, TRAFFIC_METRIC_TYPES
+from src.observability.metrics import (
+    QUALITY_METRIC_TYPES,
+    ROUTER_METRIC_TYPES,
+    TRAFFIC_METRIC_TYPES,
+)
 
 DASHBOARD_DISPLAY_NAME = "GEAP Workshop: Agent Observability"
 
@@ -37,9 +42,9 @@ _TITLES = {
     "custom.googleapis.com/agent_eval/helpfulness": "Eval: Helpfulness",
     "custom.googleapis.com/agent_eval/tool_use_accuracy": "Eval: Tool-Use Accuracy",
     "custom.googleapis.com/agent_eval/policy_compliance": "Eval: Policy Compliance",
-    "custom.googleapis.com/agent_eval/complexity_routing_accuracy": (
-        "Eval: Complexity Routing Accuracy"
-    ),
+    "custom.googleapis.com/agent_router/routing_accuracy_pct": "Router: Routing Accuracy (%)",
+    "custom.googleapis.com/agent_router/cost_savings_pct": ("Router: Cost Savings vs All-Opus (%)"),
+    "custom.googleapis.com/agent_router/classifier_latency_ms": ("Router: Classifier Latency (ms)"),
 }
 
 _TILE_WIDTH = 6
@@ -77,7 +82,9 @@ def _xy_widget(metric_type: str) -> dashboard_v1.Widget:
 
 def build_dashboard() -> dashboard_v1.Dashboard:
     """Return the Dashboard proto (no API calls)."""
-    metric_types = list(TRAFFIC_METRIC_TYPES) + list(QUALITY_METRIC_TYPES)
+    metric_types = (
+        list(TRAFFIC_METRIC_TYPES) + list(QUALITY_METRIC_TYPES) + list(ROUTER_METRIC_TYPES)
+    )
 
     tiles = []
     for i, metric_type in enumerate(metric_types):
