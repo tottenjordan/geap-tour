@@ -77,6 +77,47 @@ def test_empty_inputs_write_nothing():
     assert client.calls == []
 
 
+def test_logs_a_router_efficiency_experiment_run_when_named():
+    client = FakeMetricClient()
+    runs = []
+
+    published = publish_router_efficiency(
+        {"accuracy": 0.9, "avg_latency_ms": 100.0},
+        {"savings_pct": 55.0},
+        writer=_writer(client),
+        experiment_name="router-efficiency",
+        log_run_fn=lambda **k: runs.append(k) or True,
+    )
+
+    # One run into the router's OWN experiment (never the coordinator's).
+    assert len(runs) == 1
+    assert runs[0]["experiment"] == "router-efficiency"
+    assert runs[0]["params"] == {"surface": "router"}
+    # The native-unit scores are logged verbatim as the run metrics.
+    assert runs[0]["metrics"] == published
+
+
+def test_experiment_logging_dormant_by_default():
+    client = FakeMetricClient()
+    runs = []
+    publish_router_efficiency(
+        {"accuracy": 0.9, "avg_latency_ms": 100.0},
+        {"savings_pct": 55.0},
+        writer=_writer(client),
+        log_run_fn=lambda **k: runs.append(k),
+    )
+    # No experiment_name -> the helper is invoked but with experiment=None (no-op).
+    assert [r["experiment"] for r in runs] == [None]
+
+
+def test_no_experiment_run_when_nothing_published():
+    runs = []
+    publish_router_efficiency(
+        {}, {}, experiment_name="router-efficiency", log_run_fn=lambda **k: runs.append(k)
+    )
+    assert runs == []  # nothing to record
+
+
 def test_label_flag_forwarded_as_extra_labels(tmp_path, monkeypatch):
     import json
 
