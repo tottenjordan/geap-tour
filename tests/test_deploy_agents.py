@@ -5,6 +5,7 @@ DOE factor must be forwarded through deploy_agents._build_config's env_vars.
 """
 
 import types
+from typing import ClassVar
 
 import src.config as cfg
 import src.deploy.deploy_agents as da
@@ -131,3 +132,46 @@ def test_build_config_enables_agent_engine_telemetry():
     """Deployed engines must enable telemetry so agent-side OTel spans export."""
     env = _build_config(_fake_agent())["env_vars"]
     assert env["GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"] == "true"
+
+
+class _CapturingAdkApp:
+    """Fake AdkApp that records the kwargs it was built with (no GCP/ADC)."""
+
+    last_kwargs: ClassVar[dict] = {}
+
+    def __init__(self, **kwargs):
+        _CapturingAdkApp.last_kwargs = kwargs
+
+
+def _memory_agent():
+    """Agent that reads Memory Bank (holds a PreloadMemoryTool) — the coordinator."""
+    from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+
+    return types.SimpleNamespace(name="coordinator_agent", tools=[PreloadMemoryTool()])
+
+
+def test_analytics_plugin_disabled_returns_none(monkeypatch):
+    """With the opt-in flag off, no plugin is built (and no BQ import happens)."""
+    monkeypatch.setattr(da, "ENABLE_AGENT_ANALYTICS", False)
+    assert da._analytics_plugin() is None
+
+
+def test_build_app_wires_analytics_plugin_when_enabled(monkeypatch):
+    """When enabled, _build_app forwards the analytics plugin to AdkApp."""
+    sentinel = object()
+    monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
+    monkeypatch.setattr(da, "_analytics_plugin", lambda: sentinel)
+
+    da._build_app(_memory_agent())
+
+    assert _CapturingAdkApp.last_kwargs.get("plugins") == [sentinel]
+
+
+def test_build_app_no_plugins_when_disabled(monkeypatch):
+    """When disabled, _build_app passes plugins=None (default runtime wrap)."""
+    monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
+    monkeypatch.setattr(da, "_analytics_plugin", lambda: None)
+
+    da._build_app(_memory_agent())
+
+    assert _CapturingAdkApp.last_kwargs.get("plugins") is None

@@ -134,6 +134,17 @@ SIMULATOR_MODEL = os.environ.get("SIMULATOR_MODEL", "gemini-2.5-flash")
 # Evaluation
 EVAL_OUTPUT_DIR = os.environ.get("EVAL_OUTPUT_DIR", "eval_outputs")
 BQ_EVAL_DATASET = os.environ.get("BQ_EVAL_DATASET", "geap_workshop_logs")
+
+# Agent-analytics content logging (opt-in, default OFF). When enabled,
+# deploy_agents wires the ADK BigQueryAgentAnalyticsPlugin into the served engine
+# so full prompt/response/tool-call content streams to BigQuery via the Storage
+# Write API — a model-neutral path (Gemini AND Claude/LiteLlm) independent of the
+# OTEL trace surface, which the managed runtime strips (see OTEL_ENV_VARS note).
+# Default off so normal deploys don't require the extra BQ Storage Write API +
+# dataset IAM. See docs/notes/agent-analytics-bigquery.md.
+ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", "true", "True")
+BQ_AGENT_ANALYTICS_DATASET = os.environ.get("BQ_AGENT_ANALYTICS_DATASET", "geap_agent_analytics")
+AGENT_ANALYTICS_TABLE = os.environ.get("AGENT_ANALYTICS_TABLE", "agent_events")
 AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
 ROUTER_ENGINE_ID = os.environ.get("ROUTER_ENGINE_ID", "6023683798619652096")
 
