@@ -150,6 +150,103 @@ def test_execute_deploys_scores_and_flows_through_every_step(tmp_path):
     assert result["cost"]["claude-sonnet-5"] > 0
 
 
+def test_execute_logs_one_experiment_run_per_backbone(tmp_path):
+    runs = []
+
+    def log_run_fn(*, experiment, run, params, metrics):
+        runs.append({"experiment": experiment, "run": run, "params": params, "metrics": metrics})
+        return True
+
+    rb.run_bakeoff(
+        dry_run=False,
+        experiment_id="exp-1",
+        out_dir=str(tmp_path),
+        skip_preflight=True,
+        experiment_name="coordinator-bakeoff",
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.8, "tool_use_quality": 0.7},
+        usage_fn=lambda e, m, **k: [{"input_tokens": 100, "output_tokens": 50}],
+        pairwise_fn=lambda b, c, **k: {
+            "win_rate_candidate": 0.6,
+            "win_rate_baseline": 0.3,
+            "tie_rate": 0.1,
+        },
+        traffic_runner=lambda *a, **k: None,
+        verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: None,
+        log_run_fn=log_run_fn,
+    )
+
+    # One run per backbone, both into the coordinator-bakeoff experiment (never mixed
+    # with the router's series).
+    assert len(runs) == 2
+    assert {r["experiment"] for r in runs} == {"coordinator-bakeoff"}
+    by_backbone = {r["params"]["backbone"]: r for r in runs}
+    assert set(by_backbone) == {"gemini-3.6-flash", "claude-sonnet-5"}
+
+    gem = by_backbone["gemini-3.6-flash"]
+    cla = by_backbone["claude-sonnet-5"]
+    assert gem["params"]["role"] == "baseline"
+    assert cla["params"]["role"] == "candidate"
+    # Run names are Vertex-Experiments-safe (lowercase [a-z0-9-], no dots).
+    assert gem["run"] == "gemini-3-6-flash"
+    assert cla["run"] == "claude-sonnet-5"
+    # Rubric means + the model's own pairwise win rate + measured cost flow in.
+    assert gem["metrics"]["final_response_quality"] == 0.8
+    assert gem["metrics"]["pairwise_win_rate"] == 0.3
+    assert cla["metrics"]["pairwise_win_rate"] == 0.6
+    assert cla["metrics"]["cost_per_request"] > 0
+
+
+def test_experiment_logging_is_dormant_by_default(tmp_path):
+    runs = []
+
+    rb.run_bakeoff(
+        dry_run=False,
+        experiment_id="exp-1",
+        out_dir=str(tmp_path),
+        skip_preflight=True,
+        # experiment_name defaults to None -> dormant no-op.
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.8},
+        usage_fn=lambda e, m, **k: [{"input_tokens": 10, "output_tokens": 5}],
+        pairwise_fn=lambda b, c, **k: {},
+        traffic_runner=lambda *a, **k: None,
+        verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: None,
+        log_run_fn=lambda **k: runs.append(k),
+    )
+    # Still invoked per backbone, but with experiment=None so the helper no-ops.
+    assert [r["experiment"] for r in runs] == [None, None]
+
+
+def test_experiment_logging_failure_never_breaks_the_run(tmp_path):
+    teardowns = []
+
+    def boom(**k):
+        raise RuntimeError("metadata store unreachable")
+
+    # A completed report + teardown must not be undone by a best-effort side-record.
+    result = rb.run_bakeoff(
+        dry_run=False,
+        experiment_id="exp-1",
+        out_dir=str(tmp_path),
+        skip_preflight=True,
+        experiment_name="coordinator-bakeoff",
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.8},
+        usage_fn=lambda e, m, **k: [{"input_tokens": 10, "output_tokens": 5}],
+        pairwise_fn=lambda b, c, **k: {},
+        traffic_runner=lambda *a, **k: None,
+        verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: teardowns.append(eng),
+        log_run_fn=boom,
+    )
+    assert result["dry_run"] is False
+    assert (tmp_path / "bakeoff_report.md").exists()
+    assert set(teardowns) == {"ENG_gemini-3.6-flash", "ENG_claude-sonnet-5"}
+
+
 def test_keep_engines_skips_teardown(tmp_path):
     teardowns = []
     rb.run_bakeoff(

@@ -195,6 +195,43 @@ def _cost_from_usages(model_id: str, usages: list[dict]) -> float | None:
     return cost_summary(model_id, usages)["mean_usd_per_request"]
 
 
+def _experiment_run_name(model_id: str) -> str:
+    """A Vertex-Experiments-safe run name for a backbone.
+
+    Vertex run names must be lowercase ``[a-z0-9-]`` (no dots), so
+    ``gemini-3.6-flash`` becomes ``gemini-3-6-flash``.
+    """
+    safe = "".join(c if c.isalnum() else "-" for c in model_id.lower())
+    return safe.strip("-") or "run"
+
+
+def _experiment_metrics(
+    model_id: str,
+    quality: dict[str, float],
+    pairwise: dict,
+    online: dict[str, float],
+    cost: float | None,
+    *,
+    is_baseline: bool,
+) -> dict[str, float]:
+    """Flatten one backbone's evidence streams into scalar experiment metrics.
+
+    Rubric means + the backbone's *own* pairwise win rate + online latency/error +
+    measured per-request cost. ``None`` cells are omitted (the experiments helper
+    drops non-numeric values anyway).
+    """
+    metrics: dict[str, float] = dict(quality)
+    wr = pairwise.get("win_rate_baseline") if is_baseline else pairwise.get("win_rate_candidate")
+    if wr is not None:
+        metrics["pairwise_win_rate"] = float(wr)
+    for key in ("p50_latency", "p95_latency", "error_rate"):
+        if online.get(key) is not None:
+            metrics[key] = float(online[key])
+    if cost is not None:
+        metrics["cost_per_request"] = float(cost)
+    return metrics
+
+
 def _teardown_engine(engine_id: str) -> None:
     """Delete a deployed bake-off engine (best-effort; force to skip confirmation)."""
     from vertexai import agent_engines
@@ -292,6 +329,7 @@ def run_bakeoff(
     monitor_hours: int = 1,
     keep_engines: bool = False,
     skip_preflight: bool = False,
+    experiment_name: str | None = None,
     # Injectable phase entrypoints (default to the real ones; stubbed in tests).
     preflight_fn=None,
     deploy_fn=None,
@@ -301,6 +339,7 @@ def run_bakeoff(
     verify_fn=None,
     traffic_runner=None,
     teardown_fn=None,
+    log_run_fn=None,
 ) -> dict:
     """Run (or plan) the full Gemini-vs-Claude coordinator bake-off.
 
@@ -344,6 +383,8 @@ def run_bakeoff(
         from src.eval.verify_monitors import verify_monitor_results as verify_fn
     traffic_runner = traffic_runner or _default_traffic_runner
     teardown_fn = teardown_fn or _teardown_engine
+    if log_run_fn is None:
+        from src.observability.experiments import log_run as log_run_fn
 
     engines: dict[str, str] = {}  # model_id -> engine resource name
     try:
@@ -402,6 +443,31 @@ def run_bakeoff(
             f.write(report)
         print(f"Bake-off report written to {report_path}")
 
+        # 7. Durable comparison record: one Vertex Experiments run per backbone, in
+        # the coordinator's own experiment (never mixed with the router's series).
+        # Best-effort — a completed report must never be undone by a side-record, and
+        # the helper no-ops entirely when experiment_name is unset (dormant default).
+        try:
+            for model_id, is_baseline in ((baseline_model, True), (candidate_model, False)):
+                log_run_fn(
+                    experiment=experiment_name,
+                    run=_experiment_run_name(model_id),
+                    params={
+                        "backbone": model_id,
+                        "role": "baseline" if is_baseline else "candidate",
+                    },
+                    metrics=_experiment_metrics(
+                        model_id,
+                        quality.get(model_id, {}),
+                        pairwise or {},
+                        online.get(model_id, {}),
+                        cost.get(model_id),
+                        is_baseline=is_baseline,
+                    ),
+                )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"WARNING: failed to log Vertex Experiments runs: {e}")
+
         return {
             "dry_run": False,
             "baseline_model": baseline_model,
@@ -412,6 +478,7 @@ def run_bakeoff(
             "quality": quality,
             "cost": cost,
             "pairwise": pairwise,
+            "experiment_name": experiment_name,
             "report": report,
             "report_path": report_path,
             "kept_engines": keep_engines,
@@ -462,6 +529,15 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the model-availability check before deploying",
     )
+    parser.add_argument(
+        "--experiment-name",
+        default="coordinator-bakeoff",
+        help=(
+            "Vertex Experiments name to record one run per backbone into "
+            "(default: coordinator-bakeoff; pass '' to disable). Kept separate from "
+            "the router's 'router-efficiency' experiment."
+        ),
+    )
     parser.add_argument("--traffic-qps", type=int, default=2)
     parser.add_argument("--traffic-duration-min", type=int, default=1)
     parser.add_argument("--monitor-hours", type=int, default=1)
@@ -473,6 +549,7 @@ def main(argv: list[str] | None = None) -> None:
         out_dir=args.out_dir or None,
         keep_engines=args.keep_engines,
         skip_preflight=args.skip_preflight,
+        experiment_name=args.experiment_name or None,
         traffic_qps=args.traffic_qps,
         traffic_duration_min=args.traffic_duration_min,
         monitor_hours=args.monitor_hours,
