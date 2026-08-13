@@ -12,7 +12,7 @@ from src.router.cost_tracker import estimate_cost
 
 
 # ---------------------------------------------------------------------------
-# Vertex AI Eval API metric (for batch_eval / online monitors)
+# Vertex AI Eval API metric (for batch_eval / router efficiency eval)
 # ---------------------------------------------------------------------------
 COMPLEXITY_ROUTING_METRIC = vtx_types.LLMMetric(
     name="complexity_routing_accuracy",

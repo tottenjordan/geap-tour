@@ -357,7 +357,7 @@ def generate_steady_traffic(
 
     Simulates production traffic by picking random queries from the full
     query set and sending them at regular intervals. Useful for populating
-    OTel traces and exercising online evaluators over time.
+    OTel traces and populating the observability dashboard over time.
 
     Args:
         agent_resource_name: Full resource name or agent engine ID.
@@ -572,7 +572,7 @@ def generate_load(
 
 
 # Default staircase for --scaling: each step holds a higher offered QPS long
-# enough for the online monitors + dashboard to register the new plateau, with a
+# enough for the traffic metrics + dashboard to register the new plateau, with a
 # short ramp so the rise between steps is visible rather than a vertical jump.
 SCALING_STAGES = [
     {"qps": 1, "duration_s": 120, "ramp_s": 15},

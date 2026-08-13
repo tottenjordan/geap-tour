@@ -1,9 +1,10 @@
 # Offline-eval → monitoring bridge (canonical quality source)
 
 **Posture:** the native Vertex Online Evaluators are platform-blocked for our
-agents, so the **offline-eval bridge** is the canonical source feeding the
-`custom.googleapis.com/agent_eval/*` quality series (dashboard + alerts +
-`verify_monitors`).
+agents, so the **offline-eval bridge** is the canonical source feeding two
+monitored series — `custom.googleapis.com/agent_eval/*` (coordinator quality,
+1-5) and `custom.googleapis.com/agent_router/*` (router efficiency, native
+units) — that drive the dashboard, alerts, and `verify_monitors`.
 
 ## Why the native online path is dead
 
@@ -34,16 +35,21 @@ via the Vertex Gen AI Evaluation Service (`client.evals.run_inference(agent=…)
 flow — but their scores only ever landed in local JSON. The bridge closes that
 gap:
 
+There are **two honest surfaces**, because the coordinator (a task executor) and
+the 5-tier router (an economic optimizer) are architecturally different agents
+and must not be scored on the same axis:
+
+### Coordinator quality → `custom.googleapis.com/agent_eval/*` (1-5 rubric, alert `< 3.0`)
+
 `src/eval/publish_offline_eval.py:publish_offline_scores()`
-1. pulls the four monitored metrics from a `run_multi_agent_batch_eval` result
-   + the complexity accuracy eval:
+1. pulls the three monitored quality metrics from a `run_multi_agent_batch_eval`
+   result:
 
    | Monitored metric | Source | Scale in |
    |---|---|---|
    | `helpfulness` | coordinator batch `final_response_quality_v1` | 0-1 |
    | `tool_use_accuracy` | coordinator batch `tool_use_quality_v1` | 0-1 |
-   | `policy_compliance` | coordinator batch `policy_compliance` (added to the coordinator metric set in `agent_eval_configs.get_metrics`) | 0-1 |
-   | `complexity_routing_accuracy` | `run_complexity_accuracy_eval(ROUTER_EVAL_CASES)["accuracy"]` | 0-1 |
+   | `policy_compliance` | coordinator batch `policy_compliance` (scored by the standalone `policy_judge` via `publish_offline_eval._inject_policy_compliance`, NOT `get_metrics` — the custom pointwise `LLMMetric` is SDK-broken) | 0-1 |
 
 2. scales each `round(score * 5.0, 3)` onto the 1-5 monitored axis
    (`0.60 → 3.00`, the alert threshold);
@@ -51,6 +57,22 @@ gap:
    `publish_eval_metrics()` (alias-maps to canonical names, filters to
    `ALL_MONITORED_METRICS` — non-monitored rubrics dropped, no drift, no scaling
    added on the shared path).
+
+### Router efficiency → `custom.googleapis.com/agent_router/*` (native units)
+
+`src/eval/publish_router_efficiency.py:publish_router_efficiency()` publishes the
+router's economic metrics **verbatim in native units** (no `×5` scaling), from
+the complexity accuracy + cost-efficiency evals:
+
+   | Monitored metric | Source | Unit | Alert |
+   |---|---|---|---|
+   | `routing_accuracy_pct` | `run_complexity_accuracy_eval(ROUTER_EVAL_CASES)["accuracy"]` ×100 | % | `< 80.0` |
+   | `cost_savings_pct` | `run_cost_efficiency_eval(...)["savings_pct"]` (verbatim) | % | `< 40.0` |
+   | `classifier_latency_ms` | `run_complexity_accuracy_eval(...)["avg_latency_ms"]` | ms | `> 2000.0` |
+
+`cost_savings_pct` (savings vs an all-Opus baseline) was previously computed and
+discarded — it is now a first-class monitored series. `run_all_evals` publishes
+both surfaces as its Phase 6 publish step.
 
 ## How to run it
 
@@ -69,8 +91,8 @@ uv run python -m src.eval.publish_offline_eval --dry-run --latest
 # monitor-verification phase then reads freshly-written points:
 uv run python -m src.eval.run_all_evals --skip-traffic
 
-# Confirm the series is populated
-uv run python -m src.eval.verify_monitors --format json   # expect status "ok", all four metrics 0-5
+# Confirm both surfaces are populated
+uv run python -m src.eval.verify_monitors --format json   # two blocks: coordinator_quality (1-5) + router_efficiency (native units)
 ```
 
 ## Honest caveats
@@ -78,8 +100,9 @@ uv run python -m src.eval.verify_monitors --format json   # expect status "ok", 
 - **Snapshot, not per-request:** gauges are point-in-time per eval run, not
   continuous request telemetry — the `eval_mode=offline` label makes this
   explicit. `verify_monitors` 1h/6h/24h trends reflect sparse snapshots.
-- **Native resource left in place:** the `onlineEvaluator` is harmless and kept
-  for demo/discussion; it simply never produces usable scores.
+- **Native resource removed:** the dead `onlineEvaluator` setup + its deprecation
+  shim were deleted (they only ever returned `INSUFFICIENT_DATA`). The
+  offline-eval bridge is the sole, canonical quality source.
 
 Related: [[online-eval-content-capture-blocked]] (memory),
 [coordinator-tool-use-quality](./coordinator-tool-use-quality.md).

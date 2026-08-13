@@ -1,4 +1,4 @@
-"""End-to-end deployment: MCP servers → agents → online monitors."""
+"""End-to-end deployment: MCP servers → agents → eval publish."""
 
 import os
 

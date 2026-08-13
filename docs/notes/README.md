@@ -14,8 +14,9 @@ file; keep this index short (< 200 lines).
   (env-injection, import-time config, exit-handler cleanup).
 - [Offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) — why the
   native Online Evaluators are platform-blocked (`INSUFFICIENT_DATA`) and how the
-  offline bridge (`publish_offline_eval`) became the canonical `agent_eval/*`
-  quality source: metric provenance, 0-1→1-5 scaling, run commands, caveats.
+  offline bridge became the canonical source for two honest surfaces: coordinator
+  quality (`agent_eval/*`, 1-5) via `publish_offline_eval` and router efficiency
+  (`agent_router/*`, native units) via `publish_router_efficiency`.
 - [DOE framework for scaling experimentation](./doe-framework.md) — factor
   registry → fractional-factorial design → one PipelineJob per point → harvest →
   main-effects report; factor channels, subprocess-per-point, cost caveat.
@@ -28,8 +29,8 @@ file; keep this index short (< 200 lines).
   timeout.
 - [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
   — one-time provisioning checklist + run-of-show for the four demo money-shots
-  (observability, trace debugging, continuous eval, governance blocking).
-- [Coordinator `tool_use_quality`: root cause & eval-harness fix](./coordinator-tool-use-quality.md)
-  — the low score was mostly ~50% empty turns (SDK concurrency + cold start, no
-  retry-on-empty); plus the dynamic-rubric ceiling, a real prompt gap, and the
-  nested-delegation runtime limitation behind the booking flatten.
+  (observability, trace debugging, periodic-snapshot eval, governance blocking).
+- [Coordinator `tool_use_quality` ~0.27: root-cause finding](./coordinator-tool-use-quality.md)
+  — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
+  `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
+  defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.

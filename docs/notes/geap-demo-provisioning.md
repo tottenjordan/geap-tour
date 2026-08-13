@@ -67,12 +67,11 @@ Memory Bank + Session service builders (`_build_app` wraps memory-enabled agents
 in `AdkApp(memory_service_builder=..., session_service_builder=...)`; the router
 is excluded via `_wants_memory`).
 
-## Continuous eval
+## Periodic-snapshot eval (offline bridge, two surfaces)
 
 ```bash
-uv run python -m src.eval.setup_online_evaluators create   # onlineEvaluator over coordinator+router
-uv run python -m src.eval.setup_online_evaluators verify   # read native results + bridge → agent_eval/*
-uv run python -m src.eval.verify_monitors --format json    # summarize the agent_eval/* series
+uv run python -m src.eval.run_all_evals --skip-traffic     # publish both surfaces: agent_eval/* (coordinator) + agent_router/* (router)
+uv run python -m src.eval.verify_monitors --format json    # read both series: coordinator_quality + router_efficiency
 ```
 
 ## Run of show (the four money-shots)

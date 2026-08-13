@@ -817,36 +817,32 @@ uv run python -m src.eval.one_time_eval <agent-resource-name>
 
 ---
 
-### 2.3 Online Evaluators (Continuous Eval) (~15 min)
+### 2.3 Periodic-Snapshot Evaluation (two surfaces) (~15 min)
 
-**Code**: [`src/eval/setup_online_evaluators.py`](../src/eval/setup_online_evaluators.py) | **Docs**: [Online Evaluation](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/evaluate#online-evaluation)
+**Code**: [`src/eval/publish_offline_eval.py`](../src/eval/publish_offline_eval.py) · [`src/eval/publish_router_efficiency.py`](../src/eval/publish_router_efficiency.py) · [`src/eval/verify_monitors.py`](../src/eval/verify_monitors.py) | **Docs**: [Evaluate a deployed agent](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/evaluate#online-evaluation)
 
-Online evaluators run every 10 minutes against OTel traces, scoring them with predefined metrics and custom rubrics:
+The native Vertex Online Evaluators are platform-blocked for our agents: the managed Agent Engine runtime strips prompt/response content from OTel traces, so they always return `INSUFFICIENT_DATA`. The canonical quality source is instead the **offline-eval bridge**, which legitimately scores the *deployed* engine via the Vertex Gen AI Evaluation Service and writes periodic point-in-time **snapshots** (one write per eval run) to two honest, separate monitored surfaces — because the coordinator (a task executor) and the 5-tier router (an economic optimizer) must not be scored on the same axis:
 
-1. Agent handles user requests → OTel traces flow to Cloud Trace
-2. Every 10 minutes, the evaluator samples recent traces
-3. Scores each trace against 6 metrics (4 predefined + 2 custom rubrics)
-4. Results appear in the Agent Engine Evaluation tab, Cloud Logging, and Cloud Monitoring
+1. **Coordinator quality → `custom.googleapis.com/agent_eval/*`** — `helpfulness`, `tool_use_accuracy`, `policy_compliance` scaled onto a 1-5 rubric axis, alert when `< 3.0`, tagged `eval_mode=offline`.
+2. **Router efficiency → `custom.googleapis.com/agent_router/*`** — `routing_accuracy_pct` (%, alert `< 80`), `cost_savings_pct` (% vs an all-Opus baseline, alert `< 40`), `classifier_latency_ms` (ms, alert `> 2000`), published verbatim in native units.
 
 ```bash
-# Generate traffic first (20 queries + 3 memory conversations)
-uv run python -m src.traffic.generate_traffic
+# Publish coordinator quality → agent_eval/* (reuse newest run artifacts, no engine cost)
+uv run python -m src.eval.publish_offline_eval --latest
 
-# Register custom metrics and create evaluators for both agents
-uv run python -m src.eval.setup_online_evaluators create
+# Publish router efficiency → agent_router/* (native units)
+uv run python -m src.eval.publish_router_efficiency --from-json <full_results.json>
 
-# Wait 10+ minutes, then verify scores in Cloud Logging
-uv run python -m src.eval.setup_online_evaluators verify
+# Or run + publish BOTH surfaces in one shot (Phase 6 of run_all_evals)
+uv run python -m src.eval.run_all_evals --skip-traffic
 ```
 
-**Manage evaluators**:
+**Verify both surfaces**:
 ```bash
-uv run python -m src.eval.setup_online_evaluators list
-uv run python -m src.eval.setup_online_evaluators delete <evaluator-id>
-uv run python -m src.eval.setup_online_evaluators cleanup
+uv run python -m src.eval.verify_monitors --format json   # two blocks: coordinator_quality (1-5) + router_efficiency (native units)
 ```
 
-**Console tour**: Navigate to Agent Platform → Agents → select agent → Evaluation tab. Show active evaluators, metric scores, and per-trace breakdowns.
+**Console tour**: Navigate to Cloud Monitoring → Metrics Explorer. Show the `agent_eval/*` and `agent_router/*` custom metric series and their alert policies.
 
 **Screenshot**: `docs/screenshots/session2_evaluation_pipeline.png`
 
@@ -1337,8 +1333,8 @@ adk deploy agent_engine \
 # 5. Generate traffic
 uv run python src/traffic/generate_traffic.py
 
-# 6. Setup evaluation
-uv run python -m src.eval.setup_online_evaluators create
+# 6. Setup evaluation (publish both monitored surfaces, then set an alert)
+uv run python -m src.eval.run_all_evals --skip-traffic
 uv run python -m src.eval.quality_alerts helpfulness 3.0
 
 # 7. Run one-time eval
