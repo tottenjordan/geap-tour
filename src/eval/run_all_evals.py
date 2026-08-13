@@ -209,7 +209,7 @@ def _run_monitors_phase(agent_resource_name: str, output_dir: Path, results: dic
             print(md)
         elif monitor_data:
             print(f"  Status: {monitor_data.get('status')}")
-            print(f"  {monitor_data.get('message', '')}")
+            print("  No monitored scores in Cloud Monitoring yet.")
     except Exception as e:
         print(f"  Monitor verification failed: {e}")
         results["monitors"] = {"error": str(e)}

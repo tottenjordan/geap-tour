@@ -200,7 +200,7 @@ def test_bridge_ignores_none_scores():
 # --------------------------------------------------------------------------- #
 # 3. verify_monitors reads Cloud Monitoring; tolerates the absent BQ table
 # --------------------------------------------------------------------------- #
-def test_verify_reads_from_monitoring_series():
+def test_verify_reads_coordinator_quality_surface():
     series = [
         _make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0, 5.0, 3.0]),
         _make_series("custom.googleapis.com/agent_eval/policy_compliance", [2.0, 4.0]),
@@ -210,13 +210,35 @@ def test_verify_reads_from_monitoring_series():
     data = vm.verify_monitor_results(output_format="json", client=client)
 
     assert data["status"] == "ok"
-    assert data["total_evals"] == 5
-    assert data["metrics"]["helpfulness"]["eval_count"] == 3
-    assert data["metrics"]["helpfulness"]["avg_score"] == 4.0
-    assert data["metrics"]["policy_compliance"]["below_threshold"] == 1
+    quality = data["coordinator_quality"]
+    assert quality["status"] == "ok"
+    assert quality["total_evals"] == 5
+    assert quality["metrics"]["helpfulness"]["eval_count"] == 3
+    assert quality["metrics"]["helpfulness"]["avg_score"] == 4.0
+    # policy_compliance alerts LT 3.0 -> the 2.0 point is out of bounds.
+    assert quality["metrics"]["policy_compliance"]["out_of_bounds"] == 1
     # It must query Cloud Monitoring for the agent_eval/* series.
     assert client.requests
-    assert "agent_eval" in client.requests[0]["filter"]
+    assert any("agent_eval" in req["filter"] for req in client.requests)
+
+
+def test_verify_reads_router_efficiency_surface_with_directions():
+    series = [
+        # accuracy floor is 80.0 (LT): 75.0 is out of bounds, 92.0 is fine.
+        _make_series("custom.googleapis.com/agent_router/routing_accuracy_pct", [92.0, 75.0]),
+        # latency ceiling is 2000.0 (GT): 2500.0 is out of bounds.
+        _make_series("custom.googleapis.com/agent_router/classifier_latency_ms", [150.0, 2500.0]),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    router = data["router_efficiency"]
+    assert router["status"] == "ok"
+    assert router["metrics"]["routing_accuracy_pct"]["out_of_bounds"] == 1
+    assert router["metrics"]["routing_accuracy_pct"]["direction"] == "LT"
+    assert router["metrics"]["classifier_latency_ms"]["out_of_bounds"] == 1
+    assert router["metrics"]["classifier_latency_ms"]["direction"] == "GT"
 
 
 def test_verify_queries_one_exact_metric_per_request():
@@ -231,19 +253,24 @@ def test_verify_queries_one_exact_metric_per_request():
 
     data = vm.verify_monitor_results(output_format="json", client=client)
 
-    # One request per monitored metric, each an exact metric.type match.
-    assert len(client.requests) == len(ALL_MONITORED_METRICS)
+    # One request per monitored metric across BOTH surfaces, each an exact match.
+    from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
+
+    expected_requests = len(ALL_MONITORED_METRICS) + len(ROUTER_MONITORED_METRICS)
+    assert len(client.requests) == expected_requests
     for req in client.requests:
         assert "starts_with" not in req["filter"]
         assert req["filter"].startswith("metric.type = ")
     # No double counting despite multiple per-metric requests.
-    assert data["total_evals"] == 3
+    assert data["coordinator_quality"]["total_evals"] == 3
 
 
 def test_verify_monitoring_empty_series_no_crash():
     client = FakeMonitoringClient([])
     data = vm.verify_monitor_results(output_format="json", client=client)
     assert data["status"] == "empty"
+    assert data["coordinator_quality"]["status"] == "empty"
+    assert data["router_efficiency"]["status"] == "empty"
 
 
 def test_verify_bigquery_missing_table_does_not_crash():
