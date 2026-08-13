@@ -168,6 +168,28 @@ class TestEvalCaseRequiredFields:
             assert "expected_tool" in case, f"Missing 'expected_tool' field in case: {case}"
 
 
+class TestCaseLimit:
+    """The CI eval gate uses --limit to cap cases per agent for a fast run."""
+
+    def test_limit_caps_case_count(self):
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        assert len(_select_cases("coordinator_agent", 3)) == 3
+
+    def test_no_limit_returns_all_cases(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        assert _select_cases("coordinator_agent", None) == get_eval_cases("coordinator_agent")
+
+    def test_limit_larger_than_available_returns_all(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        total = len(get_eval_cases("coordinator_agent"))
+        assert len(_select_cases("coordinator_agent", total + 100)) == total
+
+
 class TestGetMetrics:
     def test_get_metrics_excludes_custom_policy_metric(self):
         # policy_compliance is NOT scored via client.evals (SDK-broken custom
