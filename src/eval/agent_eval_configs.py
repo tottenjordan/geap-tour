@@ -546,3 +546,20 @@ def get_metrics(agent_name: str) -> list:
         types.RubricMetric.INSTRUCTION_FOLLOWING,
         types.RubricMetric.FINAL_RESPONSE_MATCH,
     ]
+
+
+def get_multi_turn_metrics() -> list:
+    """Return the multi-turn adaptive rubric metrics for simulated eval.
+
+    These score whole conversations, not single turns, so they belong only on
+    the multi-turn simulated-eval path (``src/eval/simulated_eval.py``) — never
+    the single-turn 6-rubric batch (``get_metrics``). Together they cover the
+    three axes the platform grades a multi-turn agent on: did it accomplish the
+    user's goal (task success), did it call the right tools well along the way
+    (tool-use quality), and was the overall path coherent (trajectory quality).
+    """
+    return [
+        types.RubricMetric.MULTI_TURN_TASK_SUCCESS,
+        types.RubricMetric.MULTI_TURN_TOOL_USE_QUALITY,
+        types.RubricMetric.MULTI_TURN_TRAJECTORY_QUALITY,
+    ]

@@ -152,6 +152,29 @@ class TestGetMetrics:
         assert len(get_metrics("coordinator_agent")) == 6
 
 
+class TestMultiTurnMetrics:
+    """Multi-turn adaptive metrics live only on the client.evals surface and
+    need multi-turn conversation data, so they attach to the simulated-eval
+    path — not the single-turn 6-rubric batch."""
+
+    def test_returns_three_multi_turn_metrics(self):
+        from src.eval.agent_eval_configs import get_multi_turn_metrics
+
+        assert len(get_multi_turn_metrics()) == 3
+
+    def test_returns_the_expected_rubric_loaders(self):
+        # RubricMetric.* returns a fresh loader instance per access with
+        # identity-based equality, so assert on the stable loader .name.
+        from src.eval.agent_eval_configs import get_multi_turn_metrics
+
+        names = {m.name for m in get_multi_turn_metrics()}
+        assert names == {
+            "MULTI_TURN_TASK_SUCCESS",
+            "MULTI_TURN_TOOL_USE_QUALITY",
+            "MULTI_TURN_TRAJECTORY_QUALITY",
+        }
+
+
 class TestComplexityMetricDefined:
     def test_complexity_routing_metric_exists(self):
         from src.eval.complexity_metrics import COMPLEXITY_ROUTING_METRIC
