@@ -35,6 +35,10 @@ file; keep this index short (< 200 lines).
 - [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
   — one-time provisioning checklist + run-of-show for the four demo money-shots
   (observability, trace debugging, periodic-snapshot eval, governance blocking).
+- [Agent-analytics content logging to BigQuery](./agent-analytics-bigquery.md) —
+  opt-in `BigQueryAgentAnalyticsPlugin` (runner-level, model-neutral) streams full
+  prompt/response/tool content to BQ independent of the OTEL surface the managed
+  runtime strips; flags, IAM prereqs, and the pending live-capture gate.
 - [Coordinator `tool_use_quality` ~0.27: root-cause finding](./coordinator-tool-use-quality.md)
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
