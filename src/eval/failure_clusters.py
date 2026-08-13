@@ -15,7 +15,15 @@ import vertexai
 from vertexai import Client, types
 
 from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
-from src.eval.setup_online_monitors import QUICK_EVAL_CASES
+
+# Demo prompts used for the quick failure-cluster evaluation pass.
+QUICK_EVAL_CASES = [
+    "Find me a hotel in Miami",
+    "Search for hotels in New York under $350",
+    "Check if a $50 meal expense is within policy",
+    "Check policy for a $500 entertainment expense",
+    "Submit a $45 meals expense for lunch meeting, user ID EMP001",
+]
 
 EVAL_METRICS = [
     types.RubricMetric.FINAL_RESPONSE_QUALITY,

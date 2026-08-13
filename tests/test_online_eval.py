@@ -1,12 +1,11 @@
-"""Offline tests for the consolidated continuous online-evaluation flow.
+"""Offline tests for the periodic-snapshot eval publish + verify flow.
 
-Covers the three reconciled modules plus the score->metric bridge:
+Covers the score->metric bridge and the two-surface monitor verification:
 
-* ``setup_online_evaluators`` — canonical native onlineEvaluator setup.
-* ``publish_eval_metrics``   — bridges eval scores onto ``agent_eval/*`` series.
-* ``verify_monitors``        — reads the canonical source (Cloud Monitoring),
-  no longer hard-requiring the missing BigQuery ``online_eval_results`` table.
-* ``setup_online_monitors``  — thin deprecation shim that delegates to canonical.
+* ``publish_eval_metrics`` — bridges eval scores onto the ``agent_eval/*`` series.
+* ``verify_monitors``      — reads the canonical source (Cloud Monitoring) as two
+  surfaces (coordinator quality + router efficiency), tolerating the absent
+  optional BigQuery ``online_eval_results`` export table.
 
 All Vertex / Cloud Monitoring / BigQuery clients are faked; no credentials.
 """
@@ -15,7 +14,6 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from src.eval import publish_eval_metrics as bridge
-from src.eval import setup_online_evaluators as soe
 from src.eval import verify_monitors as vm
 from src.eval.quality_alerts import ALL_MONITORED_METRICS
 
@@ -37,33 +35,6 @@ class FakeMetricClient:
         for _name, ts_list in self.calls:
             out.extend(ts_list)
         return out
-
-
-class FakeResp:
-    def __init__(self, data, status_code=200):
-        self._data = data
-        self.status_code = status_code
-        self.text = ""
-
-    def json(self):
-        return self._data
-
-    def raise_for_status(self):
-        pass
-
-
-class FakeRequests:
-    """Minimal stand-in for the ``requests`` module used by setup_online_evaluators."""
-
-    def __init__(self):
-        self.posts = []
-
-    def get(self, url, headers=None):
-        return FakeResp({"onlineEvaluators": [], "evaluationMetrics": []})
-
-    def post(self, url, headers=None, json=None):
-        self.posts.append((url, json))
-        return FakeResp({"name": "operations/xyz"})
 
 
 def _make_series(metric_type: str, values, now=None):
@@ -111,46 +82,7 @@ class FakeBQClient:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Canonical setup targets the coordinator with the right sample rate + metrics
-# --------------------------------------------------------------------------- #
-def test_build_evaluator_config_targets_engine_with_metrics():
-    cfg = soe._build_evaluator_config(
-        "coordinator", "ENGINE123", ["projects/x/evaluationMetrics/m1"], sample_rate=25
-    )
-    assert cfg["agentResource"].endswith("reasoningEngines/ENGINE123")
-    assert cfg["config"]["randomSampling"]["percentage"] == 25
-    # Predefined metric set present, plus the custom metric resource.
-    predefined = {
-        ms["metric"]["predefinedMetricSpec"]["metricSpecName"]
-        for ms in cfg["metricSources"]
-        if "metric" in ms
-    }
-    assert set(soe.PREDEFINED_METRICS) == predefined
-    custom = {ms["metricResourceName"] for ms in cfg["metricSources"] if "metricResourceName" in ms}
-    assert "projects/x/evaluationMetrics/m1" in custom
-
-
-def test_create_evaluators_posts_coordinator_monitor(monkeypatch):
-    fake = FakeRequests()
-    monkeypatch.setattr(soe, "requests", fake)
-    monkeypatch.setattr(soe, "_get_headers", dict)
-    monkeypatch.setattr(soe, "register_custom_metrics", list)
-
-    soe.create_evaluators(sample_rate=42)
-
-    posted = [json for url, json in fake.posts if url.endswith("/onlineEvaluators")]
-    assert posted, "expected at least one onlineEvaluator POST"
-    coordinator = [
-        p
-        for p in posted
-        if p["agentResource"].endswith(f"reasoningEngines/{soe.COORDINATOR_ENGINE_ID}")
-    ]
-    assert len(coordinator) == 1
-    assert coordinator[0]["config"]["randomSampling"]["percentage"] == 42
-
-
-# --------------------------------------------------------------------------- #
-# 2. Score -> metric bridge lands on agent_eval/* names from ALL_MONITORED_METRICS
+# 1. Score -> metric bridge lands on agent_eval/* names from ALL_MONITORED_METRICS
 # --------------------------------------------------------------------------- #
 def test_bridge_publishes_only_monitored_metric_names():
     client = FakeMetricClient()
@@ -198,7 +130,7 @@ def test_bridge_ignores_none_scores():
 
 
 # --------------------------------------------------------------------------- #
-# 3. verify_monitors reads Cloud Monitoring; tolerates the absent BQ table
+# 2. verify_monitors reads Cloud Monitoring; tolerates the absent BQ table
 # --------------------------------------------------------------------------- #
 def test_verify_reads_coordinator_quality_surface():
     series = [
@@ -279,15 +211,3 @@ def test_verify_bigquery_missing_table_does_not_crash():
         output_format="json", source="bigquery", bq_client=FakeBQClient()
     )
     assert data["status"] == "no_table"
-
-
-# --------------------------------------------------------------------------- #
-# 4. Deprecation shim delegates to the canonical setup
-# --------------------------------------------------------------------------- #
-def test_shim_delegates_to_canonical(monkeypatch):
-    from src.eval import setup_online_monitors as shim
-
-    called = {}
-    monkeypatch.setattr(soe, "create_evaluators", lambda *a, **k: called.setdefault("hit", True))
-    shim.main([])
-    assert called.get("hit") is True

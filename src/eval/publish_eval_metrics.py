@@ -1,9 +1,9 @@
 """Bridge evaluation scores onto ``custom.googleapis.com/agent_eval/*`` metrics.
 
-The native Online Evaluators (``setup_online_evaluators.py``) surface their
-scores in the Agent Engine console and Cloud Logging. To make those scores fire
-the alert policies in ``quality_alerts.py`` and chart on the observability
-dashboard, they must also land on the ``agent_eval/*`` Cloud Monitoring series.
+Periodic-snapshot eval scores (from the batch/complexity evals, which score the
+deployed engine via the Vertex Gen AI Evaluation Service) must land on the
+``agent_eval/*`` Cloud Monitoring series to fire the alert policies in
+``quality_alerts.py`` and chart on the observability dashboard.
 
 This module is the single, canonical bridge: it takes a ``{metric_name: score}``
 dict (from an evaluator run, a batch eval summary, or a verify pass), maps any

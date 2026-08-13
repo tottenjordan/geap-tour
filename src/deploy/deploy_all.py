@@ -24,11 +24,11 @@ def main():
     print("\n[2/3] Deploying agents to Agent Runtime...")
     agent_resources = deploy_all_agents()
 
-    # Step 3: Setup online evaluators (optional, requires traffic first)
-    print("\n[3/3] Skipping online evaluator setup (run after generating traffic)")
-    print("  → Generate traffic:     uv run python -m src.traffic.generate_traffic")
-    print("  → Setup evaluators:     uv run python -m src.eval.setup_online_evaluators create")
-    print("  → Verify (after 10min): uv run python -m src.eval.setup_online_evaluators verify")
+    # Step 3: Publish periodic-snapshot eval scores (canonical quality source)
+    print("\n[3/3] Skipping eval publish (run after generating traffic)")
+    print("  → Generate traffic:  uv run python -m src.traffic.generate_traffic")
+    print("  → Run + publish:     uv run python -m src.eval.run_all_evals --skip-traffic")
+    print("  → Verify surfaces:   uv run python -m src.eval.verify_monitors --format json")
 
     print("\n" + "=" * 60)
     print("Deployment complete!")
