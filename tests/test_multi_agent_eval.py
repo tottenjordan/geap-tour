@@ -109,6 +109,23 @@ class TestEvalCaseRequiredFields:
             assert "expected_tool" in case, f"Missing 'expected_tool' field in case: {case}"
 
 
+class TestGetMetrics:
+    def test_get_metrics_excludes_custom_policy_metric(self):
+        # policy_compliance is NOT scored via client.evals (SDK-broken custom
+        # pointwise metric — see src/eval/policy_judge.py); it must not appear in
+        # the server-side rubric set for any agent, or every case errors.
+        from src.eval.agent_eval_configs import get_metrics
+        from src.eval.batch_eval import POLICY_COMPLIANCE_METRIC
+
+        assert POLICY_COMPLIANCE_METRIC not in get_metrics("coordinator_agent")
+        assert POLICY_COMPLIANCE_METRIC not in get_metrics("travel_agent")
+
+    def test_get_metrics_has_six_rubrics(self):
+        from src.eval.agent_eval_configs import get_metrics
+
+        assert len(get_metrics("coordinator_agent")) == 6
+
+
 class TestComplexityMetricDefined:
     def test_complexity_routing_metric_exists(self):
         from src.eval.complexity_metrics import COMPLEXITY_ROUTING_METRIC

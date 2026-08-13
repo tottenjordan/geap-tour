@@ -42,10 +42,11 @@ uv run python -m src.eval.simulated_eval --agent-id <ENGINE_ID> --agent-name coo
 uv run python -m src.eval.multi_agent_batch_eval coordinator_agent
 uv run python -m src.eval.run_all_evals
 
-# Continuous online evaluation (native Online Monitors — single supported flow)
-uv run python -m src.eval.setup_online_evaluators create      # create monitor over coordinator+router (optional trailing sample-rate %)
-uv run python -m src.eval.setup_online_evaluators verify      # read native results + bridge scores → agent_eval/*
+# Continuous quality eval — offline bridge is the canonical source (native online path platform-blocked)
+uv run python -m src.eval.publish_offline_eval --latest       # bridge newest run_all_evals scores → agent_eval/* (no engine cost)
+uv run python -m src.eval.publish_offline_eval --run          # fresh coordinator batch + complexity eval, then publish
 uv run python -m src.eval.verify_monitors --format json       # summarize agent_eval/* quality series (canonical source)
+uv run python -m src.eval.setup_online_evaluators create      # native Online Monitor (returns INSUFFICIENT_DATA — see docs/notes/offline-eval-monitoring-bridge.md)
 
 # Vertex Managed Pipeline (runs the full eval DAG on Vertex Pipelines)
 bash scripts/build_eval_image.sh v1                                  # build+push runner image (one-time)
@@ -101,7 +102,7 @@ Cross-session recall only persists if the deployed engine is backed by managed s
 - **Simulated eval** (`src/eval/simulated_eval.py`): multi-turn eval against a deployed agent using Vertex AI's user simulator.
 - **Eval configs** (`src/eval/agent_eval_configs.py`): test cases per agent plus `build_agent_info()` which constructs `AgentInfo` for offline eval.
 - **Vertex eval pipeline** (`src/pipelines/`): the full eval DAG (deploy → traffic → batch ‖ simulated ‖ complexity → monitor → report) as a KFP v2 Managed Pipeline, submitted manually via `src.pipelines.submit` (workflow: `.github/workflows/eval_vertex.yaml`). Replaced the old GitHub-Actions eval job graph. See [docs/notes/vertex-eval-pipeline.md](docs/notes/vertex-eval-pipeline.md).
-- **Continuous online eval** — ONE canonical flow on native Online Monitors: `src/eval/setup_online_evaluators.py` (`create`/`verify`/`list`/`delete`/`cleanup`) creates an onlineEvaluator over the deployed coordinator + router (configurable sample rate + metric set) whose scores land in the console and Cloud Logging. `src/eval/publish_eval_metrics.py:publish_eval_metrics()` bridges those scores onto `custom.googleapis.com/agent_eval/*` (names strictly from `quality_alerts.ALL_MONITORED_METRICS` — no drift) so the alert policies + dashboard chart quality alongside traffic. `src/eval/verify_monitors.py` reads that `agent_eval/*` series (canonical source; optional guarded BigQuery export via `--source bigquery`). `src/eval/setup_online_monitors.py` is a deprecated shim that delegates to `setup_online_evaluators create`.
+- **Continuous quality eval** — the canonical quality source is the **offline-eval bridge**, because the native Vertex Online Evaluators are platform-blocked (the managed Agent Engine runtime strips prompt/response content from traces, so every cycle returns `INSUFFICIENT_DATA` — verified empirically, see `docs/notes/offline-eval-monitoring-bridge.md` and memory `online-eval-content-capture-blocked`). `src/eval/publish_offline_eval.py:publish_offline_scores()` extracts the four monitored metrics from the batch/complexity evals — which legitimately score the *deployed* engine via the Vertex Gen AI Evaluation Service — scales them 0-1 → 1-5, tags them `eval_mode=offline`, and delegates to `src/eval/publish_eval_metrics.py:publish_eval_metrics()` (names strictly from `quality_alerts.ALL_MONITORED_METRICS` — no drift) which writes `custom.googleapis.com/agent_eval/*`. `run_all_evals` runs this as a phase; the CLI (`--from-json`/`--latest`/`--run`/`--dry-run`) can publish standalone. `src/eval/verify_monitors.py` reads that `agent_eval/*` series (canonical source; optional guarded BigQuery export via `--source bigquery`). The native path is kept in place but treated as a known limitation: `src/eval/setup_online_evaluators.py` (`create`/`verify`/`list`/`delete`/`cleanup`) still creates the onlineEvaluator (harmless), and `src/eval/setup_online_monitors.py` is a deprecated shim delegating to `setup_online_evaluators create`.
 
 ### GEPA optimization
 

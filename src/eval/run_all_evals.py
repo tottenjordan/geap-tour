@@ -20,6 +20,7 @@ from src.config import (
     AGENT_ENGINE_ID,
     EVAL_OUTPUT_DIR,
 )
+from src.eval.publish_offline_eval import publish_offline_scores
 
 
 def _resolve_agent_resource_name(agent_id: str) -> str:
@@ -58,7 +59,7 @@ def run_all_evals(
     }
 
     # --- Phase 1: Setup ---
-    print("[Phase 1/6] SETUP")
+    print("[Phase 1/7] SETUP")
     try:
         from src.eval.manage_monitors import list_monitors
         list_monitors()
@@ -73,7 +74,7 @@ def run_all_evals(
 
     # --- Phase 2: Traffic Generation ---
     if not skip_traffic and not batch_only:
-        print("[Phase 2/6] TRAFFIC GENERATION")
+        print("[Phase 2/7] TRAFFIC GENERATION")
         try:
             from src.traffic.generate_traffic import generate_traffic
             generate_traffic(agent_resource_name, count=2)
@@ -84,11 +85,11 @@ def run_all_evals(
             print("  Continuing with batch evals...")
         print()
     else:
-        print("[Phase 2/6] TRAFFIC GENERATION (skipped)")
+        print("[Phase 2/7] TRAFFIC GENERATION (skipped)")
         print()
 
     # --- Phase 3: Batch Evaluations ---
-    print("[Phase 3/6] BATCH EVALUATIONS")
+    print("[Phase 3/7] BATCH EVALUATIONS")
     try:
         from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
         batch_results = run_multi_agent_batch_eval(
@@ -103,11 +104,12 @@ def run_all_evals(
     print()
 
     if batch_only:
+        _run_publish_phase(results)
         _generate_report(output_dir, results)
         return results
 
     # --- Phase 4: Simulated Evaluations ---
-    print("[Phase 4/6] SIMULATED EVALUATIONS")
+    print("[Phase 4/7] SIMULATED EVALUATIONS")
     sim_results = {}
     for agent_name in ["coordinator_agent", "travel_agent"]:
         try:
@@ -130,7 +132,7 @@ def run_all_evals(
     print()
 
     # --- Phase 5: Complexity Evaluation ---
-    print("[Phase 5/6] COMPLEXITY EVALUATION")
+    print("[Phase 5/7] COMPLEXITY EVALUATION")
     try:
         from src.eval.complexity_metrics import (
             run_complexity_accuracy_eval,
@@ -157,7 +159,10 @@ def run_all_evals(
         results["complexity"] = {"error": str(e)}
     print()
 
-    # --- Phase 6: Monitor Verification ---
+    # --- Phase 6: Publish offline eval scores to agent_eval/* ---
+    _run_publish_phase(results)
+
+    # --- Phase 7: Monitor Verification ---
     _run_monitors_phase(agent_resource_name, output_dir, results)
 
     # --- Generate Report ---
@@ -166,9 +171,34 @@ def run_all_evals(
     return results
 
 
+def _run_publish_phase(results: dict):
+    """Bridge offline eval scores onto the ``agent_eval/*`` monitored series.
+
+    This is the canonical quality source for the demo (native Online Evaluators
+    are platform-blocked). Guarded so a publish failure never aborts the run;
+    ``verify_monitors`` (next phase) then reads the freshly-written points.
+    """
+    print("[Phase 6/7] PUBLISH OFFLINE EVAL SCORES")
+    try:
+        published = publish_offline_scores(
+            results.get("batch", {}),
+            complexity_results=results.get("complexity"),
+        )
+        results["published_metrics"] = published
+        if published:
+            for name, value in sorted(published.items()):
+                print(f"  {name}: {value}")
+        else:
+            print("  No monitored metrics found in eval results")
+    except Exception as e:
+        print(f"  Publish failed: {e}")
+        results["published_metrics"] = {"error": str(e)}
+    print()
+
+
 def _run_monitors_phase(agent_resource_name: str, output_dir: Path, results: dict):
     """Run monitor verification phase."""
-    print("[Phase 6/6] MONITOR VERIFICATION")
+    print("[Phase 7/7] MONITOR VERIFICATION")
     try:
         from src.eval.verify_monitors import verify_monitor_results, generate_markdown_report
         monitor_data = verify_monitor_results(output_format="json")

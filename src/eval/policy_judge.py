@@ -1,0 +1,187 @@
+"""Standalone LLM-judge scorer for the ``policy_compliance`` metric.
+
+The custom :data:`POLICY_COMPLIANCE_METRIC` (a pointwise ``LLMMetric``) cannot be
+scored through ``client.evals`` in the installed vertexai SDK: the judge produces
+a correct markdown verdict, but the eval service's response parser demands strict
+JSON and every case errors (``400 Error parsing JSON``), so the metric is
+silently dropped from the summary. Forcing JSON output, a stronger judge model,
+``result_parsing_function`` (not JSON-serializable), and ``return_raw_output``
+(``400 Unknown field custom_output_format_config``) all fail — it's an
+SDK↔service version mismatch, not a judge-quality issue.
+
+This module bypasses ``client.evals`` entirely: it runs the deployed coordinator
+over the policy-relevant cases, calls the judge model directly via
+``google.genai``, and parses the judge's ``Score: N`` line itself. The result is
+a legitimate 0-1 policy-compliance score over the *deployed* engine's responses,
+consumable by the offline-eval bridge (:mod:`src.eval.publish_offline_eval`).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from src.eval.batch_eval import EVAL_CASES, POLICY_COMPLIANCE_METRIC
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+# Coordinator eval categories whose responses are meaningful for policy scoring:
+# every expense flow, plus the expense-routing case (the rubric explicitly scores
+# correct routing when the query is not itself an expense action).
+POLICY_CASE_CATEGORIES = {"routing_expense"}
+POLICY_CASE_PREFIX = "expense"
+
+DEFAULT_JUDGE_MODEL = "gemini-2.5-flash"
+
+_SCORE_RE = re.compile(r"score\s*:?\s*\**\s*([1-5])", re.IGNORECASE)
+
+
+def parse_policy_score(text: str | None) -> float | None:
+    """Extract the judge's final ``Score: N`` (1-5) and map it to 0-1 (``N/5``).
+
+    Returns ``None`` when no score is present so unparseable verdicts are dropped
+    (not counted as zero). Uses the *last* match — judges often restate criterion
+    scores before the final verdict.
+    """
+    if not text:
+        return None
+    matches = _SCORE_RE.findall(str(text))
+    if not matches:
+        return None
+    return int(matches[-1]) / 5.0
+
+
+def select_policy_cases(cases: Sequence[dict]) -> list[dict]:
+    """Keep only the cases whose category is expense- or expense-routing-related."""
+    return [
+        c
+        for c in cases
+        if c.get("category", "").startswith(POLICY_CASE_PREFIX)
+        or c.get("category") in POLICY_CASE_CATEGORIES
+    ]
+
+
+def build_policy_prompt(prompt: str, response: str) -> str:
+    """Fill the shared ``POLICY_COMPLIANCE_METRIC`` rubric with a prompt/response.
+
+    ``POLICY_COMPLIANCE_METRIC.prompt_template`` is the fully-rendered rubric
+    (instruction + criteria + rating scores + ``{prompt}``/``{response}``
+    placeholders), so reusing it keeps the standalone judge on exactly the same
+    rubric as the (SDK-broken) ``client.evals`` path — no rubric drift. A final
+    directive nails the ``Score: N`` line the parser looks for.
+    """
+    template = str(POLICY_COMPLIANCE_METRIC.prompt_template)
+    filled = template.replace("{prompt}", prompt).replace("{response}", response)
+    return filled + "\n\nEnd your answer with a single line exactly: Score: <1-5>"
+
+
+def score_pairs(
+    pairs: Sequence[tuple[str, str]],
+    generate_fn: Callable[[str], str],
+) -> dict:
+    """Judge each ``(prompt, response)`` pair; return the mean 0-1 score.
+
+    ``generate_fn`` takes the rendered judge prompt and returns the judge's raw
+    text. Unparseable verdicts are skipped (dropped from the average, not zeroed).
+    """
+    scores: list[float] = []
+    for prompt, response in pairs:
+        raw = generate_fn(build_policy_prompt(prompt, response))
+        score = parse_policy_score(raw)
+        if score is not None:
+            scores.append(score)
+    return {
+        "score": (sum(scores) / len(scores)) if scores else None,
+        "n_scored": len(scores),
+        "n_total": len(pairs),
+    }
+
+
+def _is_error_response(response: str) -> bool:
+    """True for empty/cold-start responses the inference harness couldn't parse."""
+    s = str(response).strip()
+    return not s or s.startswith('{"error"')
+
+
+def _extract_pairs(inference_result) -> list[tuple[str, str]]:
+    """Pull ``(prompt, response)`` pairs from a ``run_inference`` result frame."""
+    df = getattr(inference_result, "eval_dataset_df", inference_result)
+    pairs: list[tuple[str, str]] = []
+    for _, row in df.iterrows():
+        response = row.get("response", "")
+        if _is_error_response(response):
+            continue
+        pairs.append((row.get("prompt", ""), response))
+    return pairs
+
+
+def _default_generate_fn(
+    judge_model: str, project: str | None, location: str | None
+) -> Callable[[str], str]:
+    """Build a direct google.genai judge call (Vertex backend)."""
+    from google import genai
+
+    from src.config import GCP_PROJECT_ID, GCP_REGION
+
+    client = genai.Client(
+        vertexai=True,
+        project=project or GCP_PROJECT_ID,
+        location=location or GCP_REGION,
+    )
+
+    def _generate(prompt: str) -> str:
+        resp = client.models.generate_content(model=judge_model, contents=prompt)
+        return resp.text or ""
+
+    return _generate
+
+
+def run_policy_compliance_eval(
+    agent_resource_name: str,
+    *,
+    cases: Sequence[dict] | None = None,
+    client=None,
+    generate_fn: Callable[[str], str] | None = None,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    project: str | None = None,
+    location: str | None = None,
+    warm: bool = True,
+) -> dict:
+    """Score policy_compliance for the deployed coordinator over policy cases.
+
+    Runs inference over the expense/routing-expense subset of the coordinator's
+    eval cases, then judges each response directly (bypassing the SDK-broken
+    ``client.evals`` custom-metric path). Returns
+    ``{"score": 0-1|None, "n_scored", "n_total"}``.
+    """
+    from vertexai import types
+
+    selected = select_policy_cases(cases if cases is not None else EVAL_CASES)
+
+    if client is None:
+        from vertexai import Client
+
+        from src.config import GCP_PROJECT_ID, GCP_REGION
+
+        client = Client(project=project or GCP_PROJECT_ID, location=location or GCP_REGION)
+
+    if warm:
+        try:
+            from src.eval.multi_agent_batch_eval import warm_agent_engine
+
+            engine = client.agent_engines.get(name=agent_resource_name)
+            warm_agent_engine(engine)
+        except Exception:  # warming is best-effort
+            pass
+
+    import pandas as pd
+
+    session_inputs = types.evals.SessionInput(user_id="policy-judge-user", state={})
+    df = pd.DataFrame([{"prompt": c["prompt"], "session_inputs": session_inputs} for c in selected])
+
+    inference_result = client.evals.run_inference(agent=agent_resource_name, src=df)
+    pairs = _extract_pairs(inference_result)
+
+    gen = generate_fn or _default_generate_fn(judge_model, project, location)
+    return score_pairs(pairs, gen)

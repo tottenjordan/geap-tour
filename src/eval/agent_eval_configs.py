@@ -4,7 +4,7 @@ import json
 
 from vertexai import types
 
-from src.eval.batch_eval import EVAL_CASES as COORDINATOR_EVAL_CASES, POLICY_COMPLIANCE_METRIC
+from src.eval.batch_eval import EVAL_CASES as COORDINATOR_EVAL_CASES
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +528,16 @@ def get_eval_cases(agent_name: str) -> list[dict]:
 
 
 def get_metrics(agent_name: str) -> list:
-    """Return the appropriate evaluation metrics for the given agent."""
+    """Return the appropriate evaluation metrics for the given agent.
+
+    Note: ``policy_compliance`` is deliberately NOT included here. The custom
+    pointwise ``POLICY_COMPLIANCE_METRIC`` cannot be scored through
+    ``client.evals`` in the installed vertexai SDK (the judge scores correctly
+    but the service's parser rejects its markdown verdict as invalid JSON, so
+    every case errors and the metric is dropped). It is instead scored by the
+    standalone judge in :mod:`src.eval.policy_judge`, which the offline-eval
+    bridge (``publish_offline_eval.py``) uses to feed the monitored metric.
+    """
     return [
         types.RubricMetric.FINAL_RESPONSE_QUALITY,
         types.RubricMetric.HALLUCINATION,

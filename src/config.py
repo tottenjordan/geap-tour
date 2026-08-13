@@ -56,6 +56,18 @@ MCP_SERVER_URLS = {
     EXPENSE_MCP_SERVER: EXPENSE_MCP_URL,
 }
 
+# Telemetry env baked into every deployed engine.
+#
+# NOTE: the Agent Engine managed runtime does NOT honor ADK's content-capture
+# env vars (ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS / ADK_TELEMETRY_IGNORE_RUN_CONFIG
+# / SPAN_AND_EVENT). Verified 2026-08-12 against google.adk 2.6.3: setting them
+# had zero effect — call_llm spans still carry gcp.vertex.agent.llm_request={}
+# and execute_tool spans tool_call_args={}, so the native Online Evaluators
+# always return INSUFFICIENT_DATA. Content capture for LiteLlm-backed agents is
+# blocked at the platform level. Keep this minimal (EVENT_ONLY) — the extra vars
+# were reverted as no-ops. For agents on a *native* google.genai model, EVENT_ONLY
+# routes gen_ai.* content to log events (gen_ai.system_instructions), the one
+# path the evaluator can still parse.
 OTEL_ENV_VARS = {
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
