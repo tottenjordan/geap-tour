@@ -110,17 +110,24 @@ def run_simulated_eval(
     print("  Inference complete")
 
     import time
-    from src.config import GCP_STAGING_BUCKET, RESOURCE_LABELS
+    from src.config import GCP_STAGING_BUCKET
+    from src.eval.eval_experiment import (
+        ensure_eval_experiment,
+        eval_run_display_name,
+        eval_run_labels,
+    )
     GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
     MAX_POLL_SECONDS = 600
 
     print("[3/3] Creating evaluation run...")
+    ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=eval_dataset_with_traces,
         agent=agent_resource_name,
         metrics=eval_metrics,
         dest=GCS_EVAL_DEST,
-        labels=dict(RESOURCE_LABELS),
+        display_name=eval_run_display_name(agent_name, "simulated"),
+        labels=eval_run_labels(agent_name, "simulated"),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

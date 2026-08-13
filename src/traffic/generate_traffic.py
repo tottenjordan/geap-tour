@@ -571,6 +571,123 @@ def generate_load(
     return summary
 
 
+# Default staircase for --scaling: each step holds a higher offered QPS long
+# enough for the online monitors + dashboard to register the new plateau, with a
+# short ramp so the rise between steps is visible rather than a vertical jump.
+SCALING_STAGES = [
+    {"qps": 1, "duration_s": 120, "ramp_s": 15},
+    {"qps": 3, "duration_s": 120, "ramp_s": 15},
+    {"qps": 6, "duration_s": 120, "ramp_s": 15},
+    {"qps": 10, "duration_s": 120, "ramp_s": 15},
+]
+
+
+def generate_scaling_profile(
+    agent,
+    *,
+    stages=None,
+    workers=64,
+    error_injection=0.0,
+    user_pool=None,
+    seed=None,
+    queries=None,
+    tick_s=0.1,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    emit_metrics: bool = False,
+    metrics_writer=None,
+    on_stage=None,
+) -> dict:
+    """Run a staircase of QPS stages back-to-back to illustrate scaling.
+
+    Each stage is a dict ``{"qps": int, "duration_s": float, "ramp_s": float?}``
+    and is executed as its own :func:`generate_load` run (offered QPS ramps then
+    holds at that stage's target). Stages run sequentially so the offered load
+    climbs step by step; when ``emit_metrics`` is True each stage's summary is
+    written to ``custom.googleapis.com/agent_traffic/*`` tagged with ``stage`` and
+    ``target_qps`` labels, so the dashboard renders a scaling curve rather than a
+    single flat run. ``seed`` is offset per stage so each step varies its query
+    mix while the whole profile stays reproducible.
+
+    ``workers`` defaults high (64) because achieved QPS is capped by
+    ``workers / avg_latency`` — the coordinator's multi-second per-query latency
+    means a small pool saturates well below the target, flattening the staircase.
+    Size it to roughly ``peak_qps × avg_latency_s`` for the achieved curve to
+    track the offered one.
+
+    ``agent`` and the injectable ``sleep``/``monotonic``/``seed`` behave exactly
+    as in :func:`generate_load` (tests pass a fake agent + virtual clock).
+    ``metrics_writer`` lets tests capture emission without live GCP;
+    ``on_stage(index, stage_summary)`` is an optional per-stage hook.
+
+    Returns a dict with ``stages`` (per-stage summaries, each augmented with
+    ``stage`` + ``target_qps``) plus ``total_offered``, ``total_sent``,
+    ``total_errors``, ``total_injected`` and ``peak_qps``.
+    """
+    stages = stages if stages is not None else SCALING_STAGES
+
+    stage_summaries = []
+    for i, spec in enumerate(stages):
+        target_qps = spec["qps"]
+        print(f"\n{'#' * 60}")
+        print(f"# SCALING STAGE {i + 1}/{len(stages)} — target {target_qps} QPS")
+        print(f"{'#' * 60}")
+
+        summary = generate_load(
+            agent,
+            target_qps=target_qps,
+            duration_s=spec["duration_s"],
+            ramp_s=spec.get("ramp_s", 0),
+            workers=workers,
+            error_injection=error_injection,
+            user_pool=user_pool,
+            seed=(seed + i) if seed is not None else None,
+            queries=queries,
+            tick_s=tick_s,
+            sleep=sleep,
+            monotonic=monotonic,
+            emit_metrics=False,  # emit per-stage below with scaling labels
+        )
+        summary = {**summary, "stage": i, "target_qps": target_qps}
+        stage_summaries.append(summary)
+
+        if emit_metrics:
+            from src.observability.metrics import emit_traffic_metrics
+
+            try:
+                emit_traffic_metrics(
+                    summary,
+                    writer=metrics_writer,
+                    extra_labels={"stage": str(i), "target_qps": str(target_qps)},
+                )
+                print(f"  Metrics:      emitted (stage={i}, target_qps={target_qps})")
+            except Exception as e:  # demo tooling, never fail the run on metrics
+                print(f"  Metrics:      emission failed: {e}")
+
+        if on_stage is not None:
+            on_stage(i, summary)
+
+    result = {
+        "stages": stage_summaries,
+        "total_offered": sum(s["offered"] for s in stage_summaries),
+        "total_sent": sum(s["sent"] for s in stage_summaries),
+        "total_errors": sum(s["errors"] for s in stage_summaries),
+        "total_injected": sum(s["injected"] for s in stage_summaries),
+        "peak_qps": max((s["achieved_qps"] for s in stage_summaries), default=0.0),
+    }
+
+    print(f"\n{'=' * 60}")
+    print("SCALING PROFILE COMPLETE")
+    print(f"{'=' * 60}")
+    print(f"  Stages:        {len(stage_summaries)} ({', '.join(str(s['target_qps']) for s in stage_summaries)} QPS)")
+    print(f"  Total offered: {result['total_offered']}")
+    print(f"  Total sent:    {result['total_sent']}")
+    print(f"  Total errors:  {result['total_errors']}")
+    print(f"  Peak QPS:      {result['peak_qps']:.2f}")
+
+    return result
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate test traffic for OTel traces")
     parser.add_argument("agent", nargs="?", default=None, help="Agent resource name or engine ID")
@@ -582,14 +699,30 @@ if __name__ == "__main__":
     parser.add_argument("--interval", type=int, default=60, help="Seconds between batches in steady-state mode (default: 60)")
     parser.add_argument("--qps", type=int, default=3, help="Queries per interval (steady) / target QPS (load)")
     parser.add_argument("--load", action="store_true", help="Run in concurrent ramped load mode")
+    parser.add_argument("--scaling", action="store_true", help="Run the multi-stage QPS scaling staircase (illustrates scaling)")
     parser.add_argument("--ramp", type=int, default=0, help="Ramp-up seconds for --load mode (default: 0)")
-    parser.add_argument("--workers", type=int, default=8, help="Concurrent workers for --load mode (default: 8)")
+    parser.add_argument("--workers", type=int, default=None, help="Concurrent workers (default: 8 for --load, 64 for --scaling)")
     parser.add_argument("--error-rate", type=float, default=0.0, help="Injected bad-query probability for --load (default: 0.0)")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)")
     parser.add_argument("--emit-metrics", action="store_true", help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run")
     args = parser.parse_args()
 
-    if args.load:
+    if args.scaling:
+        vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+        disable_pyopenssl()
+        resource = args.agent or (
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
+            f"/reasoningEngines/{AGENT_ENGINE_ID}"
+        )
+        scaling_agent = agent_engines.get(resource)
+        generate_scaling_profile(
+            scaling_agent,
+            workers=args.workers if args.workers is not None else 64,
+            error_injection=args.error_rate,
+            seed=args.seed,
+            emit_metrics=args.emit_metrics,
+        )
+    elif args.load:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         disable_pyopenssl()
         resource = args.agent or (
@@ -602,7 +735,7 @@ if __name__ == "__main__":
             target_qps=args.qps,
             duration_s=args.duration * 60,
             ramp_s=args.ramp,
-            workers=args.workers,
+            workers=args.workers if args.workers is not None else 8,
             error_injection=args.error_rate,
             seed=args.seed,
             emit_metrics=args.emit_metrics,

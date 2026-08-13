@@ -21,7 +21,12 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, AGENT_ENGINE_ID, RESOURCE_LABELS
+from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, AGENT_ENGINE_ID
+from src.eval.eval_experiment import (
+    ensure_eval_experiment,
+    eval_run_display_name,
+    eval_run_labels,
+)
 
 # ---------------------------------------------------------------------------
 # GCS destination for persisted evaluation artifacts
@@ -445,16 +450,18 @@ def run_batch_eval(
     print("    - HALLUCINATION         (adaptive rubric)")
     print("    - SAFETY                (static rubric)")
 
+    ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=dataset_with_rubrics,
         agent=agent_resource_name,
+        display_name=eval_run_display_name("coordinator", "batch"),
         metrics=[
             types.RubricMetric.FINAL_RESPONSE_QUALITY,
             types.RubricMetric.HALLUCINATION,
             types.RubricMetric.SAFETY,
         ],
         dest=GCS_EVAL_DEST,
-        labels=dict(RESOURCE_LABELS),
+        labels=eval_run_labels("coordinator", "batch"),
     )
 
     print(f"  Eval run: {evaluation_run.name}")

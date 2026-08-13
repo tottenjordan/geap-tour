@@ -5,15 +5,30 @@ import pytest
 from src.doe.factors import (
     CHANNELS,
     FACTORS,
+    FACTORS_BY_NAME,
     Factor,
     get_factors,
     requires_fresh_deploy,
 )
 
 
-def test_registry_has_four_seed_factors():
+def test_registry_has_seed_factors():
     names = {f.name for f in FACTORS}
-    assert names == {"router_boundaries", "model_tier", "prompt_variant", "eval_fidelity"}
+    assert names == {
+        "router_boundaries",
+        "model_tier",
+        "prompt_variant",
+        "eval_fidelity",
+        "memory_bank",
+    }
+
+
+def test_memory_bank_factor_toggles_env():
+    f = FACTORS_BY_NAME["memory_bank"]
+    assert f.channel == "engine_env"  # flipping it needs a fresh engine deploy
+    assert f.assignment(f.low_label) == {"ENABLE_MEMORY_BANK": "0"}
+    assert f.assignment(f.high_label) == {"ENABLE_MEMORY_BANK": "1"}
+    assert requires_fresh_deploy([f]) is True
 
 
 def test_every_factor_is_valid():

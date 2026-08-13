@@ -53,6 +53,7 @@ from src.config import (
     MEDIUM_SPLIT,
     HIGH_SPLIT,
     PROMPT_VARIANT,
+    ENABLE_MEMORY_BANK,
     RESOURCE_LABELS,
     DEPLOY_TAG,
 )
@@ -166,19 +167,18 @@ def _wants_memory(agent) -> bool:
 def _build_app(agent):
     """Return the object to deploy for ``agent``.
 
-    Memory-enabled agents are wrapped in an ``AdkApp`` bound to Vertex Memory
-    Bank + Session services so recall persists across sessions. Other agents
-    are returned unchanged — the Agent Engine runtime auto-wraps a raw
-    ``BaseAgent`` in a default ``AdkApp`` (no persistent services), which is the
-    correct behavior for agents that don't use Memory Bank.
+    EVERY agent is wrapped in an ``AdkApp`` bound to a managed
+    ``VertexAiSessionService`` scoped to the engine's OWN runtime id. Without it,
+    the runtime's default wrapping cannot create the server-side sessions that
+    ``stream_query`` requires, so the deployed engine fails every request with
+    "Failed to create session" (the bug that silenced the router + leaf agents).
+    Memory-enabled agents (the coordinator) additionally get the Memory Bank
+    service so recall persists across sessions.
     """
-    if not _wants_memory(agent):
-        return agent
-    return agent_engines.AdkApp(
-        agent=agent,
-        memory_service_builder=_memory_service_builder,
-        session_service_builder=_session_service_builder,
-    )
+    builders = {"session_service_builder": _session_service_builder}
+    if _wants_memory(agent):
+        builders["memory_service_builder"] = _memory_service_builder
+    return agent_engines.AdkApp(agent=agent, **builders)
 
 
 def _tagged_display_name(agent, tag: str | None = None) -> str:
@@ -222,6 +222,7 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "MEDIUM_SPLIT": str(MEDIUM_SPLIT),
         "HIGH_SPLIT": str(HIGH_SPLIT),
         "PROMPT_VARIANT": PROMPT_VARIANT,
+        "ENABLE_MEMORY_BANK": "1" if ENABLE_MEMORY_BANK else "0",
         "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "GOOGLE_GENAI_USE_VERTEXAI": "1",

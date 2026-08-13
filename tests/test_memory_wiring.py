@@ -85,12 +85,18 @@ class TestBuildApp:
         assert app.kwargs["memory_service_builder"] is da._memory_service_builder
         assert app.kwargs["session_service_builder"] is da._session_service_builder
 
-    def test_passes_plain_agent_through_unwrapped(self, monkeypatch):
+    def test_wraps_plain_agent_with_session_only(self, monkeypatch):
+        """Non-memory agents still need a managed Session service scoped to
+        their own runtime id, or stream_query fails with "Failed to create
+        session". They get the session builder but NOT the memory builder."""
         _FakeAdkApp.instances.clear()
         monkeypatch.setattr(da.agent_engines, "AdkApp", _FakeAdkApp)
         agent = _plain_agent()
-        assert da._build_app(agent) is agent
-        assert _FakeAdkApp.instances == []
+        app = da._build_app(agent)
+        assert isinstance(app, _FakeAdkApp)
+        assert app.kwargs["agent"] is agent
+        assert app.kwargs["session_service_builder"] is da._session_service_builder
+        assert "memory_service_builder" not in app.kwargs
 
 
 class TestDeployWiring:
@@ -120,7 +126,8 @@ class TestDeployWiring:
         assert isinstance(passed, _FakeAdkApp)
         assert passed.kwargs["session_service_builder"] is da._session_service_builder
 
-    def test_deploy_agent_leaves_plain_agent_raw(self, monkeypatch):
+    def test_deploy_agent_wraps_plain_agent_with_session(self, monkeypatch):
+        """A raw agent deploys inside a session-only AdkApp (no memory)."""
         _FakeAdkApp.instances.clear()
         client = _FakeClient()
         monkeypatch.setattr(da.agent_engines, "AdkApp", _FakeAdkApp)
@@ -129,8 +136,11 @@ class TestDeployWiring:
         agent = _plain_agent()
         da.deploy_agent(agent)
 
-        assert client.agent_engines.create_kwargs["agent"] is agent
-        assert _FakeAdkApp.instances == []
+        passed = client.agent_engines.create_kwargs["agent"]
+        assert isinstance(passed, _FakeAdkApp)
+        assert passed.kwargs["agent"] is agent
+        assert passed.kwargs["session_service_builder"] is da._session_service_builder
+        assert "memory_service_builder" not in passed.kwargs
 
 
 class TestRuntimeEngineId:
@@ -192,6 +202,51 @@ class TestCoordinatorRegression:
         from src.agents.coordinator_agent import coordinator_agent
 
         assert da._wants_memory(coordinator_agent) is True
+
+
+class TestMemoryBankToggle:
+    """The `memory_bank` DOE factor: ENABLE_MEMORY_BANK=0 deploys the coordinator
+    without Memory Bank (no PreloadMemoryTool, no memory-save callback), so a run
+    measures the recall uplift. Default (unset) keeps current behavior."""
+
+    def test_default_on_wires_memory(self):
+        from src.agents.coordinator_agent import (
+            coordinator_agent,
+            save_memories_callback,
+        )
+
+        assert any(isinstance(t, PreloadMemoryTool) for t in coordinator_agent.tools)
+        assert coordinator_agent.after_agent_callback is save_memories_callback
+
+    def test_disabled_removes_memory(self, monkeypatch):
+        import importlib
+
+        monkeypatch.setenv("ENABLE_MEMORY_BANK", "0")
+        import src.config as cfg
+        import src.registry as reg
+        import src.agents.coordinator_agent as ca
+
+        # src.registry must be reloaded between src.config and the agent module:
+        # it binds MCP_SERVER_URLS from src.config at import time, and the agent
+        # resolves its MCP tools through registry's URL fallback. Without the
+        # registry reload the fallback map is keyed by collection-time (pre-
+        # conftest) server names, so a credential-less environment (CI) misses
+        # the fallback and re-raises. See tests/test_prompt_variant.py.
+        importlib.reload(cfg)
+        importlib.reload(reg)
+        importlib.reload(ca)
+        try:
+            assert cfg.ENABLE_MEMORY_BANK is False
+            assert not any(
+                isinstance(t, PreloadMemoryTool) for t in ca.coordinator_agent.tools
+            )
+            assert ca.coordinator_agent.after_agent_callback is None
+            assert da._wants_memory(ca.coordinator_agent) is False
+        finally:
+            monkeypatch.delenv("ENABLE_MEMORY_BANK", raising=False)
+            importlib.reload(cfg)
+            importlib.reload(reg)
+            importlib.reload(ca)
 
 
 # --- verify_memory helper ---------------------------------------------------
