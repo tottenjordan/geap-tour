@@ -223,9 +223,17 @@ class TestMemoryBankToggle:
 
         monkeypatch.setenv("ENABLE_MEMORY_BANK", "0")
         import src.config as cfg
+        import src.registry as reg
         import src.agents.coordinator_agent as ca
 
+        # src.registry must be reloaded between src.config and the agent module:
+        # it binds MCP_SERVER_URLS from src.config at import time, and the agent
+        # resolves its MCP tools through registry's URL fallback. Without the
+        # registry reload the fallback map is keyed by collection-time (pre-
+        # conftest) server names, so a credential-less environment (CI) misses
+        # the fallback and re-raises. See tests/test_prompt_variant.py.
         importlib.reload(cfg)
+        importlib.reload(reg)
         importlib.reload(ca)
         try:
             assert cfg.ENABLE_MEMORY_BANK is False
@@ -237,6 +245,7 @@ class TestMemoryBankToggle:
         finally:
             monkeypatch.delenv("ENABLE_MEMORY_BANK", raising=False)
             importlib.reload(cfg)
+            importlib.reload(reg)
             importlib.reload(ca)
 
 
