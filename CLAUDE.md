@@ -51,6 +51,9 @@ uv run python -m src.eval.verify_monitors --format json       # summarize both s
 # CI/CD eval gate — fast coordinator rubric score for a PR (advisory; --limit caps cases)
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent --agent-id <ENGINE_ID> --threshold 3.0 --limit 8
 
+# Content logging to BigQuery (opt-in; model-neutral, independent of the stripped OTEL surface)
+ENABLE_AGENT_ANALYTICS=1 uv run python -m src.deploy.deploy_agents coordinator --update  # wire BigQueryAgentAnalyticsPlugin; see docs/notes/agent-analytics-bigquery.md
+
 # Vertex Managed Pipeline (runs the full eval DAG on Vertex Pipelines)
 bash scripts/build_eval_image.sh v1                                  # build+push runner image (one-time)
 uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)

@@ -27,6 +27,9 @@ from src.config import (
     GCP_REGION,
     GCP_STAGING_BUCKET,
     OTEL_ENV_VARS,
+    ENABLE_AGENT_ANALYTICS,
+    BQ_AGENT_ANALYTICS_DATASET,
+    AGENT_ANALYTICS_TABLE,
     SEARCH_MCP_URL,
     BOOKING_MCP_URL,
     EXPENSE_MCP_URL,
@@ -84,6 +87,13 @@ REQUIREMENTS = [
     "opentelemetry-instrumentation-google-genai",
     "opentelemetry-instrumentation-grpc",
     "opentelemetry-instrumentation-httpx",
+    # BigQuery Agent Analytics plugin (opt-in via ENABLE_AGENT_ANALYTICS) streams
+    # full prompt/response/tool content to BigQuery via the Storage Write API.
+    # Transitive of the adk extra, but pinned here so they resolve into the served
+    # engine's build image regardless of extra resolution.
+    "google-cloud-bigquery-storage>=2",
+    "google-cloud-storage>=2",
+    "pyarrow",
     # "google-cloud-iamconnectorcredentials>=0.1.0",
 ]
 
@@ -171,6 +181,36 @@ def _wants_memory(agent) -> bool:
     return any(isinstance(t, PreloadMemoryTool) for t in tools)
 
 
+def _analytics_plugin():
+    """Return the BigQuery Agent Analytics plugin, or None when disabled.
+
+    Opt-in via ``ENABLE_AGENT_ANALYTICS`` (default off). When enabled, the ADK
+    ``BigQueryAgentAnalyticsPlugin`` runs at the runner level inside the served
+    engine and streams full LLM requests/responses + tool calls to BigQuery via
+    the Storage Write API — a model-neutral content path (Gemini AND Claude via
+    LiteLlm) that is independent of the OTEL trace surface the managed runtime
+    strips. Rows carry the trace_id, so they join back to Cloud Trace.
+
+    The import is deferred so the disabled path (and unit tests) never touch the
+    BigQuery client libraries. Requires the BigQuery Storage Write API + dataset
+    IAM on the Agent Engine runtime SA — see docs/notes/agent-analytics-bigquery.md.
+    """
+    if not ENABLE_AGENT_ANALYTICS:
+        return None
+    from google.adk.plugins.bigquery_agent_analytics_plugin import (
+        BigQueryAgentAnalyticsPlugin,
+        BigQueryLoggerConfig,
+    )
+
+    return BigQueryAgentAnalyticsPlugin(
+        project_id=GCP_PROJECT_ID,
+        dataset_id=BQ_AGENT_ANALYTICS_DATASET,
+        table_id=AGENT_ANALYTICS_TABLE,
+        location="US",
+        config=BigQueryLoggerConfig(view_prefix="v_", batch_size=50, queue_max_size=10000),
+    )
+
+
 def _build_app(agent):
     """Return the object to deploy for ``agent``.
 
@@ -181,11 +221,18 @@ def _build_app(agent):
     "Failed to create session" (the bug that silenced the router + leaf agents).
     Memory-enabled agents (the coordinator) additionally get the Memory Bank
     service so recall persists across sessions.
+
+    When ``ENABLE_AGENT_ANALYTICS`` is set, the runner-level BigQuery analytics
+    plugin is attached to every agent so full content is logged (see
+    ``_analytics_plugin``). AdkApp forwards ``plugins`` to the Runner and
+    deep-copies them on clone(), so they survive the deploy cycle.
     """
     builders = {"session_service_builder": _session_service_builder}
     if _wants_memory(agent):
         builders["memory_service_builder"] = _memory_service_builder
-    return agent_engines.AdkApp(agent=agent, **builders)
+    plugin = _analytics_plugin()
+    plugins = [plugin] if plugin else None
+    return agent_engines.AdkApp(agent=agent, plugins=plugins, **builders)
 
 
 def _tagged_display_name(agent, tag: str | None = None) -> str:
@@ -232,6 +279,8 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "ENABLE_MEMORY_BANK": "1" if ENABLE_MEMORY_BANK else "0",
         "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
+        "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
         "GOOGLE_GENAI_USE_VERTEXAI": "1",
         "SEARCH_MCP_SERVER": SEARCH_MCP_SERVER,
         "BOOKING_MCP_SERVER": BOOKING_MCP_SERVER,
