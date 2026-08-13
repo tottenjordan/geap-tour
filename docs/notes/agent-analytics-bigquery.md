@@ -43,14 +43,17 @@ bake-off comparison.
 ## Prerequisites (run once, before Task 1.4)
 
 The plugin runs inside the served engine as the **Agent Engine runtime service
-account**, so grant it:
+account** — the Reasoning Engine service agent
+`service-<PROJECT_NUMBER>@gcp-sa-aiplatform-re.iam.gserviceaccount.com`. It needs
+the Storage Write API enabled, permission to create the dataset/table + write
+rows, and object-write on the staging bucket (large-payload offload path):
 
 ```bash
 # Enable the Storage Write API (used by the plugin's streaming writer).
 gcloud services enable bigquerystorage.googleapis.com --project "$GCP_PROJECT_ID"
 
 # The runtime SA needs to create the dataset/table + write rows, and write large
-# payloads to the staging bucket (offload path). Substitute the engine's SA.
+# payloads to the staging bucket. Substitute the engine's SA + staging bucket.
 gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
   --member "serviceAccount:<AGENT_ENGINE_RUNTIME_SA>" \
   --role roles/bigquery.dataEditor
@@ -58,8 +61,15 @@ gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
   --member "serviceAccount:<AGENT_ENGINE_RUNTIME_SA>" \
   --role roles/bigquery.user   # bigquery.datasets.create / jobs
 gsutil iam ch "serviceAccount:<AGENT_ENGINE_RUNTIME_SA>:roles/storage.objectAdmin" \
-  "gs://${GCP_PROJECT_ID}-geap-staging"
+  "gs://<GCP_STAGING_BUCKET>"
 ```
+
+**Status in `hybrid-vertex` (verified 2026-08-13): all prerequisites already
+met — no grants needed.** The Storage Write API is enabled, and the runtime SA
+`service-934903580331@gcp-sa-aiplatform-re.iam.gserviceaccount.com` already holds
+`roles/bigquery.admin` + `roles/storage.admin` (+ `roles/editor`), which
+supersede the narrower roles above for the staging bucket `geap-tour-staging-v2`.
+Task 1.4 can be run directly against the deploy — no IAM change required.
 
 ## Task 1.4 — empirical content-capture gate (do before trusting this path)
 
