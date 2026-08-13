@@ -824,7 +824,7 @@ uv run python -m src.eval.one_time_eval <agent-resource-name>
 The native Vertex Online Evaluators are platform-blocked for our agents: the managed Agent Engine runtime strips prompt/response content from OTel traces, so they always return `INSUFFICIENT_DATA`. The canonical quality source is instead the **offline-eval bridge**, which legitimately scores the *deployed* engine via the Vertex Gen AI Evaluation Service and writes periodic point-in-time **snapshots** (one write per eval run) to two honest, separate monitored surfaces — because the coordinator (a task executor) and the 5-tier router (an economic optimizer) must not be scored on the same axis:
 
 1. **Coordinator quality → `custom.googleapis.com/agent_eval/*`** — `helpfulness`, `tool_use_accuracy`, `policy_compliance` scaled onto a 1-5 rubric axis, alert when `< 3.0`, tagged `eval_mode=offline`.
-2. **Router efficiency → `custom.googleapis.com/agent_router/*`** — `routing_accuracy_pct` (%, alert `< 80`), `cost_savings_pct` (% vs an all-Opus baseline, alert `< 40`), `classifier_latency_ms` (ms, alert `> 2000`), published verbatim in native units.
+2. **Router efficiency → `custom.googleapis.com/agent_router/*`** — `routing_accuracy_pct` (%, alert `< 80`), `cost_savings_pct` (% vs an all-Opus baseline, alert `< 50`), `classifier_latency_ms` (ms, alert `> 8000`), published verbatim in native units.
 
 ```bash
 # Publish coordinator quality → agent_eval/* (reuse newest run artifacts, no engine cost)

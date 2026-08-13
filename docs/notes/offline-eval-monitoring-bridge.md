@@ -67,8 +67,8 @@ the complexity accuracy + cost-efficiency evals:
    | Monitored metric | Source | Unit | Alert |
    |---|---|---|---|
    | `routing_accuracy_pct` | `run_complexity_accuracy_eval(ROUTER_EVAL_CASES)["accuracy"]` ×100 | % | `< 80.0` |
-   | `cost_savings_pct` | `run_cost_efficiency_eval(...)["savings_pct"]` (verbatim) | % | `< 40.0` |
-   | `classifier_latency_ms` | `run_complexity_accuracy_eval(...)["avg_latency_ms"]` | ms | `> 2000.0` |
+   | `cost_savings_pct` | `run_cost_efficiency_eval(...)["savings_pct"]` (verbatim) | % | `< 50.0` |
+   | `classifier_latency_ms` | `run_complexity_accuracy_eval(...)["avg_latency_ms"]` | ms | `> 8000.0` |
 
 `cost_savings_pct` (savings vs an all-Opus baseline) was previously computed and
 discarded — it is now a first-class monitored series. `run_all_evals` publishes

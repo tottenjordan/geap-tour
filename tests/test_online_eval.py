@@ -158,8 +158,8 @@ def test_verify_reads_router_efficiency_surface_with_directions():
     series = [
         # accuracy floor is 80.0 (LT): 75.0 is out of bounds, 92.0 is fine.
         _make_series("custom.googleapis.com/agent_router/routing_accuracy_pct", [92.0, 75.0]),
-        # latency ceiling is 2000.0 (GT): 2500.0 is out of bounds.
-        _make_series("custom.googleapis.com/agent_router/classifier_latency_ms", [150.0, 2500.0]),
+        # latency ceiling is 8000.0 (GT): 9000.0 is out of bounds.
+        _make_series("custom.googleapis.com/agent_router/classifier_latency_ms", [150.0, 9000.0]),
     ]
     client = FakeMonitoringClient(series)
 
