@@ -134,8 +134,13 @@ def test_emit_traffic_extra_labels_applied():
     client = FakeMetricClient()
     w = MetricsWriter(project_id="proj-x", client=client)
     summary = {
-        "offered": 1, "sent": 1, "errors": 0, "injected": 0,
-        "achieved_qps": 1.0, "p50_latency": 0.1, "p95_latency": 0.1,
+        "offered": 1,
+        "sent": 1,
+        "errors": 0,
+        "injected": 0,
+        "achieved_qps": 1.0,
+        "p50_latency": 0.1,
+        "p95_latency": 0.1,
         "duration_s": 1.0,
     }
     emit_traffic_metrics(summary, writer=w, extra_labels={"run": "demo1"})
@@ -146,8 +151,7 @@ def test_emit_traffic_extra_labels_applied():
 def test_quality_metric_types_match_quality_alerts():
     """The quality metric types we expose must match quality_alerts.py exactly."""
     expected = {
-        f"custom.googleapis.com/agent_eval/{name}"
-        for name, _threshold in ALL_MONITORED_METRICS
+        f"custom.googleapis.com/agent_eval/{name}" for name, _threshold in ALL_MONITORED_METRICS
     }
     assert set(QUALITY_METRIC_TYPES) == expected
     # Sanity: the known strings are present.
@@ -162,3 +166,37 @@ def test_write_quality_scores_emits_all():
     vals = _by_type(client)
     assert vals["custom.googleapis.com/agent_eval/helpfulness"] == 4.5
     assert vals["custom.googleapis.com/agent_eval/policy_compliance"] == 3.9
+
+
+def test_router_metric_types_derive_from_list():
+    """Router metric types must match ROUTER_MONITORED_METRICS exactly."""
+    from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
+    from src.observability.metrics import ROUTER_METRIC_TYPES
+
+    expected = {
+        f"custom.googleapis.com/agent_router/{name}"
+        for name, _threshold, _comparison in ROUTER_MONITORED_METRICS
+    }
+    assert set(ROUTER_METRIC_TYPES) == expected
+    assert "custom.googleapis.com/agent_router/cost_savings_pct" in ROUTER_METRIC_TYPES
+
+
+def test_write_router_metrics_emits_native_units():
+    """Router scores are written verbatim (native units) — no 0-1 -> 1-5 scaling."""
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    metrics.write_router_metrics(
+        {
+            "routing_accuracy_pct": 92.0,
+            "cost_savings_pct": 60.0,
+            "classifier_latency_ms": 145.0,
+        },
+        writer=w,
+        extra_labels={"eval_mode": "offline"},
+    )
+    vals = _by_type(client)
+    assert vals["custom.googleapis.com/agent_router/cost_savings_pct"] == 60.0
+    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 92.0
+    assert vals["custom.googleapis.com/agent_router/classifier_latency_ms"] == 145.0
+    for ts in client.flatten():
+        assert ts.metric.labels["eval_mode"] == "offline"
