@@ -5,18 +5,34 @@ from google.protobuf import duration_pb2
 
 from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 
+_COMPARISONS = {
+    "LT": monitoring_v3.ComparisonType.COMPARISON_LT,
+    "GT": monitoring_v3.ComparisonType.COMPARISON_GT,
+}
+
 
 def _build_policy(
     metric_name: str,
     threshold: float,
     channels: list[str],
+    *,
+    comparison: str = "LT",
+    family: str = "agent_eval",
 ) -> monitoring_v3.AlertPolicy:
-    """Build the AlertPolicy proto (pure; no API calls) for one eval metric."""
+    """Build the AlertPolicy proto (pure; no API calls) for one monitored metric.
+
+    ``comparison`` is ``"LT"`` (alert when the value falls *below* the threshold —
+    the right direction for quality/accuracy/savings metrics) or ``"GT"`` (alert
+    when the value rises *above* the threshold — e.g. latency ceilings).
+    ``family`` selects the metric namespace (``agent_eval`` for coordinator
+    quality, ``agent_router`` for router efficiency).
+    """
+    direction = "below" if comparison == "LT" else "above"
     condition = monitoring_v3.AlertPolicy.Condition(
-        display_name=f"Agent {metric_name} score below {threshold}",
+        display_name=f"Agent {metric_name} {direction} {threshold}",
         condition_threshold=monitoring_v3.AlertPolicy.Condition.MetricThreshold(
-            filter=f'metric.type="custom.googleapis.com/agent_eval/{metric_name}" AND resource.type="global"',
-            comparison=monitoring_v3.ComparisonType.COMPARISON_LT,
+            filter=f'metric.type="custom.googleapis.com/{family}/{metric_name}" AND resource.type="global"',
+            comparison=_COMPARISONS[comparison],
             threshold_value=threshold,
             duration=duration_pb2.Duration(seconds=600),
             aggregations=[
@@ -31,8 +47,8 @@ def _build_policy(
     return monitoring_v3.AlertPolicy(
         display_name=f"GEAP Workshop: {metric_name} quality alert",
         documentation=monitoring_v3.AlertPolicy.Documentation(
-            content=f"Agent evaluation score for '{metric_name}' dropped below {threshold}. "
-                    "Check recent eval results and agent behavior.",
+            content=f"Agent metric '{metric_name}' moved {direction} {threshold}. "
+            "Check recent eval results and agent behavior.",
             mime_type="text/markdown",
         ),
         conditions=[condition],
@@ -109,6 +125,7 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "list":
         list_quality_alerts()
     elif len(sys.argv) > 1 and sys.argv[1] == "all":
