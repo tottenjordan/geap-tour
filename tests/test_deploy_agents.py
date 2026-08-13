@@ -38,6 +38,11 @@ def _stub_deploy(monkeypatch, tmp_path, agent_name, set_name):
     monkeypatch.setattr(da, "ENV_FILE", str(env))
     monkeypatch.setattr(da, "_get_client", lambda: _FakeClient())
     monkeypatch.setattr(da.vertexai, "init", lambda **k: None)
+    # AdkApp's constructor resolves ADC (project/credentials) eagerly, which
+    # blows up in credential-less CI. The fake client ignores whatever object
+    # is passed to create/update, so wrap-to-identity keeps the deploy path
+    # exercised without touching GCP auth.
+    monkeypatch.setattr(da.agent_engines, "AdkApp", lambda agent, **k: agent)
     monkeypatch.setitem(
         da.AGENT_SETS[set_name],
         "loader",
