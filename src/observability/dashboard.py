@@ -56,19 +56,30 @@ def _title_for(metric_type: str) -> str:
     return _TITLES.get(metric_type, metric_type.rsplit("/", 1)[-1])
 
 
-def _xy_widget(metric_type: str) -> dashboard_v1.Widget:
-    """A line-chart widget plotting the mean of a single custom metric type."""
+def _xy_widget(metric_type: str, breakdown_label: str | None = None) -> dashboard_v1.Widget:
+    """A line-chart widget plotting the mean of a single custom metric type.
+
+    When ``breakdown_label`` is set (e.g. ``"model"``), the series are grouped by
+    that metric label and reduced per group, so a bake-off's two deployments each
+    draw their own line instead of collapsing into a single mean.
+    """
+    aggregation = dashboard_v1.Aggregation(
+        alignment_period={"seconds": 60},
+        per_series_aligner=dashboard_v1.Aggregation.Aligner.ALIGN_MEAN,
+    )
+    title = _title_for(metric_type)
+    if breakdown_label is not None:
+        aggregation.cross_series_reducer = dashboard_v1.Aggregation.Reducer.REDUCE_MEAN
+        aggregation.group_by_fields = [f"metric.label.{breakdown_label}"]
+        title = f"{title} (by {breakdown_label})"
     query = dashboard_v1.TimeSeriesQuery(
         time_series_filter=dashboard_v1.TimeSeriesFilter(
             filter=f'metric.type="{metric_type}" AND resource.type="global"',
-            aggregation=dashboard_v1.Aggregation(
-                alignment_period={"seconds": 60},
-                per_series_aligner=dashboard_v1.Aggregation.Aligner.ALIGN_MEAN,
-            ),
+            aggregation=aggregation,
         )
     )
     return dashboard_v1.Widget(
-        title=_title_for(metric_type),
+        title=title,
         xy_chart=dashboard_v1.XyChart(
             data_sets=[
                 dashboard_v1.XyChart.DataSet(
@@ -81,20 +92,31 @@ def _xy_widget(metric_type: str) -> dashboard_v1.Widget:
 
 
 def build_dashboard() -> dashboard_v1.Dashboard:
-    """Return the Dashboard proto (no API calls)."""
-    metric_types = (
-        list(TRAFFIC_METRIC_TYPES) + list(QUALITY_METRIC_TYPES) + list(ROUTER_METRIC_TYPES)
-    )
+    """Return the Dashboard proto (no API calls).
+
+    Each metric gets an aggregate (all-series-mean) widget. Traffic and quality
+    metrics additionally get a per-``model`` breakdown widget so a bake-off's two
+    coordinator deployments render as separate lines; router metrics don't (the
+    router is a single agent, not a per-model comparison).
+    """
+    # (metric_type, breakdown_label) — None means the plain aggregate widget.
+    specs: list[tuple[str, str | None]] = [
+        (mt, None)
+        for mt in list(TRAFFIC_METRIC_TYPES)
+        + list(QUALITY_METRIC_TYPES)
+        + list(ROUTER_METRIC_TYPES)
+    ]
+    specs += [(mt, "model") for mt in list(TRAFFIC_METRIC_TYPES) + list(QUALITY_METRIC_TYPES)]
 
     tiles = []
-    for i, metric_type in enumerate(metric_types):
+    for i, (metric_type, breakdown) in enumerate(specs):
         tiles.append(
             dashboard_v1.MosaicLayout.Tile(
                 x_pos=(i % 2) * _TILE_WIDTH,
                 y_pos=(i // 2) * _TILE_HEIGHT,
                 width=_TILE_WIDTH,
                 height=_TILE_HEIGHT,
-                widget=_xy_widget(metric_type),
+                widget=_xy_widget(metric_type, breakdown_label=breakdown),
             )
         )
 

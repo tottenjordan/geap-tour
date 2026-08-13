@@ -122,6 +122,21 @@ FACTORS: list[Factor] = [
         },
     ),
     Factor(
+        name="model_backend",
+        channel="engine_env",
+        description="Coordinator backbone: Gemini flash (baseline) vs Anthropic "
+        "Claude Sonnet. Unlike model_tier (which moves all three model env vars "
+        "together), this moves ONLY COORDINATOR_MODEL so the main effect isolates "
+        "the coordinator model's effect while the sub-agents stay fixed. Level "
+        "order (gemini -> claude) makes the DOE main effect claude_mean - "
+        "gemini_mean per response variable. Powers the Gemini-vs-Claude bake-off "
+        "(docs/notes/coordinator-model-bakeoff.md).",
+        levels={
+            "gemini": {"COORDINATOR_MODEL": "gemini-3.6-flash"},
+            "claude": {"COORDINATOR_MODEL": "claude-sonnet-5"},
+        },
+    ),
+    Factor(
         name="prompt_variant",
         channel="engine_env",
         description="Pre-GEPA baseline prompts vs GEPA-optimized prompts.",

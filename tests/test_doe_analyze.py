@@ -32,6 +32,28 @@ def test_main_effect_arithmetic():
     assert an.main_effect(df, B, "tool_use_quality") == pytest.approx(0.10)
 
 
+def test_single_factor_main_effect_is_high_minus_low():
+    # The bake-off is a k=1 design: two rows, gemini (low) vs claude (high).
+    # main_effect must still compute claude_mean - gemini_mean with one row
+    # per partition (no k>=2 assumption).
+    backend = Factor(
+        name="model_backend",
+        channel="engine_env",
+        levels={"gemini": {"COORDINATOR_MODEL": "g"}, "claude": {"COORDINATOR_MODEL": "c"}},
+    )
+    df = pd.DataFrame(
+        [
+            {"design_point": "dp01", "model_backend": "gemini", "tool_use_quality": 0.30},
+            {"design_point": "dp02", "model_backend": "claude", "tool_use_quality": 0.42},
+        ]
+    )
+    assert an.main_effect(df, backend, "tool_use_quality") == pytest.approx(0.12)
+    ranked = an.rank_factors(df, [backend], "tool_use_quality")
+    assert [name for name, _ in ranked] == ["model_backend"]
+    rec = an.recommend_config(df, [backend])
+    assert rec["model_backend"] == "claude"  # higher quality level
+
+
 def test_main_effect_nan_when_level_absent():
     df = _table()
     df = df[df["A"] == "lo"]  # no high level of A present

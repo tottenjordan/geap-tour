@@ -40,6 +40,22 @@ class TestResolveModel:
         assert isinstance(result, LiteLlm)
         assert result.model == "vertex_ai/gemini-3.5-flash"
 
+    def test_bakeoff_gemini_backbone_wrapped_global(self):
+        # The bake-off's Gemini coordinator backbone (gemini-3.x) → LiteLlm/global.
+        from src.config import resolve_model
+        result = resolve_model("gemini-3.6-flash")
+        assert isinstance(result, LiteLlm)
+        assert result.model == "vertex_ai/gemini-3.6-flash"
+        assert result._additional_args["vertex_location"] == "global"
+
+    def test_bakeoff_claude_backbone_wrapped_global(self):
+        # The bake-off's Claude coordinator backbone → LiteLlm/global.
+        from src.config import resolve_model
+        result = resolve_model("claude-sonnet-5")
+        assert isinstance(result, LiteLlm)
+        assert result.model == "vertex_ai/claude-sonnet-5"
+        assert result._additional_args["vertex_location"] == "global"
+
 
 class TestDisablePyopenssl:
     def test_does_not_crash(self):

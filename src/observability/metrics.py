@@ -46,6 +46,24 @@ if TYPE_CHECKING:
 
 METRIC_PREFIX = "custom.googleapis.com/"
 
+
+def parse_labels(pairs) -> dict[str, str]:
+    """Parse repeatable ``--label KEY=VALUE`` CLI pairs into a label dict.
+
+    Shared by the traffic and eval-publish CLIs so a bake-off can stamp a
+    ``model=…`` label on every emitted series (traffic + offline snapshots),
+    keeping two deployments as separate monitoring series. ``None``/empty ->
+    ``{}``. A pair without ``=`` is a user error and raises ``ValueError`` (fail
+    loud rather than silently drop a monitoring label).
+    """
+    out: dict[str, str] = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise ValueError(f"--label must be KEY=VALUE, got: {pair!r}")
+        key, value = pair.split("=", 1)
+        out[key] = value
+    return out
+
 # Quality metric types, derived from the SAME source quality_alerts.py alerts on.
 QUALITY_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_eval/{name}" for name, _threshold in ALL_MONITORED_METRICS

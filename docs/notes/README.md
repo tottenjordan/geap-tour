@@ -20,6 +20,11 @@ file; keep this index short (< 200 lines).
 - [DOE framework for scaling experimentation](./doe-framework.md) — factor
   registry → fractional-factorial design → one PipelineJob per point → harvest →
   main-effects report; factor channels, subprocess-per-point, cost caveat.
+- [Coordinator model bake-off: Gemini vs Claude](./coordinator-model-bakeoff.md)
+  — single-factor (`model_backend`) DOE deploying two coordinators, scored on
+  offline rubrics + pairwise SxS win-rate + per-model-labeled traffic, fused into
+  one verdict by `run_bakeoff`; honest caveats (dataset ~50, Gemini-only judge,
+  directional pricing, self-driven traffic split).
 - [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
   — why the first screening's routing/cost metrics were identical across all 9
   runs, and wiring the cost eval to the real 5-tier router so the factor moves.

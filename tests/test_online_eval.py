@@ -37,7 +37,7 @@ class FakeMetricClient:
         return out
 
 
-def _make_series(metric_type: str, values, now=None):
+def _make_series(metric_type: str, values, now=None, labels=None):
     """Build a fake Cloud Monitoring TimeSeries with one point per value."""
     now = now or datetime.now()
     points = [
@@ -47,7 +47,9 @@ def _make_series(metric_type: str, values, now=None):
         )
         for i, v in enumerate(values)
     ]
-    return SimpleNamespace(metric=SimpleNamespace(type=metric_type), points=points)
+    return SimpleNamespace(
+        metric=SimpleNamespace(type=metric_type, labels=labels or {}), points=points
+    )
 
 
 class FakeMonitoringClient:
@@ -203,6 +205,74 @@ def test_verify_monitoring_empty_series_no_crash():
     assert data["status"] == "empty"
     assert data["coordinator_quality"]["status"] == "empty"
     assert data["router_efficiency"]["status"] == "empty"
+
+
+def test_verify_group_by_model_splits_into_per_model_buckets():
+    # Same metric type, two deployments distinguished by the ``model`` label.
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [4.0, 5.0],
+            labels={"model": "gemini-3.6-flash"},
+        ),
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [2.0, 2.5],
+            labels={"model": "claude-sonnet-5"},
+        ),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client, group_by="model")
+
+    quality = data["coordinator_quality"]
+    assert quality["status"] == "ok"
+    assert quality["group_by"] == "model"
+    # Two buckets, one per model, each with its own average — not a merged mean.
+    hp = quality["metrics"]["helpfulness"]
+    assert set(hp) == {"gemini-3.6-flash", "claude-sonnet-5"}
+    assert hp["gemini-3.6-flash"]["avg_score"] == 4.5
+    assert hp["claude-sonnet-5"]["avg_score"] == 2.25
+    # claude's scores are below the 3.0 floor -> both out of bounds.
+    assert hp["claude-sonnet-5"]["out_of_bounds"] == 2
+    assert hp["gemini-3.6-flash"]["out_of_bounds"] == 0
+
+
+def test_grouped_markdown_renders_per_model_rows():
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [4.0, 5.0],
+            labels={"model": "gemini-3.6-flash"},
+        ),
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [2.0],
+            labels={"model": "claude-sonnet-5"},
+        ),
+    ]
+    client = FakeMonitoringClient(series)
+    data = vm.verify_monitor_results(output_format="json", client=client, group_by="model")
+    md = vm.generate_markdown_report(data)
+    assert "| Metric | Model |" in md
+    assert "gemini-3.6-flash" in md
+    assert "claude-sonnet-5" in md
+
+
+def test_verify_ungrouped_default_shape_unchanged():
+    # Without group_by, metrics[name] is the flat summary (no per-model nesting).
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [4.0, 2.0],
+            labels={"model": "gemini-3.6-flash"},
+        ),
+    ]
+    client = FakeMonitoringClient(series)
+    data = vm.verify_monitor_results(output_format="json", client=client)
+    hp = data["coordinator_quality"]["metrics"]["helpfulness"]
+    assert hp["avg_score"] == 3.0  # merged across both points
+    assert "group_by" not in data["coordinator_quality"]
 
 
 def test_verify_bigquery_missing_table_does_not_crash():

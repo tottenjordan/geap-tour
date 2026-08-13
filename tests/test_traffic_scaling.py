@@ -106,3 +106,23 @@ def test_default_scaling_stages_are_monotonic_staircase():
     assert qps == sorted(qps)  # non-decreasing staircase
     assert len(set(qps)) > 1  # actually scales up
     assert all(s["duration_s"] > 0 for s in SCALING_STAGES)
+
+
+def test_scaling_merges_extra_labels_with_stage_labels():
+    """extra_labels (e.g. model=…) ride alongside the per-stage stage/target_qps labels."""
+    clock = FakeClock()
+    agent = FakeAgent()
+    client = FakeMetricClient()
+    writer = MetricsWriter(project_id="proj-x", client=client)
+    stages = [{"qps": 3, "duration_s": 3.0}, {"qps": 6, "duration_s": 3.0}]
+    generate_scaling_profile(
+        agent, stages=stages, seed=2, tick_s=0.1,
+        sleep=clock.sleep, monotonic=clock.monotonic,
+        emit_metrics=True, metrics_writer=writer,
+        extra_labels={"model": "claude-sonnet-5"},
+    )
+    series = client.flatten()
+    for ts in series:
+        assert ts.metric.labels["model"] == "claude-sonnet-5"
+        assert "stage" in ts.metric.labels  # per-stage labels still present
+        assert "target_qps" in ts.metric.labels
