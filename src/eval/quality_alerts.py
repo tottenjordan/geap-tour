@@ -63,18 +63,27 @@ def create_quality_alert(
     metric_name: str = "helpfulness",
     threshold: float = 3.0,
     notification_channel: str | None = None,
+    *,
+    comparison: str = "LT",
+    family: str = "agent_eval",
 ):
-    """Create a Cloud Monitoring alert policy for eval score drops."""
+    """Create a Cloud Monitoring alert policy for a monitored metric.
+
+    ``comparison``/``family`` are forwarded to :func:`_build_policy` so the same
+    call serves coordinator quality (``LT``/``agent_eval``) and router efficiency
+    (``agent_router``, with ``GT`` for latency ceilings).
+    """
     client = monitoring_v3.AlertPolicyServiceClient()
     project_name = f"projects/{GCP_PROJECT_ID}"
 
     channels = [notification_channel] if notification_channel else []
-    policy = _build_policy(metric_name, threshold, channels)
+    policy = _build_policy(metric_name, threshold, channels, comparison=comparison, family=family)
 
     result = client.create_alert_policy(name=project_name, alert_policy=policy)
+    op = "<" if comparison == "LT" else ">"
     print(f"✓ Alert policy created: {result.name}")
-    print(f"  Metric: {metric_name} < {threshold}")
-    print(f"  Window: 10 minutes")
+    print(f"  Metric: {family}/{metric_name} {op} {threshold}")
+    print("  Window: 10 minutes")
     return result
 
 
@@ -104,9 +113,19 @@ ALL_MONITORED_METRICS = [
     ("complexity_routing_accuracy", 3.0),
 ]
 
+# Router efficiency series (native units, ``agent_router/*``). Unlike coordinator
+# quality these are NOT on a 1-5 axis and don't all alert in the same direction:
+# routing accuracy / cost savings alert on the FLOOR (LT); classifier latency
+# alerts on the CEILING (GT). Thresholds are tunable placeholders.
+ROUTER_MONITORED_METRICS = [
+    ("routing_accuracy_pct", 80.0, "LT"),
+    ("cost_savings_pct", 40.0, "LT"),
+    ("classifier_latency_ms", 2000.0, "GT"),
+]
+
 
 def setup_all_alerts(notification_channel: str | None = None) -> list:
-    """Create alert policies for all monitored metrics."""
+    """Create alert policies for every monitored metric (both families)."""
     results = []
     print("Setting up quality alerts for all metrics...")
     for metric_name, threshold in ALL_MONITORED_METRICS:
@@ -115,6 +134,18 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
                 metric_name=metric_name,
                 threshold=threshold,
                 notification_channel=notification_channel,
+            )
+            results.append(result)
+        except Exception as e:
+            print(f"  Warning: failed to create alert for {metric_name}: {e}")
+    for metric_name, threshold, comparison in ROUTER_MONITORED_METRICS:
+        try:
+            result = create_quality_alert(
+                metric_name=metric_name,
+                threshold=threshold,
+                notification_channel=notification_channel,
+                comparison=comparison,
+                family="agent_router",
             )
             results.append(result)
         except Exception as e:

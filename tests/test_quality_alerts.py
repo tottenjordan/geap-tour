@@ -39,3 +39,46 @@ def test_router_policy_uses_gt_and_router_family():
     assert cond.comparison == monitoring_v3.ComparisonType.COMPARISON_GT
     assert "custom.googleapis.com/agent_router/classifier_latency_ms" in cond.filter
     assert "above" in p.documentation.content
+
+
+def test_router_monitored_metrics_shape():
+    from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
+
+    names = {m[0] for m in ROUTER_MONITORED_METRICS}
+    assert names == {"routing_accuracy_pct", "cost_savings_pct", "classifier_latency_ms"}
+    # Every entry is (name, threshold, comparison) with a valid direction.
+    for _name, threshold, comparison in ROUTER_MONITORED_METRICS:
+        assert isinstance(threshold, float)
+        assert comparison in {"LT", "GT"}
+    # Latency alerts on the ceiling (GT); accuracy/savings alert on the floor (LT).
+    by_name = {m[0]: m[2] for m in ROUTER_MONITORED_METRICS}
+    assert by_name["classifier_latency_ms"] == "GT"
+    assert by_name["routing_accuracy_pct"] == "LT"
+    assert by_name["cost_savings_pct"] == "LT"
+
+
+def test_setup_all_alerts_covers_both_families(monkeypatch):
+    from src.eval import quality_alerts as qa
+
+    calls = []
+
+    def _fake_create(metric_name, threshold, notification_channel=None, **kwargs):
+        calls.append(
+            (
+                metric_name,
+                threshold,
+                kwargs.get("comparison", "LT"),
+                kwargs.get("family", "agent_eval"),
+            )
+        )
+        return object()
+
+    monkeypatch.setattr(qa, "create_quality_alert", _fake_create)
+    qa.setup_all_alerts()
+
+    families = {c[3] for c in calls}
+    assert families == {"agent_eval", "agent_router"}
+    # Coordinator metrics keep LT/agent_eval; router latency uses GT/agent_router.
+    router_latency = [c for c in calls if c[0] == "classifier_latency_ms"]
+    assert router_latency and router_latency[0][2] == "GT"
+    assert router_latency[0][3] == "agent_router"
