@@ -1,13 +1,15 @@
 """Offline tests for the bake-off orchestrator (no network, no deploys).
 
-``run_bakeoff`` is a thin chain over the phase entrypoints: DOE fan-out → read
-the two engine ids from the manifest → pairwise SxS → per-model labeled traffic →
-grouped verify_monitors → bake-off report. Every step is injectable so these
-tests assert the *wiring* (dry-run prints a plan and calls nothing; execute flows
-the two engine ids through every downstream step) without touching GCP.
+The bake-off deploys two *persistent* coordinator engines (one per backbone,
+each in its own interpreter so ``COORDINATOR_MODEL`` bakes at import), scores each
+deployed engine offline, measures its real token usage for cost, runs pairwise +
+labeled traffic + grouped verify, writes a report, and tears the engines down in a
+guaranteed ``finally`` (unless ``--keep-engines``). Every phase is injectable so
+these tests assert the *wiring* without touching GCP.
 """
 
 import json
+import re
 
 import pytest
 
@@ -27,10 +29,13 @@ def test_dry_run_plans_but_calls_nothing():
     result = rb.run_bakeoff(
         dry_run=True,
         experiment_id="exp-1",
-        doe_fn=lambda **k: calls.append("doe") or {},
+        deploy_fn=lambda *a, **k: calls.append("deploy") or "ENG",
+        score_fn=lambda *a, **k: calls.append("score") or {},
+        usage_fn=lambda *a, **k: calls.append("usage") or [],
         pairwise_fn=lambda *a, **k: calls.append("pairwise") or {},
         verify_fn=lambda **k: calls.append("verify") or {},
         traffic_runner=lambda *a, **k: calls.append("traffic"),
+        teardown_fn=lambda *a, **k: calls.append("teardown"),
     )
     assert calls == []  # nothing executed
     assert result["dry_run"] is True
@@ -38,119 +43,175 @@ def test_dry_run_plans_but_calls_nothing():
     assert result["candidate_model"] == "claude-sonnet-5"
     # The plan lists the ordered phases.
     blob = "\n".join(result["steps"]).lower()
-    assert "doe" in blob
-    assert "pairwise" in blob
-    assert "traffic" in blob
-    assert "verify" in blob
-    assert "report" in blob
+    for word in ("deploy", "score", "pairwise", "traffic", "verify", "report"):
+        assert word in blob
 
 
-def _manifest():
+def _stub_verify():
     return {
-        "experiment_id": "exp-1",
-        "points": [
-            {"assignments": {"model_backend": "gemini"}, "engine_id": "ENG_GEM"},
-            {"assignments": {"model_backend": "claude"}, "engine_id": "ENG_CLA"},
-        ],
+        "coordinator_quality": {
+            "group_by": "model",
+            "metrics": {
+                "request_latency_p95": {
+                    "gemini-3.6-flash": {"avg_score": 2.0},
+                    "claude-sonnet-5": {"avg_score": 3.0},
+                }
+            },
+        }
     }
 
 
-def test_execute_flows_engine_ids_through_every_step(tmp_path):
-    import pandas as pd
-
-    df = pd.DataFrame(
-        [
-            {"model_backend": "gemini", "final_response_quality": 0.7, "tool_use_quality": 0.6},
-            {"model_backend": "claude", "final_response_quality": 0.85, "tool_use_quality": 0.8},
-        ]
-    )
+def test_execute_deploys_scores_and_flows_through_every_step(tmp_path):
     seen = {}
+    deploys = []
+    scores = []
+    usages = []
+    traffic_calls = []
+    teardowns = []
 
-    def doe_fn(**k):
-        seen["doe_kwargs"] = k
-        return {"experiment_id": "exp-1", "manifest": _manifest(), "dataframe": df}
+    def deploy_fn(model_id, **k):
+        deploys.append(model_id)
+        return f"ENG_{model_id}"
+
+    def score_fn(engine_id, model_id, **k):
+        scores.append((engine_id, model_id))
+        # Higher rubric scores for the candidate so the verdict has a clear winner.
+        base = 0.7 if model_id == "gemini-3.6-flash" else 0.85
+        return {"final_response_quality": base, "tool_use_quality": base - 0.1}
+
+    def usage_fn(engine_id, model_id, **k):
+        usages.append((engine_id, model_id))
+        return [{"input_tokens": 1000, "output_tokens": 500}]
 
     def pairwise_fn(baseline, candidate, **k):
         seen["pairwise"] = (baseline, candidate)
         return {"win_rate_candidate": 0.6, "win_rate_baseline": 0.3, "tie_rate": 0.1}
-
-    traffic_calls = []
 
     def traffic_runner(engine_id, model, **k):
         traffic_calls.append((engine_id, model))
 
     def verify_fn(**k):
         seen["verify_kwargs"] = k
-        return {
-            "coordinator_quality": {
-                "group_by": "model",
-                "metrics": {
-                    "request_latency_p95": {
-                        "gemini-3.6-flash": {"avg_score": 2.0},
-                        "claude-sonnet-5": {"avg_score": 3.0},
-                    }
-                },
-            }
-        }
+        return _stub_verify()
 
     result = rb.run_bakeoff(
         dry_run=False,
         experiment_id="exp-1",
         out_dir=str(tmp_path),
         preflight_fn=lambda ids: seen.setdefault("preflight", list(ids)),
-        doe_fn=doe_fn,
+        deploy_fn=deploy_fn,
+        score_fn=score_fn,
+        usage_fn=usage_fn,
         pairwise_fn=pairwise_fn,
         traffic_runner=traffic_runner,
         verify_fn=verify_fn,
+        teardown_fn=lambda eng: teardowns.append(eng),
     )
 
     # Preflight checked both backbones before anything deployed.
     assert seen["preflight"] == ["gemini-3.6-flash", "claude-sonnet-5"]
-    # DOE ran as a single-factor full design.
-    assert seen["doe_kwargs"]["factor_names"] == ["model_backend"]
-    assert seen["doe_kwargs"]["kind"] == "full"
-    assert seen["doe_kwargs"]["dry_run"] is False
-    # Engine ids from the manifest flow into pairwise (gemini=baseline, claude=candidate).
-    assert seen["pairwise"] == ("ENG_GEM", "ENG_CLA")
+    # Deployed once per backbone.
+    assert deploys == ["gemini-3.6-flash", "claude-sonnet-5"]
+    # Scored + usage-measured each deployed engine.
+    assert scores == [
+        ("ENG_gemini-3.6-flash", "gemini-3.6-flash"),
+        ("ENG_claude-sonnet-5", "claude-sonnet-5"),
+    ]
+    assert usages == scores
+    # Engine ids flow into pairwise (gemini=baseline, claude=candidate).
+    assert seen["pairwise"] == ("ENG_gemini-3.6-flash", "ENG_claude-sonnet-5")
     # Traffic ran once per engine, each tagged with its model id.
-    assert ("ENG_GEM", "gemini-3.6-flash") in traffic_calls
-    assert ("ENG_CLA", "claude-sonnet-5") in traffic_calls
+    assert ("ENG_gemini-3.6-flash", "gemini-3.6-flash") in traffic_calls
+    assert ("ENG_claude-sonnet-5", "claude-sonnet-5") in traffic_calls
     # verify grouped by model.
     assert seen["verify_kwargs"]["group_by"] == "model"
-    # The report was written and fuses all four streams.
+    # Engines torn down at the end (both).
+    assert set(teardowns) == {"ENG_gemini-3.6-flash", "ENG_claude-sonnet-5"}
+
+    # A manifest with both engine ids was written (usable by pairwise --from-manifest).
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    from src.eval.pairwise_eval import load_engines_from_manifest
+
+    assert load_engines_from_manifest(manifest) == (
+        "ENG_gemini-3.6-flash",
+        "ENG_claude-sonnet-5",
+    )
+
+    # The report fuses all streams AND shows a real per-request cost (not n/a).
     report_path = tmp_path / "bakeoff_report.md"
-    assert report_path.exists()
     md = report_path.read_text()
     assert "# Coordinator Model Bake-Off" in md
     assert "## Verdict" in md
+    assert "Cost (fair per-request)" in md
+    assert "n/a" not in md.split("Cost (fair per-request)")[1].split("##")[0]
     assert result["report_path"] == str(report_path)
+    # Cost surfaced per model in the returned result too.
+    assert set(result["cost"]) == {"gemini-3.6-flash", "claude-sonnet-5"}
+    assert result["cost"]["claude-sonnet-5"] > 0
 
 
-def test_execute_reads_manifest_from_disk_when_doe_returns_path(tmp_path):
-    # If the DOE summary carries no inline manifest, fall back to out_dir/manifest.json.
-    import pandas as pd
+def test_keep_engines_skips_teardown(tmp_path):
+    teardowns = []
+    rb.run_bakeoff(
+        dry_run=False,
+        experiment_id="exp-1",
+        out_dir=str(tmp_path),
+        keep_engines=True,
+        skip_preflight=True,
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.8},
+        usage_fn=lambda e, m, **k: [{"input_tokens": 10, "output_tokens": 5}],
+        pairwise_fn=lambda b, c, **k: {},
+        traffic_runner=lambda *a, **k: None,
+        verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: teardowns.append(eng),
+    )
+    assert teardowns == []  # kept, not deleted
 
-    (tmp_path / "manifest.json").write_text(json.dumps(_manifest()))
-    df = pd.DataFrame([{"model_backend": "gemini", "final_response_quality": 0.7}])
 
-    seen = {}
+def test_teardown_runs_even_when_a_phase_raises(tmp_path):
+    teardowns = []
 
-    def pairwise_fn(b, c, **k):
-        seen["pw"] = (b, c)
-        return {}
+    def boom(*a, **k):
+        raise RuntimeError("pairwise blew up")
 
+    with pytest.raises(RuntimeError, match="pairwise blew up"):
+        rb.run_bakeoff(
+            dry_run=False,
+            experiment_id="exp-1",
+            out_dir=str(tmp_path),
+            skip_preflight=True,
+            deploy_fn=lambda m, **k: f"ENG_{m}",
+            score_fn=lambda e, m, **k: {"final_response_quality": 0.8},
+            usage_fn=lambda e, m, **k: [{"input_tokens": 10, "output_tokens": 5}],
+            pairwise_fn=boom,
+            traffic_runner=lambda *a, **k: None,
+            verify_fn=lambda **k: {},
+            teardown_fn=lambda eng: teardowns.append(eng),
+        )
+    # Both engines still torn down despite the mid-run failure.
+    assert set(teardowns) == {"ENG_gemini-3.6-flash", "ENG_claude-sonnet-5"}
+
+
+def test_cost_is_na_when_no_usage_measured(tmp_path):
     result = rb.run_bakeoff(
         dry_run=False,
         experiment_id="exp-1",
         out_dir=str(tmp_path),
-        preflight_fn=lambda ids: {},
-        doe_fn=lambda **k: {"experiment_id": "exp-1", "dataframe": df},
-        pairwise_fn=pairwise_fn,
+        skip_preflight=True,
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.8},
+        # No usage surfaced (e.g. traces stripped) -> honest n/a, not a fake $0.
+        usage_fn=lambda e, m, **k: [{"input_tokens": 0, "output_tokens": 0}],
+        pairwise_fn=lambda b, c, **k: {},
         traffic_runner=lambda *a, **k: None,
         verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: None,
     )
-    assert seen["pw"] == ("ENG_GEM", "ENG_CLA")
-    assert result["report_path"].endswith("bakeoff_report.md")
+    assert result["cost"] == {}
+    md = (tmp_path / "bakeoff_report.md").read_text()
+    cost_block = md.split("Cost (fair per-request)")[1].split("##")[0]
+    assert "n/a" in cost_block
 
 
 def test_preflight_failure_aborts_before_any_deploy(tmp_path):
@@ -167,19 +228,19 @@ def test_preflight_failure_aborts_before_any_deploy(tmp_path):
             experiment_id="exp-1",
             out_dir=str(tmp_path),
             preflight_fn=failing_preflight,
-            doe_fn=lambda **k: called.append("doe") or {},
+            deploy_fn=lambda *a, **k: called.append("deploy") or "ENG",
+            score_fn=lambda *a, **k: called.append("score") or {},
+            usage_fn=lambda *a, **k: called.append("usage") or [],
             pairwise_fn=lambda *a, **k: called.append("pairwise") or {},
             traffic_runner=lambda *a, **k: called.append("traffic"),
             verify_fn=lambda **k: called.append("verify") or {},
+            teardown_fn=lambda *a, **k: called.append("teardown"),
         )
     # Nothing downstream ran — no deploy, no spend.
     assert called == []
 
 
 def test_skip_preflight_bypasses_the_check(tmp_path):
-    import pandas as pd
-
-    df = pd.DataFrame([{"model_backend": "gemini", "final_response_quality": 0.7}])
     called = []
 
     rb.run_bakeoff(
@@ -188,10 +249,13 @@ def test_skip_preflight_bypasses_the_check(tmp_path):
         out_dir=str(tmp_path),
         skip_preflight=True,
         preflight_fn=lambda ids: called.append("preflight"),
-        doe_fn=lambda **k: {"manifest": _manifest(), "dataframe": df},
+        deploy_fn=lambda m, **k: f"ENG_{m}",
+        score_fn=lambda e, m, **k: {"final_response_quality": 0.7},
+        usage_fn=lambda e, m, **k: [{"input_tokens": 10, "output_tokens": 5}],
         pairwise_fn=lambda b, c, **k: {},
         traffic_runner=lambda *a, **k: None,
         verify_fn=lambda **k: {},
+        teardown_fn=lambda eng: None,
     )
     assert called == []  # preflight skipped entirely
 
@@ -203,3 +267,83 @@ def test_dry_run_never_preflights():
         preflight_fn=lambda ids: called.append("preflight"),
     )
     assert called == []
+
+
+# --------------------------------------------------------------------------- #
+# Unit tests for the real default helpers (still no network).
+# --------------------------------------------------------------------------- #
+def test_quality_from_batch_maps_versioned_keys_to_base_names():
+    agent_result = {
+        "metrics": {
+            "agent_engine_0/final_response_quality_v1": {"score": 0.82},
+            "agent_engine_0/tool_use_quality_v1": {"score": 0.6},
+            "agent_engine_0/not_a_rubric_v1": {"score": 0.99},
+        }
+    }
+    q = rb._quality_from_batch(agent_result)
+    assert q == {"final_response_quality": 0.82, "tool_use_quality": 0.6}
+
+
+def test_cost_from_usages_returns_mean_per_request():
+    usages = [
+        {"input_tokens": 1000, "output_tokens": 500},
+        {"input_tokens": 3000, "output_tokens": 100},
+    ]
+    from src.eval.cost_model import cost_summary
+
+    expected = cost_summary("gemini-3.6-flash", usages)["mean_usd_per_request"]
+    assert rb._cost_from_usages("gemini-3.6-flash", usages) == pytest.approx(expected)
+
+
+def test_cost_from_usages_none_when_zero_tokens():
+    assert rb._cost_from_usages("gemini-3.6-flash", []) is None
+    assert (
+        rb._cost_from_usages("gemini-3.6-flash", [{"input_tokens": 0, "output_tokens": 0}]) is None
+    )
+
+
+def test_collect_token_usage_reads_usage_metadata_from_stream():
+    class FakeEngine:
+        def stream_query(self, *, user_id, message):
+            # Two events: a tool-call event then the final answer, each carrying
+            # usage_metadata (prompt count is cumulative; output accrues).
+            yield {"usage_metadata": {"prompt_token_count": 120, "candidates_token_count": 30}}
+            yield {"usage_metadata": {"prompt_token_count": 120, "candidates_token_count": 45}}
+
+    usages = rb.collect_token_usage(FakeEngine(), ["hi", "there"])
+    assert usages == [
+        {"input_tokens": 120, "output_tokens": 75},
+        {"input_tokens": 120, "output_tokens": 75},
+    ]
+
+
+def test_deploy_engine_captures_resource_from_subprocess_stdout():
+    from src.doe.deploy_coordinator import RESOURCE_MARKER
+
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = f"chatty log\n{RESOURCE_MARKER}projects/p/locations/global/reasoningEngines/77\n"
+        stderr = ""
+
+    def fake_runner(cmd, env=None, **k):
+        captured["cmd"] = cmd
+        captured["model_env"] = env.get("COORDINATOR_MODEL")
+        return Result()
+
+    engine = rb._deploy_engine("claude-sonnet-5", runner=fake_runner)
+    assert engine == "projects/p/locations/global/reasoningEngines/77"
+    # The subprocess baked this point's backbone into COORDINATOR_MODEL.
+    assert captured["model_env"] == "claude-sonnet-5"
+    assert "src.doe.deploy_coordinator" in captured["cmd"]
+
+
+def test_deploy_engine_raises_on_nonzero_returncode():
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    with pytest.raises(RuntimeError, match=re.escape("deploy of gemini-3.6-flash failed")):
+        rb._deploy_engine("gemini-3.6-flash", runner=lambda *a, **k: Result())

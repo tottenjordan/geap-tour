@@ -1,29 +1,40 @@
 """One-command coordinator bake-off: Gemini vs Claude, end-to-end.
 
-Chains the five phases into a single entrypoint:
+Chains the phases into a single entrypoint:
 
-1. **DOE fan-out** — a single-factor (``model_backend``) ``full`` design deploys
-   two fresh coordinator engines (``gemini-3.6-flash`` baseline, ``claude-sonnet-5``
-   candidate), runs the per-engine offline pipeline, and harvests ``results.csv``.
-2. **Pairwise SxS** — flip-debiased win-rate between the two engines.
-3. **Labeled traffic** — synthetic load against each engine, tagged
-   ``model=<id>`` so Cloud Monitoring keeps them as separate series.
-4. **Grouped verify** — ``verify_monitors --group-by model`` reads the two online
-   series back.
-5. **Bake-off report** — fuses offline rubrics + win-rate + online latency/error +
-   cost into ``bakeoff_report.md`` with a one-line verdict.
+1. **Deploy** — two *persistent* coordinator engines that differ only by backbone
+   (``gemini-3.6-flash`` baseline, ``claude-sonnet-5`` candidate). Each is deployed
+   in its own interpreter (``src.doe.deploy_coordinator`` subprocess) so
+   ``COORDINATOR_MODEL`` bakes at import time. The engines are recorded in the run
+   manifest and torn down at the end unless ``--keep-engines``.
+2. **Offline rubrics** — score each *deployed* engine with the batch eval (Vertex
+   Gen AI Evaluation Service), per-model.
+3. **Cost** — measure each engine's real per-request token usage over the eval
+   prompts (``usage_metadata`` off ``stream_query``) and price it via
+   :mod:`src.eval.cost_model`. If no usage surfaces, cost renders ``n/a`` rather
+   than a misleading ``$0``.
+4. **Pairwise SxS** — flip-debiased win-rate between the two engines.
+5. **Labeled traffic** — synthetic load against each engine, tagged ``model=<id>``
+   so Cloud Monitoring keeps them as separate series.
+6. **Grouped verify** — ``verify_monitors --group-by model`` reads the two online
+   series back, fused with offline + pairwise + cost into ``bakeoff_report.md``.
 
 Safety: **dry-run is the default** (prints the plan, deploys nothing, spends
-nothing) — mirrors ``run_doe``. The live path is opt-in via ``--execute`` because
-step 1 deploys two Agent Engines (the heaviest, most expensive path).
+nothing). The live path is opt-in via ``--execute`` because it deploys two Agent
+Engines (the heaviest, most expensive path).
+
+Why not the DOE pipeline? The per-point KFP pipeline deploys an *ephemeral* engine
+and deletes it in its exit handler, so the engines are gone before pairwise/traffic
+can reach them — and it never records an engine id. The bake-off therefore owns the
+deploy/teardown lifecycle directly.
 
 Examples::
 
-    # See the plan; deploy/submit/spend nothing (default)
+    # See the plan; deploy/spend nothing (default)
     uv run --group doe python -m src.doe.run_bakeoff
 
-    # Full live bake-off: two deploys, offline + pairwise + traffic, then report
-    uv run --group doe python -m src.doe.run_bakeoff --execute --wait
+    # Full live bake-off: two deploys, offline + cost + pairwise + traffic, report
+    uv run --group doe python -m src.doe.run_bakeoff --execute
 """
 
 from __future__ import annotations
@@ -37,7 +48,6 @@ import sys
 from src.doe.bakeoff_report import (
     build_bakeoff_report,
     online_from_grouped_monitors,
-    quality_from_results_frame,
 )
 from src.doe.factors import get_factors
 
@@ -59,9 +69,138 @@ def bakeoff_model_ids() -> tuple[str, str]:
     return baseline, candidate
 
 
-def _level_to_model() -> dict[str, str]:
-    baseline, candidate = bakeoff_model_ids()
-    return {_BASELINE_LEVEL: baseline, _CANDIDATE_LEVEL: candidate}
+def _slug(model_id: str) -> str:
+    """A display-name-safe slug for a model id (``claude-sonnet-5`` -> that)."""
+    return "".join(c if c.isalnum() else "_" for c in model_id)
+
+
+# --------------------------------------------------------------------------- #
+# Default phase implementations (each injectable; stubbed in tests).
+# --------------------------------------------------------------------------- #
+def _deploy_engine(
+    model_id: str, *, experiment_id: str | None = None, runner=subprocess.run
+) -> str:
+    """Deploy one persistent coordinator engine on ``model_id``; return its resource.
+
+    Runs :mod:`src.doe.deploy_coordinator` in a fresh interpreter with
+    ``COORDINATOR_MODEL`` set, because that variable is read once at import time and
+    baked into the engine's env_vars — two backbones need two processes.
+    """
+    from src.doe.deploy_coordinator import parse_resource_from_output
+
+    display = f"coordinator_agent_bakeoff_{_slug(model_id)}"
+    result = runner(
+        [sys.executable, "-m", "src.doe.deploy_coordinator", "--display-name", display],
+        env={**os.environ, "COORDINATOR_MODEL": model_id},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"deploy of {model_id} failed (rc={result.returncode}):\n"
+            f"{(result.stderr or '')[-2000:]}"
+        )
+    resource = parse_resource_from_output(result.stdout or "")
+    if not resource:
+        raise RuntimeError(
+            f"deploy of {model_id} printed no engine resource:\n{(result.stdout or '')[-2000:]}"
+        )
+    print(f"Deployed {model_id} → {resource}")
+    return resource
+
+
+def _quality_from_batch(agent_result: dict) -> dict[str, float]:
+    """Per-rubric 0-1 means from a ``multi_agent_batch_eval`` agent result.
+
+    The batch eval keys metrics like ``agent_engine_0/tool_use_quality_v1``; map
+    them to the canonical version-stripped base names so both engines share keys
+    (delta math) and the report reads cleanly. Non-rubric metrics are ignored.
+    """
+    from src.doe.harvest import BATCH_METRICS, _metric_base
+
+    out: dict[str, float] = {}
+    for key, detail in (agent_result.get("metrics") or {}).items():
+        base = _metric_base(key)
+        if base in BATCH_METRICS and isinstance(detail, dict) and detail.get("score") is not None:
+            out[base] = float(detail["score"])
+    return out
+
+
+def _score_engine(
+    engine_id: str, model_id: str, *, out_dir: str, batch_fn=None
+) -> dict[str, float]:
+    """Offline-score one deployed engine's coordinator; return per-rubric 0-1 means."""
+    if batch_fn is None:
+        from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval as batch_fn
+    batch = batch_fn(
+        agents=["coordinator_agent"],
+        agent_id=engine_id,
+        output_path=os.path.join(out_dir, f"batch_{_slug(model_id)}.json"),
+    )
+    agent_result = (batch.get("agents") or {}).get("coordinator_agent") or {}
+    return _quality_from_batch(agent_result)
+
+
+def collect_token_usage(engine, prompts, *, user_id: str = "bakeoff-cost-probe") -> list[dict]:
+    """Real per-request token usage for ``prompts`` off an engine's ``stream_query``.
+
+    Reads ``usage_metadata`` from each streamed event: ``prompt_token_count`` is the
+    running prompt size (take the max seen), ``candidates_token_count`` accrues across
+    tool-call / thinking / answer events (sum). Returns one
+    ``{"input_tokens", "output_tokens"}`` dict per prompt — the shape
+    :func:`src.eval.cost_model.cost_summary` consumes. Missing usage counts as 0.
+    """
+    usages: list[dict] = []
+    for prompt in prompts:
+        in_tok = 0
+        out_tok = 0
+        for event in engine.stream_query(user_id=user_id, message=prompt):
+            um = (event or {}).get("usage_metadata") or {}
+            in_tok = max(in_tok, int(um.get("prompt_token_count", 0) or 0))
+            out_tok += int(um.get("candidates_token_count", 0) or 0)
+        usages.append({"input_tokens": in_tok, "output_tokens": out_tok})
+    return usages
+
+
+def _measure_usage(engine_id: str, model_id: str, *, client=None, cases=None) -> list[dict]:
+    """Measure one engine's real token usage over the coordinator eval prompts."""
+    if cases is None:
+        from src.eval.agent_eval_configs import get_eval_cases
+
+        cases = get_eval_cases("coordinator_agent")
+    if client is None:
+        from vertexai import Client
+
+        from src.config import GCP_PROJECT_ID, GCP_REGION
+
+        client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+    engine = client.agent_engines.get(name=engine_id)
+    return collect_token_usage(engine, [c["prompt"] for c in cases])
+
+
+def _cost_from_usages(model_id: str, usages: list[dict]) -> float | None:
+    """Mean USD/request for ``model_id`` from measured usage; ``None`` if unmeasured.
+
+    Returns ``None`` (not ``0.0``) when no tokens were captured, so the report shows
+    an honest ``n/a`` instead of a fake ``$0``.
+    """
+    from src.eval.cost_model import cost_summary
+
+    total = sum(
+        int(u.get("input_tokens", 0) or 0) + int(u.get("output_tokens", 0) or 0) for u in usages
+    )
+    if total <= 0:
+        return None
+    return cost_summary(model_id, usages)["mean_usd_per_request"]
+
+
+def _teardown_engine(engine_id: str) -> None:
+    """Delete a deployed bake-off engine (best-effort; force to skip confirmation)."""
+    from vertexai import agent_engines
+
+    agent_engines.delete(engine_id, force=True)
+    print(f"Deleted engine {engine_id}")
 
 
 def _default_traffic_runner(
@@ -92,30 +231,54 @@ def _default_traffic_runner(
     )
 
 
-def _engines_from_summary(summary: dict, out_dir: str) -> tuple[str, str]:
-    """Pull ``(baseline_engine, candidate_engine)`` from the DOE summary/manifest.
-
-    Prefers the inline manifest in the summary; falls back to
-    ``<out_dir>/manifest.json`` on disk. Delegates the gemini/claude split to the
-    pairwise helper so the convention lives in one place.
-    """
-    from src.eval.pairwise_eval import load_engines_from_manifest
-
-    manifest = summary.get("manifest")
-    if manifest is None:
-        with open(os.path.join(out_dir, "manifest.json")) as f:
-            manifest = json.load(f)
-    return load_engines_from_manifest(manifest)
+def _write_manifest(
+    out_dir: str,
+    experiment_id: str | None,
+    baseline_model: str,
+    candidate_model: str,
+    baseline_engine: str,
+    candidate_engine: str,
+) -> dict:
+    """Record both deployed engines in a manifest (also usable by pairwise --from-manifest)."""
+    manifest = {
+        "experiment_id": experiment_id or "bakeoff",
+        "kind": "bakeoff",
+        "factors": ["model_backend"],
+        "num_points": 2,
+        "points": [
+            {
+                "design_point": _BASELINE_LEVEL,
+                "is_baseline": True,
+                "assignments": {"model_backend": _BASELINE_LEVEL},
+                "model_id": baseline_model,
+                "engine_id": baseline_engine,
+            },
+            {
+                "design_point": _CANDIDATE_LEVEL,
+                "is_baseline": False,
+                "assignments": {"model_backend": _CANDIDATE_LEVEL},
+                "model_id": candidate_model,
+                "engine_id": candidate_engine,
+            },
+        ],
+    }
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+    return manifest
 
 
 def _plan_steps(baseline: str, candidate: str, out_dir: str) -> list[str]:
     return [
-        f"1. DOE: full single-factor design (model_backend) → deploy {baseline} + "
-        f"{candidate}, run offline pipeline, harvest → {out_dir}/results.csv",
-        "2. Pairwise SxS: flip-debiased win-rate (gemini=baseline, claude=candidate)",
-        f"3. Traffic: labeled synthetic load per engine (--label model={baseline} / {candidate})",
-        "4. Verify: verify_monitors --group-by model (two online series)",
-        f"5. Report: fuse offline + pairwise + online + cost → {out_dir}/bakeoff_report.md",
+        f"1. Deploy: two persistent coordinator engines ({baseline} + {candidate}), "
+        f"one subprocess each (COORDINATOR_MODEL baked at import) → {out_dir}/manifest.json",
+        "2. Score: offline rubrics per deployed engine (Vertex Gen AI Evaluation Service)",
+        "3. Cost: measure real per-request token usage per engine → fair token→$ / GSU",
+        "4. Pairwise SxS: flip-debiased win-rate (gemini=baseline, claude=candidate)",
+        f"5. Traffic: labeled synthetic load per engine (--label model={baseline} / {candidate})",
+        "6. Verify + Report: verify_monitors --group-by model, fuse everything → "
+        f"{out_dir}/bakeoff_report.md",
+        "7. Teardown: delete both engines (skip with --keep-engines)",
     ]
 
 
@@ -123,24 +286,27 @@ def run_bakeoff(
     *,
     experiment_id: str | None = None,
     dry_run: bool = True,
-    wait: bool = True,
     out_dir: str | None = None,
     traffic_qps: int = 2,
     traffic_duration_min: int = 1,
     monitor_hours: int = 1,
-    cost: dict[str, float] | None = None,
+    keep_engines: bool = False,
     skip_preflight: bool = False,
     # Injectable phase entrypoints (default to the real ones; stubbed in tests).
     preflight_fn=None,
-    doe_fn=None,
+    deploy_fn=None,
+    score_fn=None,
+    usage_fn=None,
     pairwise_fn=None,
     verify_fn=None,
     traffic_runner=None,
+    teardown_fn=None,
 ) -> dict:
     """Run (or plan) the full Gemini-vs-Claude coordinator bake-off.
 
     With ``dry_run=True`` (default) nothing is deployed or spent: returns a plan
-    dict. With ``dry_run=False`` it executes every phase and writes the report.
+    dict. With ``dry_run=False`` it deploys two engines, scores them, and writes the
+    report — always tearing the engines down in a ``finally`` unless ``keep_engines``.
     """
     baseline_model, candidate_model = bakeoff_model_ids()
     out_dir = out_dir or (f"doe_runs/{experiment_id}" if experiment_id else "doe_runs/bakeoff")
@@ -169,70 +335,100 @@ def run_bakeoff(
         print("Preflight: both backbones served ✓")
 
     # Bind real entrypoints lazily so a dry run / import needs no heavy deps.
-    if doe_fn is None:
-        from src.doe.run_doe import run_experiment as doe_fn
+    deploy_fn = deploy_fn or _deploy_engine
+    score_fn = score_fn or _score_engine
+    usage_fn = usage_fn or _measure_usage
     if pairwise_fn is None:
         from src.eval.pairwise_eval import run_pairwise_eval as pairwise_fn
     if verify_fn is None:
         from src.eval.verify_monitors import verify_monitor_results as verify_fn
-    if traffic_runner is None:
-        traffic_runner = _default_traffic_runner
+    traffic_runner = traffic_runner or _default_traffic_runner
+    teardown_fn = teardown_fn or _teardown_engine
 
-    # 1. DOE fan-out (two fresh deploys) → harvested dataframe + manifest.
-    summary = doe_fn(
-        kind="full",
-        factor_names=["model_backend"],
-        experiment_id=experiment_id,
-        dry_run=False,
-        wait=wait,
-        out_dir=out_dir,
-    )
-    df = summary.get("dataframe")
+    engines: dict[str, str] = {}  # model_id -> engine resource name
+    try:
+        # 1. Deploy two persistent engines (one subprocess per backbone).
+        for model_id in (baseline_model, candidate_model):
+            engines[model_id] = deploy_fn(model_id, experiment_id=experiment_id)
+        baseline_engine = engines[baseline_model]
+        candidate_engine = engines[candidate_model]
+        _write_manifest(
+            out_dir,
+            experiment_id,
+            baseline_model,
+            candidate_model,
+            baseline_engine,
+            candidate_engine,
+        )
 
-    # 2. Read the two engine ids and run the pairwise SxS.
-    baseline_engine, candidate_engine = _engines_from_summary(summary, out_dir)
-    pairwise = pairwise_fn(baseline_engine, candidate_engine)
+        # 2-3. Offline rubrics + real per-request cost, per deployed engine.
+        quality: dict[str, dict[str, float]] = {}
+        cost: dict[str, float] = {}
+        for model_id, engine_id in (
+            (baseline_model, baseline_engine),
+            (candidate_model, candidate_engine),
+        ):
+            quality[model_id] = score_fn(engine_id, model_id, out_dir=out_dir)
+            unit_cost = _cost_from_usages(model_id, usage_fn(engine_id, model_id))
+            if unit_cost is not None:
+                cost[model_id] = unit_cost
 
-    # 3. Labeled synthetic traffic at each engine.
-    for engine_id, model in (
-        (baseline_engine, baseline_model),
-        (candidate_engine, candidate_model),
-    ):
-        traffic_runner(engine_id, model, qps=traffic_qps, duration_min=traffic_duration_min)
+        # 4. Pairwise SxS.
+        pairwise = pairwise_fn(baseline_engine, candidate_engine)
 
-    # 4. Read the two online series back, split by model label.
-    grouped = verify_fn(output_format="json", hours=monitor_hours, group_by="model")
+        # 5. Labeled synthetic traffic at each engine.
+        for engine_id, model in (
+            (baseline_engine, baseline_model),
+            (candidate_engine, candidate_model),
+        ):
+            traffic_runner(engine_id, model, qps=traffic_qps, duration_min=traffic_duration_min)
 
-    # 5. Fuse everything into the report.
-    quality = quality_from_results_frame(df, _level_to_model()) if df is not None else {}
-    online = online_from_grouped_monitors(grouped or {})
-    report = build_bakeoff_report(
-        quality,
-        pairwise or {},
-        online,
-        cost or {},
-        baseline=baseline_model,
-        candidate=candidate_model,
-        experiment_id=experiment_id,
-    )
+        # 6. Read the two online series back (split by model label) and fuse.
+        grouped = verify_fn(output_format="json", hours=monitor_hours, group_by="model")
+        online = online_from_grouped_monitors(grouped or {})
+        report = build_bakeoff_report(
+            quality,
+            pairwise or {},
+            online,
+            cost,
+            baseline=baseline_model,
+            candidate=candidate_model,
+            experiment_id=experiment_id,
+        )
 
-    os.makedirs(out_dir, exist_ok=True)
-    report_path = os.path.join(out_dir, "bakeoff_report.md")
-    with open(report_path, "w") as f:
-        f.write(report)
-    print(f"Bake-off report written to {report_path}")
+        os.makedirs(out_dir, exist_ok=True)
+        report_path = os.path.join(out_dir, "bakeoff_report.md")
+        with open(report_path, "w") as f:
+            f.write(report)
+        print(f"Bake-off report written to {report_path}")
 
-    return {
-        "dry_run": False,
-        "baseline_model": baseline_model,
-        "candidate_model": candidate_model,
-        "baseline_engine": baseline_engine,
-        "candidate_engine": candidate_engine,
-        "out_dir": out_dir,
-        "pairwise": pairwise,
-        "report": report,
-        "report_path": report_path,
-    }
+        return {
+            "dry_run": False,
+            "baseline_model": baseline_model,
+            "candidate_model": candidate_model,
+            "baseline_engine": baseline_engine,
+            "candidate_engine": candidate_engine,
+            "out_dir": out_dir,
+            "quality": quality,
+            "cost": cost,
+            "pairwise": pairwise,
+            "report": report,
+            "report_path": report_path,
+            "kept_engines": keep_engines,
+        }
+    finally:
+        # Guaranteed teardown: deployed engines cost money whether or not the run
+        # completed. --keep-engines opts out (e.g. to re-run pairwise by hand).
+        if not keep_engines:
+            for model_id, engine_id in engines.items():
+                try:
+                    teardown_fn(engine_id)
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    print(f"WARNING: failed to delete {model_id} engine {engine_id}: {e}")
+        elif engines:
+            print(
+                f"--keep-engines: leaving {len(engines)} engine(s) running: {list(engines.values())}"
+            )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -253,9 +449,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--wait",
         action="store_true",
-        help="Wait for the DOE pipeline to finish before harvesting",
+        help="(no-op, kept for compatibility; the persistent-deploy path is synchronous)",
     )
     parser.add_argument("--out-dir", default="")
+    parser.add_argument(
+        "--keep-engines",
+        action="store_true",
+        help="Do NOT delete the two deployed engines at the end (default: tear down)",
+    )
     parser.add_argument(
         "--skip-preflight",
         action="store_true",
@@ -269,8 +470,8 @@ def main(argv: list[str] | None = None) -> None:
     run_bakeoff(
         experiment_id=args.experiment_id or None,
         dry_run=not args.execute,
-        wait=args.wait,
         out_dir=args.out_dir or None,
+        keep_engines=args.keep_engines,
         skip_preflight=args.skip_preflight,
         traffic_qps=args.traffic_qps,
         traffic_duration_min=args.traffic_duration_min,
