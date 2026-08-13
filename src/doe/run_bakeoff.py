@@ -129,7 +129,9 @@ def run_bakeoff(
     traffic_duration_min: int = 1,
     monitor_hours: int = 1,
     cost: dict[str, float] | None = None,
+    skip_preflight: bool = False,
     # Injectable phase entrypoints (default to the real ones; stubbed in tests).
+    preflight_fn=None,
     doe_fn=None,
     pairwise_fn=None,
     verify_fn=None,
@@ -156,6 +158,15 @@ def run_bakeoff(
             "out_dir": out_dir,
             "steps": steps,
         }
+
+    # Preflight: confirm both backbones are actually served BEFORE the two
+    # (expensive) deploys. Opt out with skip_preflight.
+    if not skip_preflight:
+        if preflight_fn is None:
+            from src.eval.preflight import ensure_models_served as preflight_fn
+        print(f"Preflight: checking [{baseline_model}, {candidate_model}] are served…")
+        preflight_fn([baseline_model, candidate_model])
+        print("Preflight: both backbones served ✓")
 
     # Bind real entrypoints lazily so a dry run / import needs no heavy deps.
     if doe_fn is None:
@@ -245,6 +256,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Wait for the DOE pipeline to finish before harvesting",
     )
     parser.add_argument("--out-dir", default="")
+    parser.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Skip the model-availability check before deploying",
+    )
     parser.add_argument("--traffic-qps", type=int, default=2)
     parser.add_argument("--traffic-duration-min", type=int, default=1)
     parser.add_argument("--monitor-hours", type=int, default=1)
@@ -255,6 +271,7 @@ def main(argv: list[str] | None = None) -> None:
         dry_run=not args.execute,
         wait=args.wait,
         out_dir=args.out_dir or None,
+        skip_preflight=args.skip_preflight,
         traffic_qps=args.traffic_qps,
         traffic_duration_min=args.traffic_duration_min,
         monitor_hours=args.monitor_hours,

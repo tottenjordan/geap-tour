@@ -9,6 +9,8 @@ the two engine ids through every downstream step) without touching GCP.
 
 import json
 
+import pytest
+
 from src.doe import run_bakeoff as rb
 
 
@@ -95,12 +97,15 @@ def test_execute_flows_engine_ids_through_every_step(tmp_path):
         dry_run=False,
         experiment_id="exp-1",
         out_dir=str(tmp_path),
+        preflight_fn=lambda ids: seen.setdefault("preflight", list(ids)),
         doe_fn=doe_fn,
         pairwise_fn=pairwise_fn,
         traffic_runner=traffic_runner,
         verify_fn=verify_fn,
     )
 
+    # Preflight checked both backbones before anything deployed.
+    assert seen["preflight"] == ["gemini-3.6-flash", "claude-sonnet-5"]
     # DOE ran as a single-factor full design.
     assert seen["doe_kwargs"]["factor_names"] == ["model_backend"]
     assert seen["doe_kwargs"]["kind"] == "full"
@@ -138,6 +143,7 @@ def test_execute_reads_manifest_from_disk_when_doe_returns_path(tmp_path):
         dry_run=False,
         experiment_id="exp-1",
         out_dir=str(tmp_path),
+        preflight_fn=lambda ids: {},
         doe_fn=lambda **k: {"experiment_id": "exp-1", "dataframe": df},
         pairwise_fn=pairwise_fn,
         traffic_runner=lambda *a, **k: None,
@@ -145,3 +151,55 @@ def test_execute_reads_manifest_from_disk_when_doe_returns_path(tmp_path):
     )
     assert seen["pw"] == ("ENG_GEM", "ENG_CLA")
     assert result["report_path"].endswith("bakeoff_report.md")
+
+
+def test_preflight_failure_aborts_before_any_deploy(tmp_path):
+    from src.eval.preflight import ModelNotServedError
+
+    called = []
+
+    def failing_preflight(ids):
+        raise ModelNotServedError("claude-sonnet-5 not served")
+
+    with pytest.raises(ModelNotServedError):
+        rb.run_bakeoff(
+            dry_run=False,
+            experiment_id="exp-1",
+            out_dir=str(tmp_path),
+            preflight_fn=failing_preflight,
+            doe_fn=lambda **k: called.append("doe") or {},
+            pairwise_fn=lambda *a, **k: called.append("pairwise") or {},
+            traffic_runner=lambda *a, **k: called.append("traffic"),
+            verify_fn=lambda **k: called.append("verify") or {},
+        )
+    # Nothing downstream ran — no deploy, no spend.
+    assert called == []
+
+
+def test_skip_preflight_bypasses_the_check(tmp_path):
+    import pandas as pd
+
+    df = pd.DataFrame([{"model_backend": "gemini", "final_response_quality": 0.7}])
+    called = []
+
+    rb.run_bakeoff(
+        dry_run=False,
+        experiment_id="exp-1",
+        out_dir=str(tmp_path),
+        skip_preflight=True,
+        preflight_fn=lambda ids: called.append("preflight"),
+        doe_fn=lambda **k: {"manifest": _manifest(), "dataframe": df},
+        pairwise_fn=lambda b, c, **k: {},
+        traffic_runner=lambda *a, **k: None,
+        verify_fn=lambda **k: {},
+    )
+    assert called == []  # preflight skipped entirely
+
+
+def test_dry_run_never_preflights():
+    called = []
+    rb.run_bakeoff(
+        dry_run=True,
+        preflight_fn=lambda ids: called.append("preflight"),
+    )
+    assert called == []
