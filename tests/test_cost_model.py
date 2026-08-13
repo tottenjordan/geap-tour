@@ -31,6 +31,21 @@ class TestRateTable:
         assert rate["usd_per_gsu"] > 0
 
 
+class TestListPrices:
+    """Pin the concrete list prices (USD per 1M tokens) so they can't drift."""
+
+    def test_gemini_per_million_tokens(self):
+        r = cm.RATES["gemini-3.6-flash"]
+        assert r["input_usd_per_token"] * 1_000_000 == pytest.approx(1.50)
+        assert r["output_usd_per_token"] * 1_000_000 == pytest.approx(7.50)
+
+    def test_claude_effective_per_million_tokens(self):
+        # Claude prices in GSU; the effective per-token price is gsu*usd_per_gsu.
+        # List price is $3/1M in, $15/1M out (the 1:5 ratio == the GSU ratio).
+        assert cm.per_request_cost_usd("claude-sonnet-5", 1_000_000, 0) == pytest.approx(3.0)
+        assert cm.per_request_cost_usd("claude-sonnet-5", 0, 1_000_000) == pytest.approx(15.0)
+
+
 class TestPerRequestCost:
     def test_gemini_cost_is_linear_in_tokens(self):
         r = cm.RATES["gemini-3.6-flash"]
