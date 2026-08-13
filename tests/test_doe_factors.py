@@ -20,7 +20,26 @@ def test_registry_has_seed_factors():
         "prompt_variant",
         "eval_fidelity",
         "memory_bank",
+        "model_backend",
     }
+
+
+def test_model_backend_factor_is_coordinator_only():
+    # The bake-off factor isolates the *coordinator* backbone: Gemini flash
+    # (coded -1) vs Anthropic Claude Sonnet (coded +1). It must move ONLY
+    # COORDINATOR_MODEL — sub-agents stay put — so the main effect attributes
+    # any delta to the coordinator model alone. Contrast with model_tier, which
+    # moves all three model env vars together.
+    f = FACTORS_BY_NAME["model_backend"]
+    assert f.channel == "engine_env"  # flipping it needs a fresh engine deploy
+    assert f.low_label == "gemini"
+    assert f.high_label == "claude"
+    assert f.assignment("gemini") == {"COORDINATOR_MODEL": "gemini-3.6-flash"}
+    assert f.assignment("claude") == {"COORDINATOR_MODEL": "claude-sonnet-5"}
+    # Only the coordinator env var moves — not TRAVEL_MODEL / EXPENSE_MODEL.
+    for label in f.labels:
+        assert set(f.assignment(label)) == {"COORDINATOR_MODEL"}
+    assert requires_fresh_deploy([f]) is True
 
 
 def test_memory_bank_factor_toggles_env():

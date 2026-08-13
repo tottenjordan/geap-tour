@@ -184,3 +184,73 @@ def test_determinism_same_seed():
 def test_injected_matches_blocked_pattern():
     matched = [q for q in INJECTED_QUERIES if any(p.search(q) for p in BLOCKED_PATTERNS)]
     assert matched, "at least one INJECTED_QUERIES entry must match a BLOCKED_PATTERNS regex"
+
+
+def test_parse_labels_key_value_pairs():
+    from src.traffic.generate_traffic import parse_labels
+
+    assert parse_labels(["model=gemini-3.6-flash", "run=demo1"]) == {
+        "model": "gemini-3.6-flash",
+        "run": "demo1",
+    }
+    assert parse_labels(None) == {}
+    assert parse_labels([]) == {}
+
+
+def test_parse_labels_rejects_malformed():
+    import pytest
+
+    from src.traffic.generate_traffic import parse_labels
+
+    with pytest.raises(ValueError):
+        parse_labels(["no-equals-sign"])
+
+
+def test_load_emit_metrics_applies_extra_labels():
+    """--label plumbing: every emitted agent_traffic/* series carries extra_labels."""
+    from src.observability.metrics import MetricsWriter
+    from tests.test_metrics import FakeMetricClient
+
+    clock = FakeClock()
+    agent = FakeAgent()
+    client = FakeMetricClient()
+    writer = MetricsWriter(project_id="proj-x", client=client)
+    generate_load(
+        agent,
+        target_qps=2,
+        duration_s=3.0,
+        workers=4,
+        seed=0,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        emit_metrics=True,
+        metrics_writer=writer,
+        extra_labels={"model": "gemini-3.6-flash"},
+    )
+    series = client.flatten()
+    assert series  # something was emitted
+    for ts in series:
+        assert ts.metric.labels["model"] == "gemini-3.6-flash"
+
+
+def test_load_no_metrics_writer_used_only_when_emitting():
+    """A provided writer stays untouched unless emit_metrics is on."""
+    from src.observability.metrics import MetricsWriter
+    from tests.test_metrics import FakeMetricClient
+
+    clock = FakeClock()
+    agent = FakeAgent()
+    client = FakeMetricClient()
+    writer = MetricsWriter(project_id="proj-x", client=client)
+    generate_load(
+        agent,
+        target_qps=2,
+        duration_s=2.0,
+        seed=0,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        metrics_writer=writer,  # provided, but emit_metrics defaults False
+    )
+    assert client.calls == []

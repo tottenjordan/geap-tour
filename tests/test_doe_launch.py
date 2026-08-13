@@ -82,6 +82,20 @@ def test_submit_point_builds_correct_cmd_and_env(monkeypatch):
     assert entry["gcs_prefix"] == "eval-results/doe/exp1/dp02"
 
 
+def test_model_backend_point_bakes_coordinator_model_and_deploys():
+    # A bake-off point (model_backend=claude) must bake COORDINATOR_MODEL into
+    # the subprocess env and force a fresh deploy (engine_env factor), with no
+    # engine reuse — each model gets its own engine tracked in the manifest.
+    factors = _get_factors(["model_backend"])
+    design = build_design(factors, "full")
+    claude = next(p for p in design if p.assignments["model_backend"] == "claude")
+    entry = launch_mod.submit_point(claude, factors, "bakeoff", dry_run=True)
+    assert entry["fresh_deploy"] is True
+    assert entry["factor_env"] == {"COORDINATOR_MODEL": "claude-sonnet-5"}
+    assert "--agent-module" in entry["cmd"] and "coordinator_agent" in entry["cmd"]
+    assert "--agent-id" not in entry["cmd"]
+
+
 def test_submit_point_reuse_when_no_engine_env(monkeypatch):
     # runner_env + param only → can reuse an engine (no fresh deploy)
     factors = get_factors(["router_boundaries", "eval_fidelity"])

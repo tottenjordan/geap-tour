@@ -10,7 +10,9 @@ lives in `src/doe/`; the eval pipeline is *extended*, not rewritten.
 
 - `src/doe/factors.py` — declarative `Factor` registry (name, channel, 2 levels).
   Four seed factors: `router_boundaries` (runner_env), `model_tier` (engine_env),
-  `prompt_variant` (engine_env), `eval_fidelity` (param).
+  `prompt_variant` (engine_env), `eval_fidelity` (param). Plus `model_backend`
+  (engine_env, coordinator-only) for the Gemini-vs-Claude bake-off — see the
+  [coordinator model bake-off](./coordinator-model-bakeoff.md) note.
 - `src/doe/design.py` — `build_design(factors, kind)`: `screening` →
   resolution-IV `2^(4-1)` = 8 runs + 1 baseline anchor = **9**; `full` →
   `ff2n` = 16. Coded `-1`→low label, `+1`→high label.
@@ -79,6 +81,10 @@ uv run --group doe python -m src.doe.run_doe --kind screening --execute --max-ru
 
 # Full screening (9 jobs)
 uv run --group doe python -m src.doe.run_doe --kind screening --execute --wait
+
+# Single-factor bake-off (2 deploys, one per model) — see the bake-off note
+uv run --group doe python -m src.doe.run_bakeoff              # dry-run plan
+uv run --group doe python -m src.doe.run_bakeoff --execute --wait
 ```
 
 **Cost caveat:** `model_tier` + `prompt_variant` are `engine_env`, so 8 of 9

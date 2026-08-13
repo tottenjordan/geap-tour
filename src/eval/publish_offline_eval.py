@@ -115,7 +115,7 @@ def _resolve_latest() -> str:
     return str(candidates[-1])
 
 
-def _inject_policy_compliance(batch: dict) -> None:
+def _inject_policy_compliance(batch: dict, agent_id: str | None = None) -> None:
     """Score policy_compliance via the standalone judge and add it to ``batch``.
 
     The custom ``client.evals`` policy metric is SDK-broken (see
@@ -123,11 +123,17 @@ def _inject_policy_compliance(batch: dict) -> None:
     into the coordinator's metrics under the same key shape the bridge expects
     (``agent_engine_0/policy_compliance`` → ``{"score": 0-1}``). Guarded: a
     failure just leaves policy_compliance absent (the bridge skips it).
+
+    ``agent_id`` selects the engine under test (a bare id or a full resource
+    name); it defaults to the ``AGENT_ENGINE_ID`` env only when unset. Passing it
+    explicitly is what keeps a bake-off's per-deployment policy score bound to the
+    right engine rather than the .env default.
     """
-    from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION
+    from src.config import AGENT_ENGINE_ID
+    from src.eval.batch_eval import _resolve_agent_resource_name
     from src.eval.policy_judge import run_policy_compliance_eval
 
-    arn = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
+    arn = _resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID)
     result = run_policy_compliance_eval(arn)
     score = result.get("score")
     if score is None:
@@ -144,13 +150,20 @@ def _inject_policy_compliance(batch: dict) -> None:
     print(f"  policy_compliance: {score:.3f} (over {result.get('n_scored')} responses)")
 
 
-def _run_fresh() -> dict:
-    """Run a fresh coordinator batch eval (plus the standalone policy judge)."""
+def _run_fresh(agent_id: str | None = None) -> dict:
+    """Run a fresh coordinator batch eval (plus the standalone policy judge).
+
+    ``agent_id`` targets a specific deployment (bake-off); when unset the batch
+    eval and policy judge both use the ``AGENT_ENGINE_ID`` env default.
+    """
+    from src.config import AGENT_ENGINE_ID
     from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
 
-    batch = run_multi_agent_batch_eval(agents=[DEFAULT_COORDINATOR_AGENT])
+    batch = run_multi_agent_batch_eval(
+        agents=[DEFAULT_COORDINATOR_AGENT], agent_id=agent_id or AGENT_ENGINE_ID
+    )
     try:
-        _inject_policy_compliance(batch)
+        _inject_policy_compliance(batch, agent_id=agent_id)
     except Exception as e:  # policy scoring is best-effort
         print(f"  policy_compliance scoring failed: {e}")
     return batch
@@ -176,6 +189,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run a fresh coordinator batch eval (one run_inference)",
     )
     parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="engine (bare id or full resource name) to score with --run; "
+        "targets a specific bake-off deployment instead of the AGENT_ENGINE_ID default",
+    )
+    parser.add_argument(
+        "--label",
+        action="append",
+        metavar="KEY=VALUE",
+        help="extra label stamped on every published series (repeatable; e.g. "
+        "--label model=claude-sonnet-5 keeps a bake-off's snapshots separable)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and print scores without writing to Cloud Monitoring",
@@ -183,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.run:
-        batch = _run_fresh()
+        batch = _run_fresh(agent_id=args.agent_id)
     else:
         path = _resolve_latest() if args.latest else args.from_json
         if not path:
@@ -196,7 +222,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         writer = MetricsWriter(client=_NoopMetricClient())
 
-    published = publish_offline_scores(batch, writer=writer)
+    from src.observability.metrics import parse_labels
+
+    published = publish_offline_scores(
+        batch, writer=writer, extra_labels=parse_labels(args.label)
+    )
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
     return 0

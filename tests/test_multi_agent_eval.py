@@ -88,6 +88,32 @@ class TestEvalCasesPerAgent:
             assert case["expected_complexity"] in ("low", "medium", "high")
 
 
+class TestCoordinatorDatasetRobustness:
+    """The coordinator set is the bake-off dataset — it must be deep enough and
+    cover hard multi-step + adversarial cases, not just benign happy paths."""
+
+    def test_coordinator_dataset_is_expanded(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+
+        # ~50-case target for a meaningful Gemini-vs-Claude head-to-head.
+        assert len(get_eval_cases("coordinator_agent")) >= 45
+
+    def test_coordinator_has_multistep_and_adversarial(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+
+        categories = {c["category"] for c in get_eval_cases("coordinator_agent")}
+        assert "multi_step" in categories
+        assert "adversarial" in categories
+
+    def test_coordinator_cases_have_reference(self):
+        # Every coordinator case must carry a non-empty reference so
+        # FINAL_RESPONSE_MATCH can score it.
+        from src.eval.agent_eval_configs import get_eval_cases
+
+        for case in get_eval_cases("coordinator_agent"):
+            assert case.get("reference"), f"Missing reference in: {case.get('prompt', '?')}"
+
+
 class TestEvalCaseRequiredFields:
     @pytest.fixture(params=["coordinator_agent", "travel_agent", "expense_agent", "router_agent"])
     def agent_cases(self, request):

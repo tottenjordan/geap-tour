@@ -53,6 +53,17 @@ bash scripts/build_eval_image.sh v1                                  # build+pus
 uv run python -m src.pipelines.submit --agent-id <ENGINE_ID> --skip-traffic   # reuse engine (fastest)
 uv run python -m src.pipelines.submit --agent-module coordinator_agent        # full parity, fresh temp deploy
 
+# DOE experiments (design → fan-out one PipelineJob per point → harvest → main-effects report)
+uv run --group doe python -m src.doe.run_doe --kind screening               # dry-run design + cost estimate
+uv run --group doe python -m src.doe.run_doe --kind screening --execute --wait
+
+# Coordinator model bake-off — Gemini vs Claude (2 persistent deploys, own lifecycle; auto-teardown)
+uv run --group doe python -m src.doe.run_bakeoff                            # dry-run plan (deploys/spends nothing)
+uv run --group doe python -m src.doe.run_bakeoff --execute                  # deploy both → offline + cost + pairwise + traffic → report → teardown
+uv run --group doe python -m src.doe.run_bakeoff --execute --keep-engines   # same, but leave both engines running afterwards
+uv run python -m src.eval.pairwise_eval --from-manifest doe_runs/<exp>/manifest.json --dry-run  # pairwise SxS win-rate
+uv run python -m src.eval.verify_monitors --format json --group-by model    # two online series: gemini vs claude
+
 # A2A agent card — register / discover the coordinator in Agent Registry (preview-optional)
 uv run python -m src.deploy.register_a2a              # publish the coordinator's agent card
 uv run python -m src.deploy.register_a2a --discover   # list A2A agents in the registry
@@ -106,6 +117,17 @@ Cross-session recall only persists if the deployed engine is backed by managed s
   - **Coordinator quality → `custom.googleapis.com/agent_eval/*`** (1-5 rubric, alert `< 3.0`). `src/eval/publish_offline_eval.py:publish_offline_scores()` extracts the three monitored quality metrics (`helpfulness`, `tool_use_accuracy`, `policy_compliance`) from the batch eval — which legitimately scores the *deployed* engine via the Vertex Gen AI Evaluation Service — scales them 0-1 → 1-5, tags them `eval_mode=offline`, and delegates to `src/eval/publish_eval_metrics.py:publish_eval_metrics()` (names strictly from `quality_alerts.ALL_MONITORED_METRICS` — no drift).
   - **Router efficiency → `custom.googleapis.com/agent_router/*`** (native units). `src/eval/publish_router_efficiency.py:publish_router_efficiency()` publishes `routing_accuracy_pct` (%, alert `< 80`), `cost_savings_pct` (% vs all-Opus baseline, alert `< 50`), and `classifier_latency_ms` (ms, alert `> 8000`) **verbatim, no scaling**, from the complexity accuracy + cost-efficiency evals. Cost savings was previously computed and discarded; it is now a first-class monitored series. Alert directions/families are parametrized in `quality_alerts.ROUTER_MONITORED_METRICS`.
   - `run_all_evals` publishes both surfaces as its Phase 6 step; each CLI (`publish_offline_eval`, `publish_router_efficiency`) can publish standalone (`--from-json`/`--latest`/`--run`/`--dry-run`). `src/eval/verify_monitors.py` reads both series as two blocks (`coordinator_quality` + `router_efficiency`, canonical source; optional guarded BigQuery export via `--source bigquery`). The dead native `onlineEvaluator` setup and its deprecation shim were removed.
+
+### DOE experiments & the coordinator model bake-off
+
+`src/doe/` turns the single-config eval pipeline into an experiment engine: a declarative `Factor` registry (`factors.py`) → fractional-factorial `build_design()` → **one Vertex `PipelineJob` per design point** (`launch.py`, subprocess-per-point so each point's env bakes at import time) → `harvest.py` (one row per point) → `analyze.py` (main effects + cost-quality frontier → `report.md`). `run_doe.py` is the CLI (dry-run default; `--execute` opt-in because `engine_env` factors deploy a fresh engine per point). See [docs/notes/doe-framework.md](docs/notes/doe-framework.md).
+
+The **coordinator model bake-off** compares two coordinator deployments that differ only by backbone — `gemini-3.6-flash` (baseline, coded `-1`) vs `claude-sonnet-5` (candidate, `+1`). It borrows the `model_backend` factor (`factors.py`, coordinator-only: moves just `COORDINATOR_MODEL`, sub-agents fixed) to define the two backbones in one place, but `run_bakeoff` **owns the deploy/teardown lifecycle directly** rather than running the DOE PipelineJob fan-out (whose ephemeral per-point engines get deleted in the pipeline's exit handler before pairwise/traffic can reach them, and whose manifest never records an `engine_id`). It deploys **two persistent engines**, one subprocess each via `src/doe/deploy_coordinator.py` (so `COORDINATOR_MODEL` bakes at import time; the child prints its resource on a `BAKEOFF_ENGINE:` marker line), records both `engine_id`s in the run **manifest** (not `.env`, which holds only one coordinator id), and **tears both down in a guaranteed `finally`** (`--keep-engines` opts out). Three evidence streams fuse into one verdict:
+- **Offline rubrics per engine** — `run_bakeoff` scores each *deployed* engine with `multi_agent_batch_eval` (mapping versioned metric keys → base names via `harvest._metric_base`/`BATCH_METRICS`); cost is **measured**, not assumed — `collect_token_usage` reads real `usage_metadata` off `stream_query` (isolated in the bake-off, not shared `_sdk_patches.py`) and `src/eval/cost_model.py` prices it fairly (Gemini per-token, Claude GSU→USD — constants are directional, verify before quoting); no usage → honest `n/a`, not a fake `$0`.
+- **Pairwise SxS** (`src/eval/pairwise_eval.py`) — `PairwiseMetric` autorater (`flip_enabled`, `sampling_count=4`) → win-rate, with a standalone `google.genai` `Choice: A|B|TIE` fallback if the managed template 400s. `--from-manifest` picks gemini=baseline, claude=candidate.
+- **Per-model-labeled traffic** — `generate_traffic --label model=<id>` keeps the two deployments as separate Cloud Monitoring series; `verify_monitors --group-by model` and the dashboard's per-model breakdown tiles read them back split (default ungrouped behavior unchanged).
+
+`src/doe/bakeoff_report.py` (pure assembly) renders offline means + delta, pairwise win-rate, online p50/p95/error, and per-request $ with a one-line verdict → `bakeoff_report.md`. `src/doe/run_bakeoff.py` chains all phases (preflight → deploy 2 → offline+cost → pairwise → traffic → verify+report → teardown), **dry-run by default** (mirrors `run_doe`); every phase entrypoint is injectable for offline wiring tests. Caveats: dataset ~50 curated cases (incl. multi-step + adversarial) not ≥1000; Gemini-only judge; self-driven traffic split (no native endpoint A/B). See [docs/notes/coordinator-model-bakeoff.md](docs/notes/coordinator-model-bakeoff.md).
 
 ### GEPA optimization
 

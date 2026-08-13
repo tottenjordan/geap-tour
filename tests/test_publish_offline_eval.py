@@ -113,6 +113,58 @@ def test_empty_batch_no_crash():
 
 
 # --------------------------------------------------------------------------- #
+# Policy compliance targets the run's engine (bake-off correctness)
+# --------------------------------------------------------------------------- #
+def test_inject_policy_targets_explicit_engine(monkeypatch):
+    # A bake-off run scores each deployment separately, so the policy judge must
+    # run against the engine passed in — NOT the AGENT_ENGINE_ID env default.
+    captured = {}
+
+    def fake_run(arn, **kwargs):
+        captured["arn"] = arn
+        return {"score": 0.8, "n_scored": 5, "n_total": 5}
+
+    monkeypatch.setattr("src.eval.policy_judge.run_policy_compliance_eval", fake_run)
+
+    batch: dict = {}
+    off._inject_policy_compliance(batch, agent_id="ENGINE_X")
+
+    assert "ENGINE_X" in captured["arn"]
+    assert captured["arn"].endswith("/reasoningEngines/ENGINE_X")
+    metrics = batch["agents"]["coordinator_agent"]["metrics"]
+    assert metrics["agent_engine_0/policy_compliance"] == {"score": 0.8}
+
+
+def test_inject_policy_full_arn_passthrough(monkeypatch):
+    # A full resource name is used verbatim (not re-wrapped).
+    captured = {}
+
+    def fake_run(arn, **kwargs):
+        captured["arn"] = arn
+        return {"score": 0.6, "n_scored": 3, "n_total": 3}
+
+    monkeypatch.setattr("src.eval.policy_judge.run_policy_compliance_eval", fake_run)
+    full = "projects/p/locations/us-central1/reasoningEngines/999"
+    off._inject_policy_compliance({}, agent_id=full)
+    assert captured["arn"] == full
+
+
+def test_inject_policy_defaults_to_env_engine(monkeypatch):
+    # With no agent_id, it falls back to the AGENT_ENGINE_ID env default.
+    from src.config import AGENT_ENGINE_ID
+
+    captured = {}
+
+    def fake_run(arn, **kwargs):
+        captured["arn"] = arn
+        return {"score": 0.5, "n_scored": 2, "n_total": 2}
+
+    monkeypatch.setattr("src.eval.policy_judge.run_policy_compliance_eval", fake_run)
+    off._inject_policy_compliance({}, agent_id=None)
+    assert AGENT_ENGINE_ID in captured["arn"]
+
+
+# --------------------------------------------------------------------------- #
 # CLI load helper
 # --------------------------------------------------------------------------- #
 def test_load_results_full_results_shape(tmp_path):
@@ -163,6 +215,22 @@ def test_from_json_loads_and_publishes(tmp_path, monkeypatch):
     off.main(["--from-json", str(path)])
     batch = captured["call"]
     assert "agents" in batch
+
+
+def test_label_flag_forwarded_as_extra_labels(tmp_path, monkeypatch):
+    import json
+
+    path = tmp_path / "full_results.json"
+    path.write_text(json.dumps({"batch": _batch({"agent_engine_0/helpfulness": 0.8})}))
+
+    captured = {}
+    monkeypatch.setattr(
+        off,
+        "publish_offline_scores",
+        lambda batch, **k: captured.update(k) or {"helpfulness": 4.0},
+    )
+    off.main(["--from-json", str(path), "--label", "model=claude-sonnet-5"])
+    assert captured["extra_labels"] == {"model": "claude-sonnet-5"}
 
 
 def test_dry_run_writes_nothing(tmp_path, capsys):

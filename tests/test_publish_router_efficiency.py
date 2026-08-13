@@ -1,5 +1,6 @@
 """Offline tests for the router-efficiency monitoring bridge (no live GCP)."""
 
+from src.eval import publish_router_efficiency as router_pub
 from src.eval.publish_router_efficiency import publish_router_efficiency
 
 
@@ -74,3 +75,21 @@ def test_empty_inputs_write_nothing():
     published = publish_router_efficiency({}, {}, writer=_writer(client))
     assert published == {}
     assert client.calls == []
+
+
+def test_label_flag_forwarded_as_extra_labels(tmp_path, monkeypatch):
+    import json
+
+    path = tmp_path / "full_results.json"
+    path.write_text(
+        json.dumps({"complexity": {"accuracy": {"accuracy": 0.9}, "cost_efficiency": {}}})
+    )
+
+    captured = {}
+    monkeypatch.setattr(
+        router_pub,
+        "publish_router_efficiency",
+        lambda acc, cost, **k: captured.update(k) or {"routing_accuracy_pct": 90.0},
+    )
+    router_pub.main(["--from-json", str(path), "--label", "model=gemini-3.6-flash"])
+    assert captured["extra_labels"] == {"model": "gemini-3.6-flash"}

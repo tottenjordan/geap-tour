@@ -125,62 +125,87 @@ def _out_of_bounds(scores: list[float], threshold: float, comparison: str) -> in
     return sum(1 for s in scores if s < threshold)
 
 
-def _aggregate_surface(series_iter, metric_specs, now: float | None = None) -> dict:
-    """Collapse a surface's TimeSeries into the per-metric summary dict shape."""
+def _summarize(
+    scores: list[float], epochs: list[float], threshold: float, comparison: str, now: float
+) -> dict:
+    """Build the per-metric summary dict for one score/epoch bucket."""
+    return {
+        "eval_count": len(scores),
+        "avg_score": round(sum(scores) / len(scores), 3),
+        "min_score": round(min(scores), 3),
+        "max_score": round(max(scores), 3),
+        "p50_score": _percentile(scores, 50),
+        "p90_score": _percentile(scores, 90),
+        "threshold": threshold,
+        "direction": comparison,
+        "out_of_bounds": _out_of_bounds(scores, threshold, comparison),
+        "first_eval": datetime.fromtimestamp(min(epochs), tz=UTC).isoformat(),
+        "last_eval": datetime.fromtimestamp(max(epochs), tz=UTC).isoformat(),
+        "trend": {
+            "avg_1h": _window_avg(scores, epochs, now, 1),
+            "avg_6h": _window_avg(scores, epochs, now, 6),
+            "avg_24h": _window_avg(scores, epochs, now, 24),
+        },
+    }
+
+
+def _aggregate_surface(
+    series_iter, metric_specs, now: float | None = None, group_by_label: str | None = None
+) -> dict:
+    """Collapse a surface's TimeSeries into the per-metric summary dict shape.
+
+    Ungrouped (default), ``metrics[name]`` is a flat summary. When
+    ``group_by_label`` is set (e.g. ``"model"``), buckets are keyed by
+    ``(metric_name, label_value)`` so two deployments render as separate series
+    rather than a merged average: ``metrics[name][label_value]`` is the summary
+    and the surface carries a ``group_by`` marker.
+    """
     now = now if now is not None else time.time()
     directions = {name: (threshold, comparison) for name, threshold, comparison in metric_specs}
 
-    buckets: dict[str, dict[str, list[float]]] = {}
+    # Bucket key is always ``(metric_name, label_value)``. Ungrouped runs use a
+    # single ``""`` label so the same code path serves both shapes.
+    buckets: dict[tuple[str, str], dict[str, list[float]]] = {}
     for series in series_iter:
-        mtype = series.metric.type
-        name = mtype.rsplit("/", 1)[-1]
-        bucket = buckets.setdefault(name, {"scores": [], "epochs": []})
+        name = series.metric.type.rsplit("/", 1)[-1]
+        if group_by_label is None:
+            label_value = ""
+        else:
+            label_value = (getattr(series.metric, "labels", {}) or {}).get(
+                group_by_label, "unknown"
+            )
+        bucket = buckets.setdefault((name, label_value), {"scores": [], "epochs": []})
         for point in series.points:
             bucket["scores"].append(float(point.value.double_value))
             bucket["epochs"].append(_point_epoch(point))
 
     metrics: dict[str, dict] = {}
     total = 0
-    for name, bucket in sorted(buckets.items()):
+    for (name, label_value), bucket in sorted(buckets.items()):
         scores = bucket["scores"]
-        epochs = bucket["epochs"]
         if not scores:
             continue
         total += len(scores)
         threshold, comparison = directions.get(name, (DEFAULT_THRESHOLD, "LT"))
+        summary = _summarize(scores, bucket["epochs"], threshold, comparison, now)
+        if group_by_label is None:
+            metrics[name] = summary
+        else:
+            metrics.setdefault(name, {})[label_value] = summary
 
-        first_epoch = min(epochs)
-        last_epoch = max(epochs)
-        metrics[name] = {
-            "eval_count": len(scores),
-            "avg_score": round(sum(scores) / len(scores), 3),
-            "min_score": round(min(scores), 3),
-            "max_score": round(max(scores), 3),
-            "p50_score": _percentile(scores, 50),
-            "p90_score": _percentile(scores, 90),
-            "threshold": threshold,
-            "direction": comparison,
-            "out_of_bounds": _out_of_bounds(scores, threshold, comparison),
-            "first_eval": datetime.fromtimestamp(first_epoch, tz=UTC).isoformat(),
-            "last_eval": datetime.fromtimestamp(last_epoch, tz=UTC).isoformat(),
-            "trend": {
-                "avg_1h": _window_avg(scores, epochs, now, 1),
-                "avg_6h": _window_avg(scores, epochs, now, 6),
-                "avg_24h": _window_avg(scores, epochs, now, 24),
-            },
-        }
-
-    status = "ok" if metrics else "empty"
-    return {"status": status, "metrics": metrics, "total_evals": total}
+    surface = {"status": "ok" if metrics else "empty", "metrics": metrics, "total_evals": total}
+    if group_by_label is not None:
+        surface["group_by"] = group_by_label
+    return surface
 
 
-def _verify_from_monitoring(hours: int, client=None) -> dict:
+def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None) -> dict:
     client = client or _monitoring_client()
     data: dict[str, object] = {}
     any_ok = False
     for surface_key, spec in SURFACES.items():
         series = list(_query_surface_series(client, spec.prefix, spec.metrics, hours))
-        surface = _aggregate_surface(series, spec.metrics)
+        surface = _aggregate_surface(series, spec.metrics, group_by_label=group_by)
         data[surface_key] = surface
         any_ok = any_ok or surface["status"] == "ok"
     data["status"] = "ok" if any_ok else "empty"
@@ -264,6 +289,7 @@ def verify_monitor_results(
     threshold: float = DEFAULT_THRESHOLD,
     client=None,
     bq_client=None,
+    group_by: str | None = None,
 ) -> dict | None:
     """Summarize periodic-snapshot quality/efficiency scores.
 
@@ -274,6 +300,9 @@ def verify_monitor_results(
         hours: trailing window.
         threshold: below-this counts out-of-bounds for the BigQuery path.
         client / bq_client: injectable clients for tests.
+        group_by: optional metric-label name (e.g. ``"model"``) to split each
+            metric into per-label buckets, so two deployments render separately
+            instead of collapsing into a merged average (monitoring path only).
 
     Returns:
         dict with results when ``output_format == "json"``, else ``None``. The
@@ -283,7 +312,7 @@ def verify_monitor_results(
     if source == "bigquery":
         data = _verify_from_bigquery(hours, threshold, bq_client=bq_client)
     else:
-        data = _verify_from_monitoring(hours, client=client)
+        data = _verify_from_monitoring(hours, client=client, group_by=group_by)
 
     if output_format == "json":
         return data
@@ -298,30 +327,42 @@ _SURFACE_TITLES = {
 }
 
 
+def _print_metric(m: dict, indent: str = "  ") -> None:
+    op = ">" if m.get("direction") == "GT" else "<"
+    print(f"{indent}  Evals:  {m['eval_count']}")
+    print(f"{indent}  Avg:    {m['avg_score']}  (min: {m['min_score']}, max: {m['max_score']})")
+    print(f"{indent}  P50:    {m['p50_score']}  P90: {m['p90_score']}")
+    trend = m["trend"]
+    parts = []
+    if trend.get("avg_1h") is not None:
+        parts.append(f"1h: {trend['avg_1h']}")
+    if trend.get("avg_6h") is not None:
+        parts.append(f"6h: {trend['avg_6h']}")
+    parts.append(f"24h: {trend.get('avg_24h')}")
+    print(f"{indent}  Trend:  {' | '.join(parts)}")
+    if m["out_of_bounds"]:
+        print(f"{indent}  WARNING: {m['out_of_bounds']} scores {op} {m.get('threshold')}")
+
+
 def _print_surface(title: str, surface: dict) -> None:
     print(f"\n{title}")
     print("-" * 60)
     if surface.get("status") != "ok":
         print(f"  {surface.get('message', 'No scores in Cloud Monitoring yet.')}")
         return
+    grouped = surface.get("group_by")
     print(f"  Total evaluations: {surface['total_evals']}\n")
     for metric_name, m in surface["metrics"].items():
-        op = ">" if m.get("direction") == "GT" else "<"
-        print(f"  {metric_name}:")
-        print(f"    Evals:  {m['eval_count']}")
-        print(f"    Avg:    {m['avg_score']}  (min: {m['min_score']}, max: {m['max_score']})")
-        print(f"    P50:    {m['p50_score']}  P90: {m['p90_score']}")
-        trend = m["trend"]
-        parts = []
-        if trend.get("avg_1h") is not None:
-            parts.append(f"1h: {trend['avg_1h']}")
-        if trend.get("avg_6h") is not None:
-            parts.append(f"6h: {trend['avg_6h']}")
-        parts.append(f"24h: {trend.get('avg_24h')}")
-        print(f"    Trend:  {' | '.join(parts)}")
-        if m["out_of_bounds"]:
-            print(f"    WARNING: {m['out_of_bounds']} scores {op} {m.get('threshold')}")
-        print()
+        if grouped:
+            print(f"  {metric_name} (by {grouped}):")
+            for label_value, sub in m.items():
+                print(f"    [{grouped}={label_value}]")
+                _print_metric(sub, indent="    ")
+                print()
+        else:
+            print(f"  {metric_name}:")
+            _print_metric(m)
+            print()
 
 
 def _print_report(data: dict, hours: int) -> None:
@@ -353,20 +394,35 @@ def generate_markdown_report(data: dict) -> str:
         if surface.get("status") != "ok":
             lines.append(surface.get("message", "No scores in Cloud Monitoring yet."))
             continue
-        lines += [
-            f"**Total evaluations:** {surface['total_evals']}",
-            "",
-            "| Metric | Evals | Avg | P50 | P90 | Out of bounds | Alert | 1h Trend |",
-            "|--------|-------|-----|-----|-----|---------------|-------|----------|",
-        ]
-        for name, m in surface["metrics"].items():
+        grouped = surface.get("group_by")
+
+        def _row(name: str, m: dict, label: str | None = None) -> str:
             trend_1h = f"{m['trend']['avg_1h']}" if m["trend"].get("avg_1h") is not None else "N/A"
             op = ">" if m.get("direction") == "GT" else "<"
-            lines.append(
-                f"| {name} | {m['eval_count']} | {m['avg_score']} | "
+            lead = f"| {name} | {label} |" if label is not None else f"| {name} |"
+            return (
+                f"{lead} {m['eval_count']} | {m['avg_score']} | "
                 f"{m['p50_score']} | {m['p90_score']} | {m['out_of_bounds']} | "
                 f"{op} {m.get('threshold')} | {trend_1h} |"
             )
+
+        lines += [f"**Total evaluations:** {surface['total_evals']}", ""]
+        if grouped:
+            lines += [
+                f"| Metric | {grouped.capitalize()} | Evals | Avg | P50 | P90 | "
+                "Out of bounds | Alert | 1h Trend |",
+                "|--------|------|-------|-----|-----|-----|---------------|-------|----------|",
+            ]
+            for name, by_label in surface["metrics"].items():
+                for label_value, m in by_label.items():
+                    lines.append(_row(name, m, label=label_value))
+        else:
+            lines += [
+                "| Metric | Evals | Avg | P50 | P90 | Out of bounds | Alert | 1h Trend |",
+                "|--------|-------|-----|-----|-----|---------------|-------|----------|",
+            ]
+            for name, m in surface["metrics"].items():
+                lines.append(_row(name, m))
     return "\n".join(lines)
 
 
@@ -383,6 +439,12 @@ if __name__ == "__main__":
         if idx + 1 < len(sys.argv):
             src = sys.argv[idx + 1]
 
-    result = verify_monitor_results(output_format=fmt, source=src)
+    group_by = None
+    if "--group-by" in sys.argv:
+        idx = sys.argv.index("--group-by")
+        if idx + 1 < len(sys.argv):
+            group_by = sys.argv[idx + 1]
+
+    result = verify_monitor_results(output_format=fmt, source=src, group_by=group_by)
     if fmt == "json" and result:
         print(json.dumps(result, indent=2, default=str))

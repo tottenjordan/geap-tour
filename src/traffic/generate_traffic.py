@@ -25,6 +25,7 @@ from src.config import (
     ROUTER_ENGINE_ID,
     disable_pyopenssl,
 )
+from src.observability.metrics import parse_labels
 
 
 def _extract_text(event) -> str:
@@ -445,6 +446,8 @@ def generate_load(
     sleep=time.sleep,
     monotonic=time.monotonic,
     emit_metrics: bool = False,
+    metrics_writer=None,
+    extra_labels=None,
 ) -> dict:
     """Generate concurrent, ramped synthetic load against a deployed agent.
 
@@ -466,7 +469,10 @@ def generate_load(
 
     When ``emit_metrics`` is True the summary is also written to Cloud Monitoring
     as ``custom.googleapis.com/agent_traffic/*`` gauges (default False so tests
-    and existing callers are unaffected).
+    and existing callers are unaffected). ``metrics_writer`` lets tests capture
+    emission without live GCP; ``extra_labels`` (e.g. ``{"model": "…"}``) is
+    stamped on every emitted series so two deployments render as separate
+    monitoring series rather than collapsing into one.
 
     Returns a summary dict with keys: offered, sent, errors, injected,
     achieved_qps, p50_latency, p95_latency, duration_s.
@@ -563,7 +569,9 @@ def generate_load(
         from src.observability.metrics import emit_traffic_metrics
 
         try:
-            emit_traffic_metrics(summary)
+            emit_traffic_metrics(
+                summary, writer=metrics_writer, extra_labels=extra_labels
+            )
             print("  Metrics:      emitted to custom.googleapis.com/agent_traffic/*")
         except Exception as e:  # demo tooling, never fail the run on metrics
             print(f"  Metrics:      emission failed: {e}")
@@ -596,6 +604,7 @@ def generate_scaling_profile(
     monotonic=time.monotonic,
     emit_metrics: bool = False,
     metrics_writer=None,
+    extra_labels=None,
     on_stage=None,
 ) -> dict:
     """Run a staircase of QPS stages back-to-back to illustrate scaling.
@@ -618,6 +627,8 @@ def generate_scaling_profile(
     ``agent`` and the injectable ``sleep``/``monotonic``/``seed`` behave exactly
     as in :func:`generate_load` (tests pass a fake agent + virtual clock).
     ``metrics_writer`` lets tests capture emission without live GCP;
+    ``extra_labels`` (e.g. ``{"model": "…"}``) is merged onto every stage's
+    labels alongside ``stage``/``target_qps``, keeping two deployments separable;
     ``on_stage(index, stage_summary)`` is an optional per-stage hook.
 
     Returns a dict with ``stages`` (per-stage summaries, each augmented with
@@ -658,7 +669,11 @@ def generate_scaling_profile(
                 emit_traffic_metrics(
                     summary,
                     writer=metrics_writer,
-                    extra_labels={"stage": str(i), "target_qps": str(target_qps)},
+                    extra_labels={
+                        "stage": str(i),
+                        "target_qps": str(target_qps),
+                        **(extra_labels or {}),
+                    },
                 )
                 print(f"  Metrics:      emitted (stage={i}, target_qps={target_qps})")
             except Exception as e:  # demo tooling, never fail the run on metrics
@@ -705,7 +720,16 @@ if __name__ == "__main__":
     parser.add_argument("--error-rate", type=float, default=0.0, help="Injected bad-query probability for --load (default: 0.0)")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)")
     parser.add_argument("--emit-metrics", action="store_true", help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run")
+    parser.add_argument(
+        "--label",
+        action="append",
+        metavar="KEY=VALUE",
+        help="Extra label stamped on every emitted agent_traffic/* series "
+        "(repeatable; e.g. --label model=gemini-3.6-flash keeps two deployments "
+        "as separate monitoring series)",
+    )
     args = parser.parse_args()
+    extra_labels = parse_labels(args.label)
 
     if args.scaling:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
@@ -715,12 +739,14 @@ if __name__ == "__main__":
             f"/reasoningEngines/{AGENT_ENGINE_ID}"
         )
         scaling_agent = agent_engines.get(resource)
+        stage_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}
         generate_scaling_profile(
             scaling_agent,
             workers=args.workers if args.workers is not None else 64,
             error_injection=args.error_rate,
             seed=args.seed,
             emit_metrics=args.emit_metrics,
+            extra_labels=stage_labels,
         )
     elif args.load:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
@@ -730,6 +756,7 @@ if __name__ == "__main__":
             f"/reasoningEngines/{AGENT_ENGINE_ID}"
         )
         load_agent = agent_engines.get(resource)
+        load_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}
         generate_load(
             load_agent,
             target_qps=args.qps,
@@ -739,6 +766,7 @@ if __name__ == "__main__":
             error_injection=args.error_rate,
             seed=args.seed,
             emit_metrics=args.emit_metrics,
+            extra_labels=load_labels,
         )
     elif args.steady:
         generate_steady_traffic(

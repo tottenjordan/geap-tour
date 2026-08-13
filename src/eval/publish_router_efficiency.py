@@ -90,6 +90,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="load a run_all_evals full_results.json (reads complexity.accuracy / .cost_efficiency)",
     )
     parser.add_argument(
+        "--label",
+        action="append",
+        metavar="KEY=VALUE",
+        help="extra label stamped on every published series (repeatable; e.g. "
+        "--label model=gemini-3.6-flash keeps a bake-off's snapshots separable)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and print scores without writing to Cloud Monitoring",
@@ -102,7 +109,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         writer = MetricsWriter(client=_NoopMetricClient())
 
-    published = publish_router_efficiency(accuracy, cost, writer=writer)
+    from src.observability.metrics import parse_labels
+
+    published = publish_router_efficiency(
+        accuracy, cost, writer=writer, extra_labels=parse_labels(args.label)
+    )
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
     return 0

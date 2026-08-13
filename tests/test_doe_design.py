@@ -80,6 +80,29 @@ def test_three_factor_screening_is_four_run_fraction():
         assert {p.assignments[f.name] for p in frac} == set(f.labels)
 
 
+def test_single_factor_full_is_two_points_no_baseline():
+    # The bake-off runs one factor (model_backend) as a full 2^1 design: exactly
+    # two design points — one Gemini engine, one Claude engine — and NO baseline
+    # replicate (that would be a redundant third deploy of the low level).
+    backend = get_factors(["model_backend"])
+    points = build_design(backend, kind="full")
+    assert len(points) == 2
+    assert not any(p.is_baseline for p in points)
+    labels = {p.assignments["model_backend"] for p in points}
+    assert labels == {"gemini", "claude"}
+
+
+def test_single_factor_screening_appends_baseline_replicate():
+    # kind="screening" with k<4 degrades to the full factorial AND appends a
+    # baseline (a 2nd Gemini deploy) for a within-model noise estimate — 3 deploys.
+    # The bake-off defaults to kind="full" to avoid that extra spend.
+    backend = get_factors(["model_backend"])
+    points = build_design(backend, kind="screening")
+    assert len(points) == 2 + 1
+    assert points[-1].is_baseline
+    assert points[-1].assignments["model_backend"] == "gemini"  # low level
+
+
 def test_unknown_kind_raises():
     with pytest.raises(ValueError):
         build_design(_all_factors(), kind="bogus")
