@@ -39,3 +39,7 @@ file; keep this index short (< 200 lines).
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
   defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.
+- [CI/CD eval gate (advisory, opt-in)](./ci-eval-gate.md) — a demo quality gate that
+  doesn't slow dev: always-on deterministic safety checks (Tier 1) plus an opt-in,
+  label-gated rubric eval (Tier 2) against the shared deployed engine; honest
+  limitation that it scores the deployed engine, not the PR diff.
