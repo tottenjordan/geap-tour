@@ -15,7 +15,11 @@ from src.observability.dashboard import (
     build_dashboard,
     create_or_update_dashboard,
 )
-from src.observability.metrics import QUALITY_METRIC_TYPES, TRAFFIC_METRIC_TYPES
+from src.observability.metrics import (
+    QUALITY_METRIC_TYPES,
+    ROUTER_METRIC_TYPES,
+    TRAFFIC_METRIC_TYPES,
+)
 
 
 def test_dashboard_has_resource_labels():
@@ -45,16 +49,24 @@ def test_build_returns_dashboard_with_display_name():
 def test_build_has_widget_per_metric():
     d = build_dashboard()
     tiles = list(d.mosaic_layout.tiles)
-    # One tile per traffic metric + one per quality metric.
-    expected = len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES)
+    # One tile per traffic + quality + router metric.
+    expected = len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES) + len(ROUTER_METRIC_TYPES)
     assert len(tiles) == expected
 
 
 def test_every_metric_type_appears_in_some_widget():
     d = build_dashboard()
     blob = _all_filters(d)
-    for mt in TRAFFIC_METRIC_TYPES + QUALITY_METRIC_TYPES:
+    for mt in TRAFFIC_METRIC_TYPES + QUALITY_METRIC_TYPES + ROUTER_METRIC_TYPES:
         assert mt in blob, f"metric type {mt} missing from dashboard widgets"
+
+
+def test_router_widgets_have_native_unit_titles():
+    d = build_dashboard()
+    titles = {tile.widget.title for tile in d.mosaic_layout.tiles}
+    assert "Router: Routing Accuracy (%)" in titles
+    assert "Router: Cost Savings vs All-Opus (%)" in titles
+    assert "Router: Classifier Latency (ms)" in titles
 
 
 def test_quality_filters_use_global_resource():

@@ -1,14 +1,21 @@
-"""Verify continuous online-evaluation results.
+"""Verify periodic-snapshot evaluation results across two monitoring surfaces.
 
-The canonical source of truth is Cloud Monitoring: the ``agent_eval/*`` gauge
-series that ``src/eval/publish_eval_metrics.py`` bridges native-evaluator scores
-onto (the same series ``quality_alerts.py`` alerts on and the dashboard charts).
-This module reads that series and summarizes it — it no longer requires the
-BigQuery ``online_eval_results`` table, which nothing in the repo creates.
+The canonical source of truth is Cloud Monitoring. Two independent surfaces are
+summarized because the coordinator and the router are architecturally different
+agents:
+
+* ``coordinator_quality`` — the ``agent_eval/*`` gauges (LLM rubrics on a 1-5
+  axis; alert on the floor, ``LT``). The coordinator is a task executor: success
+  is output quality.
+* ``router_efficiency`` — the ``agent_router/*`` gauges (native units: routing
+  accuracy %, cost savings %, classifier latency ms). The router is an economic
+  optimizer: routing accuracy / cost savings alert on the floor (``LT``) and
+  latency alerts on the ceiling (``GT``).
 
 An OPTIONAL, guarded BigQuery export path remains for anyone who wires up their
 own export sink (``source="bigquery"``); it degrades gracefully (status
-``no_table``) when the table is absent rather than crashing.
+``no_table``) when the table is absent rather than crashing. The BigQuery path
+only covers the coordinator quality series.
 
 Usage:
     uv run python -m src.eval.verify_monitors                    # Cloud Monitoring
@@ -20,16 +27,39 @@ import json
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
-from src.eval.quality_alerts import ALL_MONITORED_METRICS
+from src.eval.quality_alerts import ALL_MONITORED_METRICS, ROUTER_MONITORED_METRICS
 
-METRIC_PREFIX = "custom.googleapis.com/agent_eval/"
 DEFAULT_THRESHOLD = 3.0
 
 
+class Surface(NamedTuple):
+    """A monitored surface: metric-type prefix + per-metric (name, threshold, comparison).
+
+    ``comparison`` is "LT" (out of bounds below the floor) or "GT" (above ceiling).
+    """
+
+    prefix: str
+    metrics: list[tuple[str, float, str]]
+
+
+# The two monitored surfaces the coordinator (quality) and router (efficiency) map to.
+SURFACES = {
+    "coordinator_quality": Surface(
+        prefix="custom.googleapis.com/agent_eval/",
+        metrics=[(name, threshold, "LT") for name, threshold in ALL_MONITORED_METRICS],
+    ),
+    "router_efficiency": Surface(
+        prefix="custom.googleapis.com/agent_router/",
+        metrics=list(ROUTER_MONITORED_METRICS),
+    ),
+}
+
+
 # --------------------------------------------------------------------------- #
-# Canonical source: Cloud Monitoring agent_eval/* series
+# Canonical source: Cloud Monitoring surfaces
 # --------------------------------------------------------------------------- #
 def _monitoring_client():
     """Lazily construct a MetricServiceClient (import-safe without credentials)."""
@@ -56,15 +86,13 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return round(ordered[k], 3)
 
 
-def _query_monitoring_series(client, hours: int):
-    """Yield the raw ``agent_eval/*`` TimeSeries over the trailing window.
+def _query_surface_series(client, prefix: str, metric_specs, hours: int):
+    """Yield the raw TimeSeries for a surface's metrics over the trailing window.
 
     ``list_time_series`` requires the filter to resolve to a *single* metric
-    type — a ``starts_with`` prefix that matches more than one metric 400s
-    ("TimeSeries data are limited to a single metric per request"). So we query
-    each monitored metric with an exact ``metric.type`` match and chain the
-    results. Metric names come from the canonical ``ALL_MONITORED_METRICS`` (the
-    same set the bridge publishes and the alerts read) — no drift.
+    type — a ``starts_with`` prefix that matches more than one metric 400s — so
+    each monitored metric is queried with an exact ``metric.type`` match and the
+    results are chained.
     """
     from google.cloud import monitoring_v3
 
@@ -73,28 +101,35 @@ def _query_monitoring_series(client, hours: int):
         start_time=now - timedelta(hours=hours),
         end_time=now,
     )
-    for name, _threshold in ALL_MONITORED_METRICS:
+    for name, _threshold, _comparison in metric_specs:
         request = {
             "name": f"projects/{GCP_PROJECT_ID}",
-            "filter": f'metric.type = "{METRIC_PREFIX}{name}"',
+            "filter": f'metric.type = "{prefix}{name}"',
             "interval": interval,
             "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
         }
         yield from client.list_time_series(request=request)
 
 
-def _window_avg(scores: list[float], epochs: list[float], now: float, max_hours: float) -> float | None:
-    vals = [
-        s
-        for s, ep in zip(scores, epochs, strict=True)
-        if (now - ep) / 3600.0 <= max_hours
-    ]
+def _window_avg(
+    scores: list[float], epochs: list[float], now: float, max_hours: float
+) -> float | None:
+    vals = [s for s, ep in zip(scores, epochs, strict=True) if (now - ep) / 3600.0 <= max_hours]
     return round(sum(vals) / len(vals), 3) if vals else None
 
 
-def _aggregate_series(series_iter, threshold: float, now: float | None = None) -> dict:
-    """Collapse TimeSeries points into the per-metric summary dict shape."""
+def _out_of_bounds(scores: list[float], threshold: float, comparison: str) -> int:
+    """Count points that violate the alert direction (LT: below; GT: above)."""
+    if comparison == "GT":
+        return sum(1 for s in scores if s > threshold)
+    return sum(1 for s in scores if s < threshold)
+
+
+def _aggregate_surface(series_iter, metric_specs, now: float | None = None) -> dict:
+    """Collapse a surface's TimeSeries into the per-metric summary dict shape."""
     now = now if now is not None else time.time()
+    directions = {name: (threshold, comparison) for name, threshold, comparison in metric_specs}
+
     buckets: dict[str, dict[str, list[float]]] = {}
     for series in series_iter:
         mtype = series.metric.type
@@ -112,9 +147,10 @@ def _aggregate_series(series_iter, threshold: float, now: float | None = None) -
         if not scores:
             continue
         total += len(scores)
+        threshold, comparison = directions.get(name, (DEFAULT_THRESHOLD, "LT"))
 
-        first_epoch = min(bucket["epochs"])
-        last_epoch = max(bucket["epochs"])
+        first_epoch = min(epochs)
+        last_epoch = max(epochs)
         metrics[name] = {
             "eval_count": len(scores),
             "avg_score": round(sum(scores) / len(scores), 3),
@@ -122,7 +158,9 @@ def _aggregate_series(series_iter, threshold: float, now: float | None = None) -
             "max_score": round(max(scores), 3),
             "p50_score": _percentile(scores, 50),
             "p90_score": _percentile(scores, 90),
-            "below_threshold": sum(1 for s in scores if s < threshold),
+            "threshold": threshold,
+            "direction": comparison,
+            "out_of_bounds": _out_of_bounds(scores, threshold, comparison),
             "first_eval": datetime.fromtimestamp(first_epoch, tz=UTC).isoformat(),
             "last_eval": datetime.fromtimestamp(last_epoch, tz=UTC).isoformat(),
             "trend": {
@@ -132,22 +170,20 @@ def _aggregate_series(series_iter, threshold: float, now: float | None = None) -
             },
         }
 
-    return {"status": "ok", "metrics": metrics, "total_evals": total}
+    status = "ok" if metrics else "empty"
+    return {"status": status, "metrics": metrics, "total_evals": total}
 
 
-def _verify_from_monitoring(hours: int, threshold: float, client=None) -> dict:
+def _verify_from_monitoring(hours: int, client=None) -> dict:
     client = client or _monitoring_client()
-    series = list(_query_monitoring_series(client, hours))
-    data = _aggregate_series(series, threshold)
-    if not data["metrics"]:
-        return {
-            "status": "empty",
-            "message": (
-                "No agent_eval/* scores in Cloud Monitoring yet. Ensure an online "
-                "evaluator is running (src.eval.setup_online_evaluators create) and "
-                "scores are bridged (src.eval.publish_eval_metrics)."
-            ),
-        }
+    data: dict[str, object] = {}
+    any_ok = False
+    for surface_key, spec in SURFACES.items():
+        series = list(_query_surface_series(client, spec.prefix, spec.metrics, hours))
+        surface = _aggregate_surface(series, spec.metrics)
+        data[surface_key] = surface
+        any_ok = any_ok or surface["status"] == "ok"
+    data["status"] = "ok" if any_ok else "empty"
     return data
 
 
@@ -205,7 +241,8 @@ def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> dict:
             "max_score": row.max_score,
             "p50_score": None,
             "p90_score": None,
-            "below_threshold": row.below_threshold,
+            "out_of_bounds": row.below_threshold,
+            "direction": "LT",
             "trend": {"avg_1h": None, "avg_6h": None, "avg_24h": row.avg_score},
         }
         for row in rows
@@ -228,23 +265,25 @@ def verify_monitor_results(
     client=None,
     bq_client=None,
 ) -> dict | None:
-    """Summarize online-evaluation quality scores.
+    """Summarize periodic-snapshot quality/efficiency scores.
 
     Args:
         output_format: ``"text"`` (human-readable) or ``"json"`` (return dict).
-        source: ``"monitoring"`` (canonical Cloud Monitoring series) or
-            ``"bigquery"`` (optional, guarded export sink).
+        source: ``"monitoring"`` (canonical Cloud Monitoring surfaces) or
+            ``"bigquery"`` (optional, guarded export sink — coordinator only).
         hours: trailing window.
-        threshold: below-this counts toward ``below_threshold``.
+        threshold: below-this counts out-of-bounds for the BigQuery path.
         client / bq_client: injectable clients for tests.
 
     Returns:
-        dict with results when ``output_format == "json"``, else ``None``.
+        dict with results when ``output_format == "json"``, else ``None``. The
+        monitoring path returns two surface blocks (``coordinator_quality``,
+        ``router_efficiency``) plus a top-level ``status``.
     """
     if source == "bigquery":
         data = _verify_from_bigquery(hours, threshold, bq_client=bq_client)
     else:
-        data = _verify_from_monitoring(hours, threshold, client=client)
+        data = _verify_from_monitoring(hours, client=client)
 
     if output_format == "json":
         return data
@@ -253,17 +292,21 @@ def verify_monitor_results(
     return None
 
 
-def _print_report(data: dict, hours: int) -> None:
-    if data.get("status") != "ok":
-        print(data.get("message", data.get("error", "Unknown status")))
+_SURFACE_TITLES = {
+    "coordinator_quality": "COORDINATOR QUALITY (agent_eval/*, 1-5 rubric)",
+    "router_efficiency": "ROUTER EFFICIENCY (agent_router/*, native units)",
+}
+
+
+def _print_surface(title: str, surface: dict) -> None:
+    print(f"\n{title}")
+    print("-" * 60)
+    if surface.get("status") != "ok":
+        print(f"  {surface.get('message', 'No scores in Cloud Monitoring yet.')}")
         return
-
-    print("=" * 60)
-    print(f"ONLINE MONITOR RESULTS (last {hours}h)")
-    print("=" * 60)
-    print(f"  Total evaluations: {data['total_evals']}\n")
-
-    for metric_name, m in data["metrics"].items():
+    print(f"  Total evaluations: {surface['total_evals']}\n")
+    for metric_name, m in surface["metrics"].items():
+        op = ">" if m.get("direction") == "GT" else "<"
         print(f"  {metric_name}:")
         print(f"    Evals:  {m['eval_count']}")
         print(f"    Avg:    {m['avg_score']}  (min: {m['min_score']}, max: {m['max_score']})")
@@ -276,31 +319,54 @@ def _print_report(data: dict, hours: int) -> None:
             parts.append(f"6h: {trend['avg_6h']}")
         parts.append(f"24h: {trend.get('avg_24h')}")
         print(f"    Trend:  {' | '.join(parts)}")
-        if m["below_threshold"]:
-            print(f"    WARNING: {m['below_threshold']} scores below {DEFAULT_THRESHOLD}")
+        if m["out_of_bounds"]:
+            print(f"    WARNING: {m['out_of_bounds']} scores {op} {m.get('threshold')}")
         print()
+
+
+def _print_report(data: dict, hours: int) -> None:
+    # BigQuery / non-surfaced shapes: single message.
+    if "coordinator_quality" not in data and data.get("status") != "ok":
+        print(data.get("message", data.get("error", "Unknown status")))
+        return
+
+    print("=" * 60)
+    print(f"MONITOR RESULTS (last {hours}h)")
+    print("=" * 60)
+    for surface_key, title in _SURFACE_TITLES.items():
+        if surface_key in data:
+            _print_surface(title, data[surface_key])
     print("=" * 60)
 
 
 def generate_markdown_report(data: dict) -> str:
-    """Generate a markdown summary report from verify results."""
-    if data.get("status") != "ok":
+    """Generate a markdown summary report from verify results (both surfaces)."""
+    if "coordinator_quality" not in data and data.get("status") != "ok":
         return f"## Monitor Status\n\n{data.get('message', data.get('error', 'Unknown'))}\n"
 
-    lines = [
-        "## Online Monitor Health Report",
-        "",
-        f"**Total evaluations (24h):** {data['total_evals']}",
-        "",
-        "| Metric | Evals | Avg | P50 | P90 | Below 3.0 | 1h Trend |",
-        "|--------|-------|-----|-----|-----|-----------|----------|",
-    ]
-    for name, m in data["metrics"].items():
-        trend_1h = f"{m['trend']['avg_1h']}" if m["trend"].get("avg_1h") is not None else "N/A"
-        lines.append(
-            f"| {name} | {m['eval_count']} | {m['avg_score']} | "
-            f"{m['p50_score']} | {m['p90_score']} | {m['below_threshold']} | {trend_1h} |"
-        )
+    lines = ["## Monitor Health Report", ""]
+    for surface_key, title in _SURFACE_TITLES.items():
+        surface = data.get(surface_key)
+        if not surface:
+            continue
+        lines += ["", f"### {title}", ""]
+        if surface.get("status") != "ok":
+            lines.append(surface.get("message", "No scores in Cloud Monitoring yet."))
+            continue
+        lines += [
+            f"**Total evaluations:** {surface['total_evals']}",
+            "",
+            "| Metric | Evals | Avg | P50 | P90 | Out of bounds | Alert | 1h Trend |",
+            "|--------|-------|-----|-----|-----|---------------|-------|----------|",
+        ]
+        for name, m in surface["metrics"].items():
+            trend_1h = f"{m['trend']['avg_1h']}" if m["trend"].get("avg_1h") is not None else "N/A"
+            op = ">" if m.get("direction") == "GT" else "<"
+            lines.append(
+                f"| {name} | {m['eval_count']} | {m['avg_score']} | "
+                f"{m['p50_score']} | {m['p90_score']} | {m['out_of_bounds']} | "
+                f"{op} {m.get('threshold')} | {trend_1h} |"
+            )
     return "\n".join(lines)
 
 

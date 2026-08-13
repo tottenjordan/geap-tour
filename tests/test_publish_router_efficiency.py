@@ -1,0 +1,76 @@
+"""Offline tests for the router-efficiency monitoring bridge (no live GCP)."""
+
+from src.eval.publish_router_efficiency import publish_router_efficiency
+
+
+class FakeMetricClient:
+    """Records create_time_series calls; no network."""
+
+    def __init__(self):
+        self.calls = []
+
+    def create_time_series(self, name=None, time_series=None):
+        self.calls.append((name, list(time_series)))
+
+    def flatten(self):
+        out = []
+        for _name, ts_list in self.calls:
+            out.extend(ts_list)
+        return out
+
+
+def _writer(client):
+    from src.observability.metrics import MetricsWriter
+
+    return MetricsWriter(project_id="proj-x", client=client)
+
+
+def _by_type(client):
+    return {ts.metric.type: ts.points[0].value.double_value for ts in client.flatten()}
+
+
+def test_extract_and_publish_native_units():
+    client = FakeMetricClient()
+    accuracy = {"accuracy": 0.92, "avg_latency_ms": 145.0}
+    cost = {"savings_pct": 60.0}
+
+    published = publish_router_efficiency(accuracy, cost, writer=_writer(client))
+
+    # Returned dict is in native units — accuracy scaled to percent, others verbatim.
+    assert published == {
+        "routing_accuracy_pct": 92.0,
+        "cost_savings_pct": 60.0,
+        "classifier_latency_ms": 145.0,
+    }
+    vals = _by_type(client)
+    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 92.0
+    assert vals["custom.googleapis.com/agent_router/cost_savings_pct"] == 60.0
+    assert vals["custom.googleapis.com/agent_router/classifier_latency_ms"] == 145.0
+
+
+def test_offline_label_applied():
+    client = FakeMetricClient()
+    publish_router_efficiency(
+        {"accuracy": 0.9, "avg_latency_ms": 100.0},
+        {"savings_pct": 50.0},
+        writer=_writer(client),
+    )
+    for ts in client.flatten():
+        assert ts.metric.labels["eval_mode"] == "offline"
+
+
+def test_missing_keys_do_not_crash():
+    client = FakeMetricClient()
+    # Only accuracy present, no latency, no cost block at all.
+    published = publish_router_efficiency({"accuracy": 0.8}, None, writer=_writer(client))
+    assert published == {"routing_accuracy_pct": 80.0}
+    vals = _by_type(client)
+    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 80.0
+    assert "custom.googleapis.com/agent_router/cost_savings_pct" not in vals
+
+
+def test_empty_inputs_write_nothing():
+    client = FakeMetricClient()
+    published = publish_router_efficiency({}, {}, writer=_writer(client))
+    assert published == {}
+    assert client.calls == []

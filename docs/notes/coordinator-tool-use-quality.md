@@ -1,97 +1,110 @@
-# Coordinator `tool_use_quality`: root cause & the eval-harness fix
+# Coordinator `tool_use` scores ~0.27 — root-cause finding (no fix shipped)
 
-The coordinator's `tool_use_quality_v1` metric read ~0.34–0.42 across several
-pipeline runs — well under the 0.60 bar and the worst of the six metrics. The
-investigation found the low number was **mostly a measurement artifact**, not an
-agent defect. This note records what was actually wrong (all evidence-backed, not
-theorized) so nobody re-chases it.
+**Verdict: mis-rubric + measurement-artifact, NOT an agent defect.** The
+coordinator's tools work; the metric is measuring the wrong thing. This note
+records the investigation and a recommended (unshipped) follow-up.
 
-## Three independent contributors
+## Symptom
 
-### 1. DOMINANT: ~50% empty turns from SDK concurrency + cold start
+In the coordinator batch eval, `tool_use_quality_v1` is the only metric that
+consistently fails the 0.6 threshold, while every other metric passes
+comfortably:
 
-The Vertex evals SDK fires **all** eval prompts at the engine concurrently:
-`vertexai._genai._evals_common.AGENT_MAX_WORKERS = 20` (hardcoded, read at call
-time in `_execute_inference_concurrently`). Against a cold or single-instance
-Agent Engine, ~half the `stream_query` calls complete *normally but yield no
-content events* — an "empty turn". Signature of a dropped item:
+| Metric | Score (run 20260813_004220) |
+|---|---|
+| `final_response_quality_v1` | 0.875 |
+| `final_response_match_v2` | 0.862 |
+| `instruction_following_v1` | 0.786 |
+| `hallucination_v1` | 0.632 |
+| `safety_v1` | 0.606 |
+| **`tool_use_quality_v1`** | **0.274** ← fails |
 
-```json
-{"candidate":"agent_engine_0","agentData":{"turns":[{"turnIndex":0,"turnId":"turn_0"}]}}
+It is systematic, not a one-off — across the last 8 batch runs the score sits in
+a tight 0.27–0.46 band (0.40, 0.337, 0.394, 0.461, 0.378, 0.310, 0.376, 0.274)
+and is the lowest metric every single time.
+
+The intra-run distribution is the tell: for run 20260813_004220,
+`tool_use_quality_v1` has `MINIMUM=0`, and `MODE = MEDIAN = MAXIMUM = P90 = P95 =
+P99 = 0.3333`. **No item ever scored above one-third**, with variance 0.013. That
+is not the spread you get from real quality variation (compare
+`final_response_quality`: MODE 1, MINIMUM 0, variance 0.109). It is the signature
+of a rubric that structurally cannot award a high score to this agent.
+
+## Root cause
+
+Two compounding causes; both point away from the agent itself.
+
+### 1. Mis-rubric (primary, confirmed)
+
+`src/eval/agent_eval_configs.py:get_metrics()` (line ~545) wires the **generic
+predefined** `types.RubricMetric.TOOL_USE_QUALITY`:
+
+```python
+return [
+    types.RubricMetric.FINAL_RESPONSE_QUALITY,
+    ...
+    types.RubricMetric.TOOL_USE_QUALITY,   # generic, delegation-blind
+    ...
+]
 ```
 
-No events → the judge template errors `Variable response is required but not
-provided` → the item is silently dropped from the metric. Measured: **10 of 20
-items empty** on a cold run. A serial warm re-query recovered **9 of 10**, proving
-the prompts themselves are fine — it's load, not content.
+The coordinator is a **domain router**: its own action on almost every turn is a
+single `transfer_to_agent(...)` delegation to `travel_agent` / `expense_agent`,
+and the actual MCP tools (`search_flights`, `check_expense_policy`, …) are called
+by the sub-agent. A generic tool-use rubric has no reason to treat
+`transfer_to_agent` as "correct tool use," so it reads the coordinator as barely
+using tools — hence the score pinned at the low tier for every item.
 
-Worse, the SDK's own retry does **not** cover this: `_execute_agent_run_with_retry`
-only retries on *exceptions* (ResourceExhausted / generic). A normal completion
-yielding `responses == []` is returned immediately with no retry.
+The repo already contains a purpose-built rubric that fixes exactly this:
+`TOOL_USE_METRIC` (`name="geap_tool_use"`) in `src/eval/batch_eval.py:244`. Its
+instruction is explicit:
 
-**Fix** (`src/eval/_sdk_patches.py`, monkeypatch — all resolved at call time):
-- Throttle `AGENT_MAX_WORKERS` → `EVAL_AGENT_MAX_WORKERS` (default **4**).
-- Wrap `_execute_agent_run_with_retry` with `_run_with_empty_retry` — retries an
-  empty (`[]`) result up to `EVAL_EMPTY_RETRIES` (default 4) with backoff; an
-  error dict is *not* retried (already handled internally).
-- `warm_agent_engine(engine, n=2)` pings the engine before inference so the first
-  real batch doesn't hit a cold container.
+> "The delegation pattern (router → sub-agent → tool) is the CORRECT architecture
+> — do NOT penalize for using transfer_to_agent."
 
-Result: empty drops **10 → 2**, items scored **10/20 → 18/20**,
-`tool_use_quality` **0.39 → 0.46** — now a *faithful* reading, not a floor.
+**It is defined but never wired into `get_metrics()`.** So the eval scores the
+coordinator with the delegation-blind rubric while the delegation-aware one sits
+unused.
 
-The residual **2 empties are stochastic**, not per-prompt: a serial 3× probe of
-the two suspect prompts ("Can you help me with an expense report?",
-"Search for hotels in New York under $350 per night") returned content on every
-attempt — the first is a valid text-only clarifying turn (no tool call), the
-second a full tool-call+text turn. The tail-2 are the rare drop even 4 retries
-miss under concurrent load; not worth chasing further.
+### 2. Measurement-artifact (secondary, suspected — not fully confirmable here)
 
-### 2. The metric is a dynamic rubric with an unwinnable ceiling
+Even with the right rubric, the score depends on whether the eval trajectory the
+judge sees actually contains the sub-agent's MCP tool calls, or only the
+coordinator's top-level `transfer_to_agent` step. `run_inference` executes the
+real deployed engine (`src/eval/multi_agent_batch_eval.py:107`,
+`agent=agent_resource_name`), so the calls do happen — but whether the managed
+Agent Engine surfaces the nested sub-agent tool calls into the captured
+trajectory is unverified. The locally-saved batch JSON has `item_count: 0` /
+`items: []` (the SDK did not persist per-item rationales), so the per-item
+"why 1/3" rationale could not be read directly in this investigation. If the
+trajectory only carries `transfer_to_agent`, a rubric swap alone will not lift
+the score — the trajectory-capture path would need fixing first.
 
-`tool_use_quality_v1` is a **dynamic-rubric** metric: the judge *generates*
-per-prompt ideal-behavior criteria, then scores `criteria_passed / total` (hence
-quantized values like 0.25 = 1/4, 0.857 = 6/7). The generated criteria can be
-**mutually contradictory** — e.g. an "Atlantis" (nonexistent destination) prompt
-was scored against both `INTENT:SEARCH_HOTELS` (call the tool) *and*
-`TECHNICAL_CORRECTNESS:NO_TOOL_CALL` (don't call it). No agent behavior satisfies
-both, so the metric has a hard ceiling below 1.0 that no prompt or model change
-can lift. Read a low score here as "acceptable," not "broken."
+This is the same class of platform trace-content limitation documented for the
+native online evaluators (see [[online-eval-content-capture-blocked]] and
+[offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md)).
 
-### 3. A genuine (smaller) behavioral gap
+## Recommended follow-up (do NOT implement without validating the SDK path)
 
-After the harness fix, the residual shortfall is real: the coordinator sometimes
-calls a tool without validating inputs / asking for missing info. That behavior
-lives in the **GEPA-optimized prompt** and per CLAUDE.md must be changed via
-re-optimization, **not** a hand-edit. Left for a future GEPA pass; the DOE
-screening exists to confirm `prompt_variant` is the lever (early smoke already
-shows prompt_variant moving `tool_use_quality` +0.07 and `final_response_match`
-+0.19).
+1. **Swap the rubric:** replace `types.RubricMetric.TOOL_USE_QUALITY` in
+   `get_metrics()` with the domain-aware `TOOL_USE_METRIC` (`geap_tool_use`).
+2. **Expect the SDK JSON-parser bug.** `geap_tool_use` is a custom pointwise
+   `LLMMetric` — the *same* type that forced `policy_compliance` off `client.evals`
+   and onto a standalone judge (`400 Error parsing JSON`; see the `get_metrics`
+   docstring and `src/eval/policy_judge.py`). The clean swap will very likely hit
+   the same wall. The realistic fix mirrors `policy_compliance`: a standalone
+   `tool_use_judge` (analogous to `policy_judge.py`) that runs the deployed
+   coordinator, calls the judge model directly via `google.genai`, parses the
+   `Score: N` line itself, and feeds the offline-eval bridge
+   (`publish_offline_eval._inject_*`).
+3. **Confirm trajectory capture first.** Before investing in either, verify that
+   the eval trajectory for a coordinator item actually includes the sub-agent's
+   MCP tool calls. If it does not, address that before changing the rubric —
+   otherwise the score stays low for the artifact reason regardless of rubric.
 
-## Related: the nested-delegation runtime limitation (the "booking flatten")
+Until then, treat `tool_use_quality_v1` on the coordinator as a **known
+false-negative**: it does not reflect real tool-use quality, and its
+`agent_eval/tool_use_accuracy` monitored point should be read with that caveat.
 
-Distinct but discovered alongside the above, and the reason `final_response_match`
-was also low (0.42). On the **managed** Agent Engine runtime, `AgentTool`
-delegation to a sub-agent that then makes a **nested MCP call** does not stream
-back through the deployed runtime — the stream dies with no final text (looks like
-yet another empty turn). It works in-process locally; it stalls only on managed
-runtime.
-
-**Fix ("flatten"):** hold the MCP toolsets **directly** on the coordinator instead
-of reaching them through a sub-agent. `coordinator_agent.py` now carries the
-search / booking / expense toolsets itself and calls `book_flight` / `book_hotel`
-directly; `travel_agent` / `expense_agent` remain only for conversational
-hand-offs. This took `final_response_match` **0.42 → 1.00**.
-
-## How to run a faithful coordinator eval
-
-```bash
-# NB: --agent-id defaults to AGENT_ENGINE_ID (the ROUTER, 4709...). To eval the
-# coordinator you MUST pass its engine explicitly, or you measure the wrong agent.
-uv run python -m src.eval.multi_agent_batch_eval \
-  --agents coordinator_agent --agent-id 3631354304276725760
-```
-
-The patches apply automatically (`patch_evals_sdk()` + `warm_agent_engine()` are
-wired into `multi_agent_batch_eval._run_single_agent_eval`). Tunables via env:
-`EVAL_AGENT_MAX_WORKERS`, `EVAL_EMPTY_RETRIES`, `EVAL_EMPTY_BACKOFF`.
+Related: [offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md),
+[[online-eval-content-capture-blocked]] (memory).

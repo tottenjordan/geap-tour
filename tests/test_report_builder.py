@@ -51,17 +51,15 @@ def test_build_report_does_no_file_io(tmp_path):
 def test_publish_phase_populates_published_metrics(monkeypatch):
     seen = {}
 
-    def _fake(batch, complexity_results=None):
-        seen["call"] = (batch, complexity_results)
+    def _fake(batch, **kwargs):
+        seen["call"] = batch
         return {"helpfulness": 4.5}
 
     monkeypatch.setattr(rae, "publish_offline_scores", _fake)
     results = _minimal_results()
     rae._run_publish_phase(results)
     assert results["published_metrics"] == {"helpfulness": 4.5}
-    batch, complexity = seen["call"]
-    assert "agents" in batch
-    assert complexity == results["complexity"]
+    assert "agents" in seen["call"]
 
 
 def test_publish_phase_guards_exceptions(monkeypatch):
@@ -72,3 +70,47 @@ def test_publish_phase_guards_exceptions(monkeypatch):
     results = _minimal_results()
     rae._run_publish_phase(results)
     assert "error" in results["published_metrics"]
+
+
+def test_publish_phase_populates_router_metrics(monkeypatch):
+    seen = {}
+
+    def _fake_router(accuracy_results, cost_results, **kwargs):
+        seen["accuracy"] = accuracy_results
+        seen["cost"] = cost_results
+        return {"routing_accuracy_pct": 92.0, "cost_savings_pct": 60.0, "classifier_latency_ms": 150.0}
+
+    monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {})
+    monkeypatch.setattr(rae, "publish_router_efficiency", _fake_router)
+    results = _minimal_results()
+    rae._run_publish_phase(results)
+    assert results["published_router_metrics"]["cost_savings_pct"] == 60.0
+    # It forwards the complexity accuracy + cost_efficiency sub-dicts.
+    assert seen["accuracy"] == results["complexity"]["accuracy"]
+    assert seen["cost"] == results["complexity"]["cost_efficiency"]
+
+
+def test_publish_phase_router_guards_exceptions(monkeypatch):
+    monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {})
+
+    def _boom(*a, **k):
+        raise RuntimeError("no gcp")
+
+    monkeypatch.setattr(rae, "publish_router_efficiency", _boom)
+    results = _minimal_results()
+    rae._run_publish_phase(results)
+    assert "error" in results["published_router_metrics"]
+
+
+def test_build_report_has_router_efficiency_section():
+    results = _minimal_results()
+    results["published_router_metrics"] = {
+        "routing_accuracy_pct": 92.0,
+        "cost_savings_pct": 60.0,
+        "classifier_latency_ms": 150.0,
+    }
+    md = build_report(results)
+    assert "## Router Efficiency" in md
+    assert "92.0" in md
+    assert "60.0" in md
+    assert "150.0" in md

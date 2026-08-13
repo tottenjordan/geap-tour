@@ -39,7 +39,7 @@ from google.api import metric_pb2, monitored_resource_pb2
 from google.cloud import monitoring_v3
 
 from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, RESOURCE_LABELS
-from src.eval.quality_alerts import ALL_MONITORED_METRICS
+from src.eval.quality_alerts import ALL_MONITORED_METRICS, ROUTER_MONITORED_METRICS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -49,6 +49,13 @@ METRIC_PREFIX = "custom.googleapis.com/"
 # Quality metric types, derived from the SAME source quality_alerts.py alerts on.
 QUALITY_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_eval/{name}" for name, _threshold in ALL_MONITORED_METRICS
+]
+
+# Router efficiency metric types (native units), from the SAME source the router
+# alert policies read.
+ROUTER_METRIC_TYPES = [
+    f"{METRIC_PREFIX}agent_router/{name}"
+    for name, _threshold, _comparison in ROUTER_MONITORED_METRICS
 ]
 
 # Traffic metric types (bare, un-prefixed) emitted from a load-run summary.
@@ -112,9 +119,7 @@ class MetricsWriter:
         now = monotonic()
         seconds = int(now)
         nanos = int((now - seconds) * 1e9)
-        interval = monitoring_v3.TimeInterval(
-            end_time={"seconds": seconds, "nanos": nanos}
-        )
+        interval = monitoring_v3.TimeInterval(end_time={"seconds": seconds, "nanos": nanos})
         point = monitoring_v3.Point(
             interval=interval,
             value=monitoring_v3.TypedValue(double_value=float(value)),
@@ -133,9 +138,7 @@ class MetricsWriter:
         series.value_type = metric_pb2.MetricDescriptor.ValueType.DOUBLE
         series.points = [point]
 
-        self.client.create_time_series(
-            name=self.project_path, time_series=[series]
-        )
+        self.client.create_time_series(name=self.project_path, time_series=[series])
 
 
 def _default_labels(extra_labels: Mapping[str, str] | None) -> dict[str, str]:
@@ -183,3 +186,22 @@ def write_quality_scores(
     labels = _default_labels(extra_labels)
     for name, value in scores.items():
         writer.write_gauge(f"agent_eval/{name}", value, labels)
+
+
+def write_router_metrics(
+    scores: Mapping[str, float],
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> None:
+    """Emit ``agent_router/<name>`` gauges for router efficiency scores.
+
+    Keys are the bare metric names (e.g. ``cost_savings_pct``) matching
+    ``quality_alerts.ROUTER_MONITORED_METRICS``. Values are written verbatim in
+    native units (percent, ms) — unlike ``write_quality_scores`` there is no
+    0-1 -> 1-5 scaling, because the router is an economic optimizer, not a
+    quality-rubric surface.
+    """
+    writer = writer or MetricsWriter()
+    labels = _default_labels(extra_labels)
+    for name, value in scores.items():
+        writer.write_gauge(f"agent_router/{name}", value, labels)

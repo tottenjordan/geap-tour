@@ -495,66 +495,65 @@ adk eval_set generate_eval_cases src/agents/coordinator eval_set_coordinator_gen
 
 ---
 
-## 5. Online Evaluators
+## 5. Periodic-Snapshot Evaluation (offline-eval bridge, two surfaces)
 
-[Online evaluators](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/evaluate#online-evaluation) continuously score agent responses using [Cloud Trace](https://cloud.google.com/trace/docs/overview) OTel telemetry on a 10-minute cycle. Results appear in the Agent Engine Evaluation tab, [Cloud Logging](https://cloud.google.com/logging/docs/overview), and [Cloud Monitoring](https://cloud.google.com/monitoring/docs/monitoring-overview).
+The native Vertex [Online Evaluators](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/evaluate#online-evaluation) are platform-blocked for our agents: the managed Agent Engine runtime strips prompt/response content from [Cloud Trace](https://cloud.google.com/trace/docs/overview) OTel telemetry, so they always return `INSUFFICIENT_DATA`. The canonical quality source is the **offline-eval bridge**, which legitimately scores the *deployed* engine via the Vertex Gen AI Evaluation Service and writes periodic point-in-time **snapshots** (one write per eval run) to [Cloud Monitoring](https://cloud.google.com/monitoring/docs/monitoring-overview). Because the coordinator (a task executor) and the 5-tier router (an economic optimizer) are architecturally different agents, they get two honest, separate surfaces so they are never scored on the same axis.
 
-### Evaluator Setup
+### Coordinator quality → `custom.googleapis.com/agent_eval/*` (1-5 rubric)
 
-> **Source:** [`src/eval/setup_online_evaluators.py`](https://github.com/jswortz/geap-tour/blob/main/src/eval/setup_online_evaluators.py)
+> **Source:** [`src/eval/publish_offline_eval.py`](https://github.com/jswortz/geap-tour/blob/main/src/eval/publish_offline_eval.py)
 
-Each evaluator uses 6 metrics — 4 predefined and 2 custom rubrics registered via the v1beta1 Metric Registry:
+`publish_offline_scores()` pulls the three monitored quality metrics from the coordinator batch eval, scales them 0-1 → 1-5, and tags every point `eval_mode=offline`:
 
 ```python
-# Predefined metrics (inline)
-PREDEFINED_METRICS = [
-    "final_response_quality_v1",
-    "hallucination_v1",
-    "safety_v1",
-    "tool_use_quality_v1",
-]
-
-# Custom metrics (registered in Metric Registry with scoreRange)
-CUSTOM_METRICS = [
-    "GEAP Task Quality",      # Tool selection, parameter accuracy, actionable output
-    "GEAP Policy Compliance",  # Expense limits, booking confirmation, data boundaries
+# Coordinator quality metrics (scaled onto the 1-5 monitored axis, alert < 3.0)
+MONITORED_QUALITY_METRICS = [
+    "helpfulness",         # from final_response_quality_v1
+    "tool_use_accuracy",   # from tool_use_quality_v1
+    "policy_compliance",   # from the standalone policy_judge (custom pointwise LLMMetric is SDK-broken)
 ]
 ```
 
-Evaluators are created for both the coordinator and router agents via REST API:
-
 ```bash
-# Register custom metrics + create evaluators for both GEAP agents
-uv run python -m src.eval.setup_online_evaluators create
+# Publish coordinator quality → agent_eval/* (reuse newest run artifacts, no engine cost)
+uv run python -m src.eval.publish_offline_eval --latest
+
+# Or from a specific results file / a fresh run
+uv run python -m src.eval.publish_offline_eval --from-json <full_results.json>
+uv run python -m src.eval.publish_offline_eval --run
 ```
 
-> **API:** v1beta1 `onlineEvaluators` REST endpoint + `evaluationMetrics` for custom metric registration
+### Router efficiency → `custom.googleapis.com/agent_router/*` (native units)
 
-### Evaluator Verification
+> **Source:** [`src/eval/publish_router_efficiency.py`](https://github.com/jswortz/geap-tour/blob/main/src/eval/publish_router_efficiency.py)
 
-```bash
-# List evaluators and their state (ACTIVE / WARNING)
-uv run python -m src.eval.setup_online_evaluators list
+`publish_router_efficiency()` publishes the router's economic metrics verbatim in native units (no scaling), each with its own alert direction:
 
-# Check evaluator status + Cloud Logging for eval results
-uv run python -m src.eval.setup_online_evaluators verify
+```python
+# Router efficiency metrics (native units, per-metric alert direction)
+ROUTER_MONITORED_METRICS = [
+    "routing_accuracy_pct",   # %,  alert < 80
+    "cost_savings_pct",       # % vs all-Opus baseline, alert < 40
+    "classifier_latency_ms",  # ms, alert > 2000
+]
 ```
 
-The `verify` command checks two things:
-1. Evaluator state is ACTIVE for both GEAP agents
-2. Cloud Logging contains `gen_ai.evaluation.result` entries with per-metric scores
+```bash
+# Publish router efficiency → agent_router/* (native units)
+uv run python -m src.eval.publish_router_efficiency --from-json <full_results.json>
+```
 
-> **Source:** [`src/eval/setup_online_evaluators.py`](https://github.com/jswortz/geap-tour/blob/main/src/eval/setup_online_evaluators.py)
-
-### Cleanup
+### Publish + Verify Both Surfaces
 
 ```bash
-# Delete a specific evaluator
-uv run python -m src.eval.setup_online_evaluators delete <evaluator-id>
+# Run + publish BOTH surfaces in one shot (Phase 6 of run_all_evals)
+uv run python -m src.eval.run_all_evals --skip-traffic
 
-# Delete all GEAP evaluators and registered custom metrics
-uv run python -m src.eval.setup_online_evaluators cleanup
+# Read both series back
+uv run python -m src.eval.verify_monitors --format json
 ```
+
+> **Source:** [`src/eval/verify_monitors.py`](https://github.com/jswortz/geap-tour/blob/main/src/eval/verify_monitors.py) returns two blocks: `coordinator_quality` (1-5) + `router_efficiency` (native units).
 
 ### Quality Alerts
 
