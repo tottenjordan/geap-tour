@@ -1,0 +1,125 @@
+name: Eval Gate
+
+# Opt-in, ADVISORY CI quality gate for the coordinator agent.
+#
+# What it does: on demand it scores the coordinator on rubric metrics (via the
+# Vertex Gen AI Evaluation Service) and reports a 1-5 quality score with a < 3.0
+# threshold to the job summary. Reuses src.eval.multi_agent_batch_eval as-is
+# (--limit keeps a run ~3-5 min).
+#
+# Opt-in, so it never slows an unrelated PR:
+#   - runs only when a PR carries the `run-eval` label, or via manual dispatch;
+#   - path-filtered to the code that can move quality (agents / MCP / eval);
+#   - skips cleanly (no failure) when WIF isn't configured (forks / unset repos).
+#
+# ADVISORY by design: this workflow is intentionally NOT added to branch-protection
+# required checks, so a failing score shows a red mark as a *signal* but does not
+# block merge. To make it blocking later: add it to required checks (and/or drop
+# the label gate).
+#
+# HONEST LIMITATION: rubric scoring needs a *deployed* engine, so this gate scores
+# the already-deployed shared engine (vars.AGENT_ENGINE_ID) — NOT the PR's
+# uncommitted code. It is a quality-regression alarm + capability demo, not a
+# strict per-diff gate. Per-diff gating would need a temp deploy per PR (see
+# src.pipelines.submit --agent-module, ~15-25 min) or a future local-inference path.
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+    paths:
+      - 'src/agents/**'
+      - 'src/mcp_servers/**'
+      - 'src/eval/**'
+      - '.github/workflows/eval_gate.yaml'
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Minimum passing rubric score (1-5)'
+        required: false
+        default: '3.0'
+
+concurrency:
+  group: eval-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    name: Coordinator rubric eval (advisory)
+    # Opt-in AND credentialed: manual dispatch always qualifies; a PR must carry
+    # the `run-eval` label. Skips (never fails) when WIF isn't configured.
+    if: >-
+      ${{ vars.WIF_PROVIDER != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-eval')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --group dev --group pipelines
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Run coordinator rubric eval
+        env:
+          THRESHOLD: ${{ inputs.threshold || '3.0' }}
+        run: |
+          uv run python -m src.eval.multi_agent_batch_eval \
+            --agents coordinator_agent \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --threshold "${THRESHOLD}" \
+            --limit 8 \
+            --output eval_gate_result.json
+
+      - name: Publish score to job summary
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          import json, os, pathlib
+
+          path = pathlib.Path("eval_gate_result.json")
+          out = os.environ["GITHUB_STEP_SUMMARY"]
+          lines = ["# Coordinator Eval Gate (advisory)", ""]
+          if not path.exists():
+              lines += ["Eval did not produce a result file (auth/inference error) — "
+                        "see the step logs above."]
+          else:
+              data = json.loads(path.read_text())
+              overall = "PASS" if data.get("all_passed") else "FAIL"
+              lines += [f"**Overall: {overall}**  (threshold {data.get('score_threshold')})",
+                        f"Engine: `{data.get('agent_engine')}`", ""]
+              agent = data.get("agents", {}).get("coordinator_agent", {})
+              metrics = agent.get("metrics", {})
+              if metrics:
+                  lines += ["| Metric | Score | Threshold | Result |",
+                            "|---|---|---|---|"]
+                  for name, d in sorted(metrics.items()):
+                      mark = "✅" if d.get("passed") else "❌"
+                      lines.append(
+                          f"| {name} | {d.get('score'):.2f} | "
+                          f"{d.get('threshold'):.2f} | {mark} |"
+                      )
+              else:
+                  lines.append(f"No metrics returned (status: {agent.get('status')}).")
+              lines += ["",
+                        "_Advisory gate: scores the deployed engine, not this PR's "
+                        "code. Not a required check._"]
+          pathlib.Path(out).write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
