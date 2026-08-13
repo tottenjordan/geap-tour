@@ -21,6 +21,7 @@ from src.config import (
     EVAL_OUTPUT_DIR,
 )
 from src.eval.publish_offline_eval import publish_offline_scores
+from src.eval.publish_router_efficiency import publish_router_efficiency
 
 
 def _resolve_agent_resource_name(agent_id: str) -> str:
@@ -172,11 +173,14 @@ def run_all_evals(
 
 
 def _run_publish_phase(results: dict):
-    """Bridge offline eval scores onto the ``agent_eval/*`` monitored series.
+    """Bridge offline eval scores onto the two monitored series.
 
-    This is the canonical quality source for the demo (native Online Evaluators
-    are platform-blocked). Guarded so a publish failure never aborts the run;
-    ``verify_monitors`` (next phase) then reads the freshly-written points.
+    The coordinator's quality rubrics land on ``agent_eval/*`` and the router's
+    efficiency numbers (routing accuracy %, cost savings %, classifier latency
+    ms) land on ``agent_router/*`` in native units. This is the canonical quality
+    source for the demo (native Online Evaluators are platform-blocked). Each
+    publish is guarded so a failure never aborts the run; ``verify_monitors``
+    (next phase) then reads the freshly-written points.
     """
     print("[Phase 6/7] PUBLISH OFFLINE EVAL SCORES")
     try:
@@ -190,6 +194,23 @@ def _run_publish_phase(results: dict):
     except Exception as e:
         print(f"  Publish failed: {e}")
         results["published_metrics"] = {"error": str(e)}
+
+    # Router efficiency -> agent_router/* (native units, no scaling).
+    complexity = results.get("complexity", {})
+    try:
+        router_published = publish_router_efficiency(
+            complexity.get("accuracy", {}),
+            complexity.get("cost_efficiency", {}),
+        )
+        results["published_router_metrics"] = router_published
+        if router_published:
+            for name, value in sorted(router_published.items()):
+                print(f"  {name}: {value}")
+        else:
+            print("  No router efficiency metrics found in eval results")
+    except Exception as e:
+        print(f"  Router publish failed: {e}")
+        results["published_router_metrics"] = {"error": str(e)}
     print()
 
 
@@ -284,6 +305,20 @@ def build_report(results: dict) -> str:
                     f"| {level} | {row.get('low', 0)} | {row.get('medium', 0)} | {row.get('high', 0)} |"
                 )
             lines.append("")
+
+    # Router efficiency (published to agent_router/*, native units)
+    router = results.get("published_router_metrics", {})
+    if router and not router.get("error"):
+        lines.extend([
+            "## Router Efficiency (agent_router/*)",
+            "",
+            "| Metric | Value | Unit |",
+            "|--------|-------|------|",
+            f"| Routing accuracy | {router.get('routing_accuracy_pct', 'N/A')} | % |",
+            f"| Cost savings vs all-Opus | {router.get('cost_savings_pct', 'N/A')} | % |",
+            f"| Classifier latency | {router.get('classifier_latency_ms', 'N/A')} | ms |",
+            "",
+        ])
 
     # Monitor results
     monitors = results.get("monitors", {})
