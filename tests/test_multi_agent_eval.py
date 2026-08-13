@@ -114,6 +114,39 @@ class TestCoordinatorDatasetRobustness:
             assert case.get("reference"), f"Missing reference in: {case.get('prompt', '?')}"
 
 
+class TestReferenceTrajectories:
+    """Reference trajectories (bare tool names) let the deterministic
+    trajectory eval score the coordinator's tool-call path. Single-tool cases
+    derive theirs from expected_tool; multi-step cases carry a curated order."""
+
+    def test_single_tool_cases_have_reference_trajectory(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.batch_eval import _BARE_TOOL
+
+        for case in get_eval_cases("coordinator_agent"):
+            if case["expected_tool"] in _BARE_TOOL:
+                traj = case.get("reference_trajectory")
+                assert traj, f"single-tool case missing reference_trajectory: {case['prompt']}"
+                assert traj == [_BARE_TOOL[case["expected_tool"]]]
+
+    def test_reference_trajectories_use_known_bare_tool_names(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.batch_eval import KNOWN_BARE_TOOLS
+
+        for case in get_eval_cases("coordinator_agent"):
+            for tool in case.get("reference_trajectory") or []:
+                assert tool in KNOWN_BARE_TOOLS, f"unknown tool {tool!r} in: {case['prompt']}"
+
+    def test_multi_step_cases_have_ordered_trajectory(self):
+        from src.eval.agent_eval_configs import get_eval_cases
+
+        multi = [c for c in get_eval_cases("coordinator_agent") if c["category"] == "multi_step"]
+        assert multi, "expected multi_step cases in the coordinator dataset"
+        for case in multi:
+            traj = case.get("reference_trajectory")
+            assert traj and len(traj) >= 2, f"multi_step needs ordered trajectory: {case['prompt']}"
+
+
 class TestEvalCaseRequiredFields:
     @pytest.fixture(params=["coordinator_agent", "travel_agent", "expense_agent", "router_agent"])
     def agent_cases(self, request):
