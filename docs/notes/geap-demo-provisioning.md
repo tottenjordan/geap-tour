@@ -20,12 +20,20 @@ stale placeholders).
 
 ## One-time provisioning (cheapest → richest)
 
-1. **Model Armor templates** (govern) — `bash scripts/setup_model_armor.sh`.
-   Creates `geap-workshop-prompt` / `geap-workshop-response` templates that
-   `src/armor/config.py` references via `MODEL_ARMOR_PROMPT_TEMPLATE` /
-   `MODEL_ARMOR_RESPONSE_TEMPLATE`. `deploy_agents.py:_build_config` bakes those
-   env vars into the engine **only when set** — export them (or rely on the
-   config defaults, which already point at `projects/hybrid-vertex/...`).
+1. **Model Armor templates + floor setting** (govern) —
+   `bash scripts/setup_model_armor.sh` creates the `geap-workshop-prompt` /
+   `geap-workshop-response` templates that `src/armor/config.py` references via
+   `MODEL_ARMOR_PROMPT_TEMPLATE` / `MODEL_ARMOR_RESPONSE_TEMPLATE` (now stamped
+   with `templateMetadata` so they log sanitize operations at INSPECT_ONLY).
+   `deploy_agents.py:_build_config` bakes those env vars into the engine **only
+   when set** — export them (or rely on the config defaults, which already point
+   at `projects/hybrid-vertex/...`). Then
+   `bash scripts/setup_model_armor_floor_settings.sh` configures the project's
+   global floor setting (Vertex AI inspect-only + Cloud Logging) — this is what
+   populates the console **Security-tab Model Armor dashboard**; see
+   [model-armor-security-dashboard.md](./model-armor-security-dashboard.md) for
+   the two caveats (custom-MCP ≠ Google-MCP; native-Gemini backbone for richest
+   data).
 2. **BigQuery logging sink / dataset** — `bash scripts/setup_logging_sink.sh`.
    Dataset `geap_workshop_logs` (`BQ_EVAL_DATASET`). NOTE: continuous eval no
    longer requires a hand-created `online_eval_results` table — the canonical

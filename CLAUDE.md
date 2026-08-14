@@ -77,6 +77,7 @@ uv run python -m src.deploy.register_a2a --discover   # list A2A agents in the r
 # Infrastructure setup (shell scripts)
 bash scripts/deploy_all.sh              # full end-to-end
 bash scripts/setup_governance_policies.sh --sgp   # IAM + SGP
+bash scripts/setup_model_armor_floor_settings.sh  # project floor setting (inspect-only + Cloud Logging) → Security-tab Model Armor dashboard
 ```
 
 ## Architecture
@@ -142,7 +143,7 @@ The **coordinator model bake-off** compares two coordinator deployments that dif
 
 ### Security layers
 
-- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side guardrail (blocklist patterns, length limits). This is the single shared module — both the coordinator and the router import it (the router previously had a duplicate `src/router/armor.py`, now removed). The pure validator `input_guardrail_callback` (Content|None) stays side-effect-free for testability; `guardrail_with_telemetry` wraps it to emit a `guardrail.blocked` OTel span event + a `custom.googleapis.com/agent_armor/blocked` metric on each block (telemetry is fully guarded and never changes the guard's decision). The coordinator wires `guardrail_with_telemetry` as its `before_agent_callback` and passes `generate_content_config=get_armored_generate_config()` for server-side armor; the router runs `input_guardrail_callback` inside its `complexity_router_callback`.
+- **Model Armor** (`src/armor/config.py`): server-side screening via Model Armor templates + client-side guardrail (blocklist patterns, length limits). This is the single shared module — both the coordinator and the router import it (the router previously had a duplicate `src/router/armor.py`, now removed). The pure validator `input_guardrail_callback` (Content|None) stays side-effect-free for testability; `guardrail_with_telemetry` wraps it to emit a `guardrail.blocked` OTel span event + a `custom.googleapis.com/agent_armor/blocked` metric on each block (telemetry is fully guarded and never changes the guard's decision). The coordinator wires `guardrail_with_telemetry` as its `before_agent_callback` and passes `generate_content_config=get_armored_generate_config()` for server-side armor; the router runs `input_guardrail_callback` inside its `complexity_router_callback`. A project-level Model Armor **floor setting** (inspect-only) with **Cloud Logging** on (`scripts/setup_model_armor_floor_settings.sh`), plus template `logSanitizeOperations` (`scripts/setup_model_armor.sh`), feed the console Security-tab Model Armor dashboard; two caveats — our custom Cloud Run MCP servers aren't "Google Cloud MCP Servers" (that floor setting is a no-op for them), and floor-setting/template screening covers the Gemini `generateContent` path so the dashboard is richest with a native Gemini backbone. See [docs/notes/model-armor-security-dashboard.md](docs/notes/model-armor-security-dashboard.md).
 
 ## Key Conventions
 

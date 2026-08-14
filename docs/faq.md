@@ -129,13 +129,16 @@ Quick reference for each component — what it is, how it works, and why it matt
 
 **What is it?** — A dual-layer content screening system that filters both inputs and outputs for responsible AI violations, prompt injection, jailbreak attempts, and PII leakage.
 
-**How does it work?** — The server-side layer uses Model Armor templates configured via `setup_model_armor.sh`, which define screening rules for RAI categories, prompt injection detection, jailbreak detection, and PII filtering. The client-side layer uses ADK guardrail callbacks: a `before_model_callback` screens user input before it reaches the model, and an `after_model_callback` screens model output before it reaches the user. Template resource names are stored in `.env` as `MODEL_ARMOR_PROMPT_TEMPLATE` and `MODEL_ARMOR_RESPONSE_TEMPLATE`. The armor module in `src/armor/config.py` wires these templates into the ADK callback system.
+**How does it work?** — The server-side layer uses Model Armor templates configured via `setup_model_armor.sh`, which define screening rules for RAI categories, prompt injection detection, jailbreak detection, and PII filtering. The coordinator applies them by passing `generate_content_config=get_armored_generate_config()` (server-side screening on the Gemini `generateContent` path). The client-side layer uses a single ADK guardrail callback: `guardrail_with_telemetry` (wired as the coordinator's **`before_agent_callback`**) screens user input against blocklist patterns and length limits before the agent runs, and emits a `guardrail.blocked` telemetry event on a block — there is no separate after-model armor callback. Template resource names are stored in `.env` as `MODEL_ARMOR_PROMPT_TEMPLATE` and `MODEL_ARMOR_RESPONSE_TEMPLATE`. The router runs the pure `input_guardrail_callback` inside its `complexity_router_callback`.
 
-**Why does it matter?** — Models can be manipulated and can produce harmful content. Model Armor provides defense at two levels — infrastructure (server-side templates) and application (ADK callbacks) — ensuring that content screening cannot be bypassed by skipping one layer.
+**Populating the console Security-tab dashboard** — a project-level Model Armor **floor setting** (inspect-only) with **Cloud Logging** enabled (`setup_model_armor_floor_settings.sh`) plus template logging (`templateMetadata.logSanitizeOperations`) send sanitization results to Cloud Logging, which is what the console Security tab's Model Armor dashboard reads. Two caveats: our custom Cloud Run MCP servers are not "Google Cloud MCP Servers" (that floor setting is a no-op for them), and floor-setting/template screening covers the Gemini `generateContent` path, so the dashboard is richest with a native Gemini coordinator backbone. See [docs/notes/model-armor-security-dashboard.md](notes/model-armor-security-dashboard.md).
+
+**Why does it matter?** — Models can be manipulated and can produce harmful content. Model Armor provides defense at two levels — infrastructure (server-side templates + project floor setting) and application (the ADK `before_agent_callback` guardrail) — ensuring that content screening cannot be bypassed by skipping one layer.
 
 **Key files:**
-- `scripts/setup_model_armor.sh` — Server-side Model Armor template creation
-- `src/armor/config.py` — Client-side ADK guardrail callbacks (before/after model)
+- `scripts/setup_model_armor.sh` — Server-side Model Armor template creation (now logs sanitize ops at INSPECT_ONLY)
+- `scripts/setup_model_armor_floor_settings.sh` — Project-level floor setting (inspect-only + Cloud Logging) that feeds the Security-tab dashboard
+- `src/armor/config.py` — Client-side guardrail (`guardrail_with_telemetry` as `before_agent_callback`) + `get_armored_generate_config()`
 
 ---
 

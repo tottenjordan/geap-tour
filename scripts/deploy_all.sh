@@ -113,8 +113,11 @@ for url in "$SEARCH_URL" "$BOOKING_URL" "$EXPENSE_URL"; do
 done
 
 # ─── Step 4: Setup Model Armor ──────────────────────────────────────
-step "4/11" "Setting up Model Armor templates"
+step "4/11" "Setting up Model Armor templates + floor setting"
 bash scripts/setup_model_armor.sh 2>&1 | grep -E "(✓|Template|already)" || warn "Model Armor setup had warnings"
+# Project-level floor setting (inspect-only + Cloud Logging) — feeds the console
+# Security tab's Model Armor dashboard. See docs/notes/model-armor-security-dashboard.md.
+bash scripts/setup_model_armor_floor_settings.sh 2>&1 | grep -E "(✓|Floor|Vertex)" || warn "Model Armor floor setting had warnings"
 
 # ─── Step 5: Setup Logging Sink ─────────────────────────────────────
 step "5/11" "Setting up BigQuery logging sink"

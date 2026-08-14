@@ -19,6 +19,11 @@ gcloud services enable modelarmor.googleapis.com --project="$PROJECT_ID"
 echo "[2/4] Creating prompt screening template..."
 PROMPT_FILTER='{
     "labels": {"solution": "geap-tour"},
+    "templateMetadata": {
+        "enforcementType": "INSPECT_ONLY",
+        "logTemplateOperations": true,
+        "logSanitizeOperations": true
+    },
     "filterConfig": {
         "raiSettings": {
             "raiFilters": [
@@ -48,6 +53,11 @@ curl -s -X POST \
 echo "[3/4] Creating response screening template..."
 RESPONSE_FILTER='{
     "labels": {"solution": "geap-tour"},
+    "templateMetadata": {
+        "enforcementType": "INSPECT_ONLY",
+        "logTemplateOperations": true,
+        "logSanitizeOperations": true
+    },
     "filterConfig": {
         "raiSettings": {
             "raiFilters": [
