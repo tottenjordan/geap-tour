@@ -104,6 +104,34 @@ coordinator on the native path is gated on this result and left to the operator.
 **kept live** and iterated as **in-place revisions** via `deploy_coordinator --update <ID>` (never rewrites
 `.env`, never touches the pinned engine `3639024497392091136`).
 
+## Genai completion-hook UPLOAD test on the native path — no-op + latency cost (2026-08-14)
+
+The native switch made a second question testable. The genai completion-hook upload path
+(`OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK=upload` + `OTEL_INSTRUMENTATION_GENAI_UPLOAD_{FORMAT,BASE_PATH}`)
+fires only from native `google.genai` `generate_content` instrumentation, so the old "every agent is
+LiteLlm, it can never fire" reasoning (PR #22's original Group-B rejection) no longer holds once the
+coordinator runs native Gemini-3. We tested it **on the live probe engine** (`…/4380288848559603712`) by
+baking the three upload vars into a revision (an uncommitted `_build_config` env passthrough — reverted
+after) pointed at `gs://…/otel-genai-probe`, then A/B-probing clean vs hook:
+
+| Measure | Clean | Hook |
+| --- | --- | --- |
+| Content uploaded to GCS | — | **ZERO** `_inputs/_outputs` JSONL over 55+ healthy streams |
+| Empty-stream failure rate | 7.5% (3/40, two 20-probe blocks) | 10% (2/20) — **Fisher's exact p=1.0, no effect** |
+| Median latency (successful streams) | **12.7s** | **18.9s** (~+6s / +50%) |
+
+**Result:** the completion-hook upload is a **no-op even on the native path in the managed runtime** — the
+runtime never invokes it — and it **adds ~6s median request latency** for no captured content. It does
+**not** affect the empty-stream failure rate (that ~5-10% flakiness is background platform behavior:
+even the two clean blocks swung 5%↔10%, wider than the clean-vs-hook gap). So PR #22 bakes it out
+deliberately, guarded by `tests/test_deploy_agents.py::test_build_config_omits_genai_upload_hook`. Method:
+`src/eval/probe_engine.py` (honest event-counter) driven N times per block; deploy revisions via
+`deploy_coordinator --update`.
+
+Side note — the ~5-10% empty-stream flakiness seen here is milder than, but the same signature as, the
+2026-08-13 outage; the native path is **mostly** healthy now, not perfectly (contrast the earlier
+119-req/0-error load run). Background platform state, not the hook.
+
 Related: [[coordinator-outage-is-runtime-not-model]] (memory),
 [model-armor-security-dashboard](./model-armor-security-dashboard.md),
 [[bakeoff-engine-location-and-leak]] (memory).
