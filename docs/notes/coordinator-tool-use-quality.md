@@ -1,8 +1,37 @@
-# Coordinator `tool_use` scores ~0.27 — root-cause finding (no fix shipped)
+# Coordinator `tool_use` scores ~0.27 — root-cause finding (rubric fix shipped)
 
 **Verdict: mis-rubric + measurement-artifact, NOT an agent defect.** The
 coordinator's tools work; the metric is measuring the wrong thing. This note
-records the investigation and a recommended (unshipped) follow-up.
+records the investigation and the fix that shipped for cause #1 (the mis-rubric);
+cause #2 (trajectory capture) remains open and is called out below.
+
+## Status: fixed for the published series (2026-08-14)
+
+The delegation-aware rubric is now wired into the **offline-eval bridge** via a
+standalone judge — Option 2 in the "Recommended follow-up" below. The monitored
+`agent_eval/tool_use_accuracy` series now derives from `geap_tool_use`
+(`src/eval/tool_use_judge.py`), not the delegation-blind SDK rubric:
+
+- `src/eval/tool_use_judge.py:run_tool_use_eval()` runs the deployed coordinator
+  over the tool-expecting cases, calls the judge model directly via
+  `google.genai`, and parses the `Score: N` line itself (mirroring
+  `src/eval/policy_judge.py`), sidestepping the `client.evals` custom-metric
+  `400 Error parsing JSON` bug.
+- `src/eval/publish_offline_eval.py:_inject_tool_use_accuracy()` overwrites the
+  batch's mis-rubriced tool-use score **in place** with the judge's score;
+  `_apply_standalone_judges()` runs it (with `_inject_policy_compliance`) on both
+  publish paths — the `publish_offline_eval --run` CLI and `run_all_evals`.
+
+**Scoping — intentionally NOT changed:** `get_metrics()` still wires the generic
+`TOOL_USE_QUALITY` in the batch, so DOE `harvest.BATCH_METRICS`, the bake-off,
+and fixtures are untouched; only the *published* series is corrected. See the
+"Out of scope" reasoning in the plan.
+
+**Still open (cause #2):** the judge scores the (prompt, final-response) pair, not
+the raw execution trajectory. If the managed runtime does not surface nested
+sub-agent MCP calls into the captured response, the score reflects
+request/outcome quality rather than the literal tool trajectory. Treat the number
+as honest-but-outcome-based until trajectory capture is verified (see cause #2).
 
 ## Symptom
 
@@ -84,27 +113,30 @@ This is the same class of platform trace-content limitation documented for the
 native online evaluators (see [[online-eval-content-capture-blocked]] and
 [offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md)).
 
-## Recommended follow-up (do NOT implement without validating the SDK path)
+## Recommended follow-up
 
 1. **Swap the rubric:** replace `types.RubricMetric.TOOL_USE_QUALITY` in
    `get_metrics()` with the domain-aware `TOOL_USE_METRIC` (`geap_tool_use`).
-2. **Expect the SDK JSON-parser bug.** `geap_tool_use` is a custom pointwise
-   `LLMMetric` — the *same* type that forced `policy_compliance` off `client.evals`
-   and onto a standalone judge (`400 Error parsing JSON`; see the `get_metrics`
-   docstring and `src/eval/policy_judge.py`). The clean swap will very likely hit
-   the same wall. The realistic fix mirrors `policy_compliance`: a standalone
-   `tool_use_judge` (analogous to `policy_judge.py`) that runs the deployed
+   *(Not taken — a batch-metric swap ripples into DOE harvest + the bake-off. See
+   "Scoping" above: the published series is corrected in the bridge instead.)*
+2. **✅ Shipped — standalone judge into the offline bridge.** `geap_tool_use` is a
+   custom pointwise `LLMMetric` — the *same* type that forced `policy_compliance`
+   off `client.evals` and onto a standalone judge (`400 Error parsing JSON`; see
+   the `get_metrics` docstring and `src/eval/policy_judge.py`). The realized fix
+   mirrors `policy_compliance`: `src/eval/tool_use_judge.py` runs the deployed
    coordinator, calls the judge model directly via `google.genai`, parses the
    `Score: N` line itself, and feeds the offline-eval bridge
-   (`publish_offline_eval._inject_*`).
-3. **Confirm trajectory capture first.** Before investing in either, verify that
-   the eval trajectory for a coordinator item actually includes the sub-agent's
-   MCP tool calls. If it does not, address that before changing the rubric —
-   otherwise the score stays low for the artifact reason regardless of rubric.
+   (`publish_offline_eval._inject_tool_use_accuracy`).
+3. **Confirm trajectory capture first.** ⚠️ **Still open.** Verify that the eval
+   trajectory for a coordinator item actually includes the sub-agent's MCP tool
+   calls. If it does not, the standalone judge scores request/outcome quality, not
+   the literal trajectory — an honest improvement over the delegation-blind rubric,
+   but not a trajectory-level tool-use measurement. This is cause #2 and remains
+   unaddressed.
 
-Until then, treat `tool_use_quality_v1` on the coordinator as a **known
-false-negative**: it does not reflect real tool-use quality, and its
-`agent_eval/tool_use_accuracy` monitored point should be read with that caveat.
+The `agent_eval/tool_use_accuracy` monitored point now reflects the
+delegation-aware judge rather than the ~0.27 delegation-blind rubric, but should
+still be read as outcome-based until cause #2 is verified.
 
 Related: [offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md),
 [[online-eval-content-capture-blocked]] (memory).

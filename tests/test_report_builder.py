@@ -55,6 +55,7 @@ def test_publish_phase_populates_published_metrics(monkeypatch):
         seen["call"] = batch
         return {"helpfulness": 4.5}
 
+    monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: None)
     monkeypatch.setattr(rae, "publish_offline_scores", _fake)
     results = _minimal_results()
     rae._run_publish_phase(results)
@@ -66,10 +67,35 @@ def test_publish_phase_guards_exceptions(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("no gcp")
 
+    monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: None)
     monkeypatch.setattr(rae, "publish_offline_scores", _boom)
     results = _minimal_results()
     rae._run_publish_phase(results)
     assert "error" in results["published_metrics"]
+
+
+def test_publish_phase_applies_standalone_judges_before_publish(monkeypatch):
+    # The standalone judges (delegation-aware tool_use + policy) must be spliced
+    # into the batch BEFORE publish_offline_scores reads it, and a judge failure
+    # must not abort the phase.
+    order = []
+    monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: order.append("judges"))
+    monkeypatch.setattr(
+        rae, "publish_offline_scores", lambda *a, **k: order.append("publish") or {}
+    )
+    rae._run_publish_phase(_minimal_results())
+    assert order == ["judges", "publish"]
+
+
+def test_publish_phase_guards_standalone_judge_failure(monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("no gcp")
+
+    monkeypatch.setattr(rae, "_apply_standalone_judges", _boom)
+    monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {"helpfulness": 4.0})
+    results = _minimal_results()
+    rae._run_publish_phase(results)  # must not raise
+    assert results["published_metrics"] == {"helpfulness": 4.0}
 
 
 def test_publish_phase_populates_router_metrics(monkeypatch):
@@ -80,6 +106,7 @@ def test_publish_phase_populates_router_metrics(monkeypatch):
         seen["cost"] = cost_results
         return {"routing_accuracy_pct": 92.0, "cost_savings_pct": 60.0, "classifier_latency_ms": 150.0}
 
+    monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: None)
     monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {})
     monkeypatch.setattr(rae, "publish_router_efficiency", _fake_router)
     results = _minimal_results()
@@ -91,6 +118,7 @@ def test_publish_phase_populates_router_metrics(monkeypatch):
 
 
 def test_publish_phase_router_guards_exceptions(monkeypatch):
+    monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: None)
     monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {})
 
     def _boom(*a, **k):
