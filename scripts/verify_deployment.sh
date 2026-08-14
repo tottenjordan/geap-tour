@@ -72,6 +72,26 @@ for tmpl in geap-workshop-prompt geap-workshop-response; do
     fi
 done
 
+# Project-level floor setting (feeds the Security-tab Model Armor dashboard).
+# Fail-SOFT: read requires roles/modelarmor.floorSettingsViewer; a caller without
+# it (e.g. an org admin without the Model Armor role) should get a hint, not a
+# hard failure.
+FLOOR_URI="projects/${PROJECT_ID}/locations/global/floorSetting"
+FLOOR=$(gcloud model-armor floorsettings describe --full-uri="$FLOOR_URI" \
+    --format json 2>/dev/null || echo "")
+if [[ -z "$FLOOR" ]]; then
+    warn "Floor setting: unreadable (missing roles/modelarmor.floorSettingsViewer?) or not configured — run scripts/setup_model_armor_floor_settings.sh"
+elif echo "$FLOOR" | grep -qi "enableFloorSettingEnforcement.*true"; then
+    echo "$FLOOR" > "$REPORT_DIR/model_armor_floor_setting.json"
+    if echo "$FLOOR" | grep -qiE "enableCloudLogging.*true|inspectOnly|INSPECT_ONLY"; then
+        ok "Floor setting: enforcement on + Vertex AI inspect-only/logging"
+    else
+        warn "Floor setting: enforced but Vertex AI logging/inspect-only not detected — re-run setup_model_armor_floor_settings.sh"
+    fi
+else
+    warn "Floor setting: present but enforcement disabled — run scripts/setup_model_armor_floor_settings.sh"
+fi
+
 # ─── 3. Agent Gateways ───────────────────────────────────────────
 echo ""
 echo "━━━ [3/7] Agent Gateways ━━━"

@@ -1283,7 +1283,24 @@ When Model Armor is delegated to the Agent Gateway (see section 2.1 "Delegating 
 
 See the "Option 2: Model Armor at the Gateway" section under Delegating Authorization for setup instructions.
 
-**Console tour**: Navigate to Security -> Model Armor in the Cloud Console. Show templates, filter configurations, and enforcement logs.
+#### Layer 4: Project floor settings — populating the Security-tab dashboard
+
+The GEAP deployment console's **Security tab** shows a Model Armor dashboard, gated by a banner: *"This Model Armor dashboard will only be fully populated if Agent Gateway and Google Cloud MCP Servers are enabled with Model Armor and agent tracing."* The **no-preview** way to feed it is a project-level **floor setting** with **Cloud Logging** on — Model Armor logs every sanitization result (prompt, response, detector verdicts) to Cloud Logging, which is what the dashboard reads.
+
+```bash
+# Project-wide Vertex AI sanitization, INSPECT_ONLY (nothing blocked), logging on
+bash scripts/setup_model_armor_floor_settings.sh
+```
+
+This is deliberately **inspect-only**: Model Armor evaluates and logs but never blocks — a governance-visibility demo. Flip `--vertex-ai-enforcement-type=INSPECT_AND_BLOCK` to enforce.
+
+**Two honesty caveats** (keep these in front of the customer):
+1. **Custom MCP servers ≠ "Google Cloud MCP Servers."** search/booking/expense are custom Cloud Run FastMCP servers; the `GOOGLE_MCP_SERVER` floor setting only governs *Google-managed* MCP servers, so it's a no-op for ours (left as a commented opt-in in the script). Custom tools can only be armored via the gateway CONTENT_AUTHZ path (Layer 3, preview).
+2. **LiteLlm/Claude coverage.** Floor-setting + template screening cover the Gemini `generateContent` path. Our coordinator runs LiteLlm (gemini-3.x/Claude, global endpoint), so dashboard *volume* is richest with a **native Gemini** backbone — Claude turns won't register as Gemini sanitizations.
+
+Full write-up: [docs/notes/model-armor-security-dashboard.md](notes/model-armor-security-dashboard.md).
+
+**Console tour**: Navigate to Security -> Model Armor in the Cloud Console. Show templates, filter configurations, and enforcement logs. Then open a deployment's **Security tab** to read the Model Armor dashboard — sanitization volume and detector breakdown, fed by the floor setting's Cloud Logging (drive some adversarial traffic first, e.g. `uv run python -m src.traffic.generate_traffic <ENGINE_ID> --load`).
 
 **Screenshot**: `docs/screenshots/session4_model_armor.png`
 
