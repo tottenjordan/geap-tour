@@ -4,11 +4,13 @@
 ``gemini-3.6-flash`` / ``claude-sonnet-5`` are actually served in the project
 (Claude on Vertex additionally needs Model Garden enablement). So a bake-off can
 happily deploy two engines, spend real money, and only then discover a backbone
-404s. This module sends a **1-token completion** at each model through the *same*
-serving path the deployed coordinator uses — LiteLLM against the Vertex
-``global`` endpoint (both bake-off backbones go through
-``LiteLlm(vertex_location="global")``) — so ``run_bakeoff --execute`` can fail
-fast, before the deploys.
+404s. This module sends a **1-token completion** at each model against the Vertex
+``global`` endpoint to probe *availability* — using LiteLLM as a lightweight
+client. Availability on the global endpoint is client-independent, so this is a
+valid probe even though the deployed coordinator now serves Gemini-3 via the
+native ADK ``Gemini`` class and Claude via LiteLlm (both on ``global``; see
+``config.resolve_model``). ``run_bakeoff --execute`` can thus fail fast, before
+the deploys.
 
 The completion call is injectable (``completion_fn``) so it is fully unit-testable
 without touching Vertex.
@@ -18,7 +20,8 @@ from __future__ import annotations
 
 from src.config import GCP_PROJECT_ID
 
-# Both bake-off backbones require the global endpoint (see config.resolve_model).
+# Both bake-off backbones are served on the global endpoint (see config.resolve_model:
+# native Gemini for gemini-3.x, LiteLlm for Claude — both location="global").
 _PREFLIGHT_LOCATION = "global"
 
 

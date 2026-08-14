@@ -40,8 +40,9 @@ from src.pipelines import components as c
 #     so predict calls land there and 403 with PERMISSION_DENIED on
 #     aiplatform.endpoints.predict. Pinning the project routes them back to ours.
 #
-# Deliberately NOT set: GOOGLE_CLOUD_LOCATION. resolve_model() wraps 3.x/Claude
-# models in LiteLlm(vertex_location="global") and leaves 2.x models regional;
+# Deliberately NOT set: GOOGLE_CLOUD_LOCATION. resolve_model() targets the global
+# endpoint per-model (native Gemini client_kwargs location="global" for 3.x,
+# LiteLlm(vertex_location="global") for Claude) and leaves 2.x models regional;
 # a single GOOGLE_CLOUD_LOCATION env overrides that per-model choice and forces
 # everything to one region — which 404s the global-only 3.x agent models.
 _RUNTIME_ENV = {

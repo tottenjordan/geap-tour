@@ -7,7 +7,11 @@ touch code or configuration.
 ## Git & commits
 
 - **Never** add `Co-Authored-By` trailers to commits or PRs.
-- Branch before committing when on `main`; commit/push only when asked.
+- Branch before committing when on `main`. Once a PR is open and you are
+  actively working on it, commit and push to that PR as needed so the user can
+  review commits as they land — you do not need to ask before each commit/push.
+  **Never** merge or mark a PR approved: PR approval/merge always requires the
+  user's review.
 
 ## Python tooling
 

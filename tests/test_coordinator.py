@@ -8,8 +8,9 @@ GCP or MCP connections required.
 
 from google.adk.tools.agent_tool import AgentTool
 
+from src import config
 from src.agents.coordinator_agent import coordinator_agent, save_memories_callback
-from src.armor.config import guardrail_with_telemetry
+from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
 
 
 class TestCoordinatorCallbacks:
@@ -23,9 +24,21 @@ class TestCoordinatorCallbacks:
 
 
 class TestCoordinatorServerSideArmor:
-    def test_generate_content_config_has_model_armor(self):
+    def test_generate_content_config_armor_matches_backbone(self):
+        # Server-side Model Armor is attached only for Gemini-2.x backbones (region-
+        # scoped templates aren't honored on the global 3.x/Claude path). The default
+        # coordinator backbone is Gemini-3.x, so armor is omitted here; the client-side
+        # guardrail (asserted in TestCoordinatorCallbacks) is the guaranteed layer.
         cfg = coordinator_agent.generate_content_config
         assert cfg is not None
+        if config.COORDINATOR_MODEL.startswith(("gemini-2", "models/")):
+            assert cfg.model_armor_config is not None
+        else:
+            assert cfg.model_armor_config is None
+
+    def test_armor_present_for_gemini_2x_backbone(self):
+        # A Gemini-2.x backbone gets the server-side templates.
+        cfg = get_armored_generate_config("gemini-2.5-flash")
         assert cfg.model_armor_config is not None
         assert "templates/" in cfg.model_armor_config.prompt_template_name
         assert "templates/" in cfg.model_armor_config.response_template_name

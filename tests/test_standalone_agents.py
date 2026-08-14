@@ -1,6 +1,7 @@
 """Tests for standalone model-tier agents and shared utilities."""
 
 import pytest
+from google.adk.models.google_llm import Gemini
 from google.adk.models.lite_llm import LiteLlm
 
 
@@ -19,20 +20,30 @@ class TestResolveModel:
         result = resolve_model("models/gemini-2.5-flash")
         assert isinstance(result, str)
 
-    def test_gemini_3x_wrapped_with_litellm(self):
+    def test_gemini_3x_native_gemini(self):
+        # Gemini 3.x uses the native ADK Gemini class on the global endpoint (not
+        # LiteLlm, which mangles Gemini-3 thought signatures into bogus function_calls).
+        from src import config
         from src.config import resolve_model
         result = resolve_model("gemini-3.5-flash")
-        assert isinstance(result, LiteLlm)
+        assert isinstance(result, Gemini)
+        assert result.model == "gemini-3.5-flash"
+        assert result.client_kwargs == {
+            "vertexai": True,
+            "location": "global",
+            "project": config.GCP_PROJECT_ID,
+        }
+
+    def test_gemini_3x_native_no_vertex_prefix(self):
+        # The native path must NOT carry the LiteLlm-only ``vertex_ai/`` prefix.
+        from src.config import resolve_model
+        result = resolve_model("gemini-3.5-flash")
+        assert "vertex_ai/" not in result.model
 
     def test_claude_wrapped_with_litellm(self):
         from src.config import resolve_model
         result = resolve_model("claude-sonnet-4-6")
         assert isinstance(result, LiteLlm)
-
-    def test_litellm_adds_vertex_prefix(self):
-        from src.config import resolve_model
-        result = resolve_model("gemini-3.5-flash")
-        assert "vertex_ai/" in result.model
 
     def test_already_prefixed_not_doubled(self):
         from src.config import resolve_model
@@ -40,13 +51,19 @@ class TestResolveModel:
         assert isinstance(result, LiteLlm)
         assert result.model == "vertex_ai/gemini-3.5-flash"
 
-    def test_bakeoff_gemini_backbone_wrapped_global(self):
-        # The bake-off's Gemini coordinator backbone (gemini-3.x) → LiteLlm/global.
+    def test_gemini_3x_prefixed_stays_litellm(self):
+        # An explicit ``vertex_ai/`` prefix is an opt-in escape hatch → stays LiteLlm.
+        from src.config import resolve_model
+        result = resolve_model("vertex_ai/gemini-3.6-flash")
+        assert isinstance(result, LiteLlm)
+
+    def test_bakeoff_gemini_backbone_native_global(self):
+        # The bake-off's Gemini coordinator backbone (gemini-3.x) → native Gemini/global.
         from src.config import resolve_model
         result = resolve_model("gemini-3.6-flash")
-        assert isinstance(result, LiteLlm)
-        assert result.model == "vertex_ai/gemini-3.6-flash"
-        assert result._additional_args["vertex_location"] == "global"
+        assert isinstance(result, Gemini)
+        assert result.model == "gemini-3.6-flash"
+        assert result.client_kwargs["location"] == "global"
 
     def test_bakeoff_claude_backbone_wrapped_global(self):
         # The bake-off's Claude coordinator backbone → LiteLlm/global.

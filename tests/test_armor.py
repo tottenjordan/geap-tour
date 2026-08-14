@@ -76,8 +76,26 @@ class TestModelArmorConfig:
         assert "templates/" in config.response_template_name
 
     def test_armored_generate_config(self):
-        config = get_armored_generate_config()
+        # Server-side Model Armor is attached for a Gemini-2.x backbone (region-scoped
+        # templates are honored natively on the regional path).
+        config = get_armored_generate_config("gemini-2.5-flash")
         assert config.model_armor_config is not None
+
+    def test_armor_omitted_for_gemini_3(self):
+        # Gemini-3 runs on the global endpoint (no template support → 400
+        # TEMPLATE_NOT_FOUND), so server-side armor is omitted.
+        config = get_armored_generate_config("gemini-3.5-flash")
+        assert config.model_armor_config is None
+
+    def test_armor_omitted_for_claude(self):
+        # Claude runs via LiteLlm on global; server-side armor is omitted.
+        config = get_armored_generate_config("claude-sonnet-4-6")
+        assert config.model_armor_config is None
+
+    def test_armor_omitted_when_model_none(self):
+        # Safe default: no model → no server-side armor.
+        config = get_armored_generate_config()
+        assert config.model_armor_config is None
 
 
 class TestEntryPointGuardrails:
