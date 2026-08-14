@@ -31,6 +31,30 @@ class TestRateTable:
         assert rate["usd_per_gsu"] > 0
 
 
+class TestGemini37Flash:
+    """The native-Gemini outage probe deploys on gemini-3.7-flash, so the cost
+    model must price it (directional rate mirroring 3.6-flash) rather than
+    KeyError inside collect_token_usage → _cost_from_usages.
+    """
+
+    def test_rate_present_and_per_token(self):
+        assert "gemini-3.7-flash" in cm.RATES
+        rate = cm.RATES["gemini-3.7-flash"]
+        assert rate["kind"] == "per_token"
+        assert rate["input_usd_per_token"] > 0
+        assert rate["output_usd_per_token"] > 0
+
+    def test_prices_without_keyerror(self):
+        assert cm.per_request_cost_usd("gemini-3.7-flash", 1000, 500) > 0
+
+    def test_cost_summary_shape(self):
+        usages = [{"input_tokens": 1000, "output_tokens": 500}]
+        summary = cm.cost_summary("gemini-3.7-flash", usages)
+        assert summary["model"] == "gemini-3.7-flash"
+        assert summary["n_requests"] == 1
+        assert summary["mean_usd_per_request"] == pytest.approx(summary["total_usd"])
+
+
 class TestListPrices:
     """Pin the concrete list prices (USD per 1M tokens) so they can't drift."""
 

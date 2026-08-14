@@ -3,6 +3,7 @@
 import os
 
 from dotenv import load_dotenv
+from google.adk.models.google_llm import Gemini
 from google.adk.models.lite_llm import LiteLlm
 
 load_dotenv()
@@ -93,14 +94,27 @@ ENABLE_MEMORY_BANK = os.environ.get("ENABLE_MEMORY_BANK", "1") not in ("0", "fal
 
 
 def resolve_model(model_str: str):
-    """Resolve model string to an ADK-compatible model.
+    """Resolve a model string to an ADK-compatible model.
 
-    Gemini 2.x models work in regional endpoints — pass as plain strings.
-    Gemini 3.x and Claude models require location=global, so they are
-    wrapped with LiteLLM which supports per-model location.
+    - Gemini 2.x (and ``models/`` ids): plain string, regional endpoint.
+    - Gemini 3.x (bare id): native ADK ``Gemini`` on the *global* endpoint.
+      LiteLlm mangles Gemini-3 thought signatures into bogus function_calls, so
+      Gemini-3 uses the native class with ``client_kwargs`` targeting global (see
+      docs/notes/gemini3-native-model-resolution.md).
+    - Claude / any non-gemini id (incl. an explicit ``vertex_ai/`` prefix): LiteLlm
+      on the global endpoint.
     """
     if model_str.startswith(("gemini-2", "models/")):
         return model_str
+    if model_str.startswith("gemini-3"):
+        return Gemini(
+            model=model_str,
+            client_kwargs={
+                "vertexai": True,
+                "location": "global",
+                "project": GCP_PROJECT_ID,
+            },
+        )
     if not model_str.startswith("vertex_ai/"):
         model_str = f"vertex_ai/{model_str}"
     return LiteLlm(model=model_str, vertex_location="global")

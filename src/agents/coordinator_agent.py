@@ -122,11 +122,13 @@ coordinator_agent = LlmAgent(
         AgentTool(agent=expense_agent),
     ],
     # Server-side Model Armor: templates screen prompt + response for injection,
-    # unsafe content, sensitive data, and malicious URLs. Enforcement is native
-    # for Gemini 2.x (plain-string) models; for LiteLlm-wrapped models (Gemini
-    # 3.x / Claude) the field is carried but honored only where the LiteLlm path
-    # forwards it — the client-side callback below is the guaranteed layer.
-    generate_content_config=get_armored_generate_config(),
+    # unsafe content, sensitive data, and malicious URLs. The region-scoped
+    # templates are honored only on the Gemini 2.x regional path, so armor is
+    # attached only for a Gemini-2.x backbone; on the global Gemini-3 endpoint the
+    # templates 400 (TEMPLATE_NOT_FOUND) and Claude runs via LiteLlm, so armor is
+    # omitted there. The client-side callback below is the guaranteed layer for all
+    # backbones. See docs/notes/gemini3-native-model-resolution.md.
+    generate_content_config=get_armored_generate_config(COORDINATOR_MODEL),
     # Client-side governance guardrail (must-have): rejects prompt-injection /
     # oversized inputs BEFORE the model runs, and emits a span event + metric on
     # each block so the BLOCK is observable. Telemetry never affects the decision.

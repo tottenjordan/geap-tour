@@ -36,6 +36,40 @@ def test_main_prints_resource_marker(capsys):
     assert calls["display_name"] == "coordinator_agent_bakeoff_gemini"
 
 
+def test_main_update_flag_calls_update_agent(capsys):
+    # With --update <engine-id>, the CLI updates in place (new revision) via
+    # update_agent(agent, engine_id, display_name) instead of creating a new
+    # engine — so a persistent probe engine is iterated as revisions, not
+    # re-created (and .env is never touched by update_agent).
+    resource = "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
+    calls = {}
+
+    def fake_update(agent, engine_id, display_name=None):
+        calls["agent"] = agent
+        calls["engine_id"] = engine_id
+        calls["display_name"] = display_name
+        return resource
+
+    def fake_deploy(agent, display_name=None):
+        calls["deploy_called"] = True
+        return "should-not-be-used"
+
+    rc = dc.main(
+        ["--update", "4380288848559603712", "--display-name", "coordinator-native-gemini37-probe"],
+        deploy_fn=fake_deploy,
+        update_fn=fake_update,
+        agent=object(),
+    )
+
+    assert rc == 0
+    assert "deploy_called" not in calls  # create path not taken
+    assert calls["engine_id"] == "4380288848559603712"
+    assert calls["display_name"] == "coordinator-native-gemini37-probe"
+    out = capsys.readouterr().out
+    marker_lines = [ln for ln in out.splitlines() if ln.startswith(dc.RESOURCE_MARKER)]
+    assert marker_lines[-1] == f"{dc.RESOURCE_MARKER}{resource}"
+
+
 def test_parse_resource_from_output_reads_last_marker():
     # Even with chatty deploy logs before/after, the marker line is recoverable.
     stdout = (

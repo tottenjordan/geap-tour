@@ -39,11 +39,27 @@ def get_model_armor_config() -> ModelArmorConfig:
     )
 
 
-def get_armored_generate_config() -> GenerateContentConfig:
-    """Build a GenerateContentConfig with Model Armor enabled."""
-    return GenerateContentConfig(
-        model_armor_config=get_model_armor_config(),
-    )
+def _is_regional_gemini(model: str | None) -> bool:
+    """True for Gemini-2.x / ``models/`` ids that serve on the regional endpoint.
+
+    These are the only backbones where the region-scoped Model Armor templates are
+    honored natively (mirrors the Gemini-2.x branch in ``config.resolve_model``).
+    """
+    return bool(model) and model.startswith(("gemini-2", "models/"))
+
+
+def get_armored_generate_config(model: str | None = None) -> GenerateContentConfig:
+    """GenerateContentConfig with server-side Model Armor only where it is honored.
+
+    Model Armor templates are region-scoped and enforced natively on the Gemini 2.x
+    path. Gemini 3.x runs on the global endpoint (no template support -> 400
+    TEMPLATE_NOT_FOUND) and Claude runs via LiteLlm, so server-side armor is omitted
+    for both; the client-side guardrail (``guardrail_with_telemetry``) is the
+    guaranteed enforcement layer. See docs/notes/model-armor-security-dashboard.md.
+    """
+    if _is_regional_gemini(model):
+        return GenerateContentConfig(model_armor_config=get_model_armor_config())
+    return GenerateContentConfig()
 
 
 # --- Client-side guardrail callback ---

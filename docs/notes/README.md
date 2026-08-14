@@ -51,3 +51,8 @@ file; keep this index short (< 200 lines).
   doesn't slow dev: always-on deterministic safety checks (Tier 1) plus an opt-in,
   label-gated rubric eval (Tier 2) against the shared deployed engine; honest
   limitation that it scores the deployed engine, not the PR diff.
+- [Gemini-3 native model resolution + family-aware Model Armor](./gemini3-native-model-resolution.md)
+  — why `resolve_model()` now returns native ADK `Gemini` for Gemini-3 (LiteLlm mangles
+  thought signatures) and attaches server-side Model Armor only for Gemini-2.x; the
+  fork's gemini-3.7 migration findings assessed, ADK pinned to 2.6.3, and an untested
+  native-Gemini hypothesis for the coordinator outage.

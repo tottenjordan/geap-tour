@@ -1037,7 +1037,7 @@ pipelines = [
 requires-dist = [
     { name = "a2a-sdk", specifier = ">=1" },
     { name = "fastmcp", specifier = ">=3.4.7" },
-    { name = "google-adk", extras = ["agent-identity", "eval"], specifier = ">=2" },
+    { name = "google-adk", extras = ["agent-identity", "eval"], specifier = "==2.6.3" },
     { name = "google-cloud-aiplatform", extras = ["adk", "agent-engines", "evaluation"], specifier = ">=1.163.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.43.0" },
     { name = "google-cloud-monitoring", specifier = ">=2.31.0" },
