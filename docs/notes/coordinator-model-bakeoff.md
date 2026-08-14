@@ -148,3 +148,19 @@ the persistent-deploy path is synchronous.)
 - **Online eval content is platform-blocked** — the offline bridge is the
   canonical quality source; see [[online-eval-content-capture-blocked]] and the
   [offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) note.
+- **Newly-deployed coordinator engines don't stream (platform-side regression,
+  2026-08-13).** Every coordinator engine **built after ~09:44 UTC 2026-08-13**
+  returns 0 events / empty streams — the managed Agent Engine worker is hard-killed
+  (SIGKILL, no traceback) at the first LLM call. This is **backbone-independent**:
+  fresh `gemini-3.6-flash`, `gemini-3.5-flash`, and `claude-sonnet-5` engines all
+  fail identically, while the pre-rollout `gemini-3.6-flash` engine
+  `3639024497392091136` (built 09:44) still streams cleanly. Dependency versions
+  and agent code are proven identical between the working and failing engines (PyPI
+  timestamps show no package changed in the window), so the only differentiator is
+  build time — a Google-side runtime/base-image rollout, **not** the model and
+  **not** `enable_tracing` (removing the flag did not restore streaming). The
+  models themselves serve fine standalone via LiteLLM (verified with
+  `src.eval.preflight`). Impact on the bake-off: it cannot deploy fresh per-model
+  engines to produce offline/pairwise/traffic signal until the platform issue
+  clears; re-verify with a `stream_query` probe (expect events>0) before running
+  `run_bakeoff --execute` again. See [[coordinator-outage-is-runtime-not-model]].

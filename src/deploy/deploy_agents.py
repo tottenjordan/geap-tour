@@ -23,42 +23,41 @@ import vertexai
 from vertexai import agent_engines
 
 from src.config import (
+    AGENT_ANALYTICS_TABLE,
+    AGENT_ENGINE_ID,
+    AGENT_GATEWAY_EGRESS_PATH,
+    AGENT_MODEL,
+    AGENT_REGISTRY_LOCATION,
+    BOOKING_MCP_SERVER,
+    BOOKING_MCP_URL,
+    BQ_AGENT_ANALYTICS_DATASET,
+    COMPLEXITY_HIGH,
+    COMPLEXITY_LOW,
+    COMPLEXITY_THRESHOLD_HIGH,
+    COORDINATOR_MODEL,
+    DEPLOY_TAG,
+    ENABLE_AGENT_ANALYTICS,
+    ENABLE_MEMORY_BANK,
+    EXPENSE_MCP_SERVER,
+    EXPENSE_MCP_URL,
+    EXPENSE_MODEL,
+    FLASH_MODEL,
     GCP_PROJECT_ID,
     GCP_REGION,
     GCP_STAGING_BUCKET,
-    OTEL_ENV_VARS,
-    ENABLE_AGENT_ANALYTICS,
-    BQ_AGENT_ANALYTICS_DATASET,
-    AGENT_ANALYTICS_TABLE,
-    SEARCH_MCP_URL,
-    BOOKING_MCP_URL,
-    EXPENSE_MCP_URL,
-    SEARCH_MCP_SERVER,
-    BOOKING_MCP_SERVER,
-    EXPENSE_MCP_SERVER,
-    AGENT_REGISTRY_LOCATION,
-    AGENT_GATEWAY_PATH,
-    AGENT_GATEWAY_EGRESS_PATH,
-    AGENT_ENGINE_ID,
-    OPUS_MODEL,
-    SONNET_MODEL,
-    PRO_MODEL,
-    LITE_MODEL,
-    FLASH_MODEL,
-    COMPLEXITY_THRESHOLD_HIGH,
-    AGENT_MODEL,
-    COORDINATOR_MODEL,
-    TRAVEL_MODEL,
-    EXPENSE_MODEL,
-    ROUTER_MODEL,
-    COMPLEXITY_LOW,
-    COMPLEXITY_HIGH,
-    MEDIUM_SPLIT,
     HIGH_SPLIT,
+    LITE_MODEL,
+    MEDIUM_SPLIT,
+    OPUS_MODEL,
+    OTEL_ENV_VARS,
+    PRO_MODEL,
     PROMPT_VARIANT,
-    ENABLE_MEMORY_BANK,
     RESOURCE_LABELS,
-    DEPLOY_TAG,
+    ROUTER_MODEL,
+    SEARCH_MCP_SERVER,
+    SEARCH_MCP_URL,
+    SONNET_MODEL,
+    TRAVEL_MODEL,
 )
 
 # Runtime dependency subset for the served Agent Engine. Keep the version floors
@@ -87,13 +86,14 @@ REQUIREMENTS = [
     "opentelemetry-instrumentation-google-genai",
     "opentelemetry-instrumentation-grpc",
     "opentelemetry-instrumentation-httpx",
-    # BigQuery Agent Analytics plugin (opt-in via ENABLE_AGENT_ANALYTICS) streams
-    # full prompt/response/tool content to BigQuery via the Storage Write API.
-    # Transitive of the adk extra, but pinned here so they resolve into the served
-    # engine's build image regardless of extra resolution.
-    "google-cloud-bigquery-storage>=2",
-    "google-cloud-storage>=2",
-    "pyarrow",
+    # NB: the BigQuery Agent Analytics plugin's serving deps
+    # (google-cloud-bigquery-storage / google-cloud-storage / pyarrow) are
+    # DELIBERATELY NOT here. Task 1.4 proved content-logging fails on the managed
+    # runtime (the plugin's before_run_callback errors in _ensure_schema_exists and
+    # aborts every run — see docs/notes/agent-analytics-bigquery.md), so we don't
+    # ship dead weight to the served image. The opt-in wiring (_analytics_plugin /
+    # ENABLE_AGENT_ANALYTICS) is kept dormant; re-enabling it for real would require
+    # adding these three back here AND resolving the runtime schema-setup failure.
     # "google-cloud-iamconnectorcredentials>=0.1.0",
 ]
 
@@ -114,11 +114,7 @@ def _build_gateway_config() -> dict | None:
     """
     if not ENABLE_AGENT_GATEWAY or not AGENT_GATEWAY_EGRESS_PATH:
         return None
-    return {
-        "agent_to_anywhere_config": {
-            "agent_gateway": AGENT_GATEWAY_EGRESS_PATH
-        }
-    }
+    return {"agent_to_anywhere_config": {"agent_gateway": AGENT_GATEWAY_EGRESS_PATH}}
 
 
 def _runtime_engine_id() -> str:
@@ -147,6 +143,7 @@ def _memory_service_builder():
     in-memory store — this is what makes cross-session recall persist.
     """
     from google.adk.memory import VertexAiMemoryBankService
+
     return VertexAiMemoryBankService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
@@ -162,6 +159,7 @@ def _session_service_builder():
     write side that ``save_memories_callback`` flushes into Memory Bank).
     """
     from google.adk.sessions import VertexAiSessionService
+
     return VertexAiSessionService(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
@@ -177,6 +175,7 @@ def _wants_memory(agent) -> bool:
     they deploy unchanged.
     """
     from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+
     tools = getattr(agent, "tools", None) or []
     return any(isinstance(t, PreloadMemoryTool) for t in tools)
 
@@ -226,6 +225,16 @@ def _build_app(agent):
     plugin is attached to every agent so full content is logged (see
     ``_analytics_plugin``). AdkApp forwards ``plugins`` to the Runner and
     deep-copies them on clone(), so they survive the deploy cycle.
+
+    Structural OTEL tracing is enabled by the managed runtime via the
+    ``GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true`` env var set in
+    ``_build_config`` — the GCP-recommended path that *replaces* the in-process
+    ``AdkApp(enable_tracing=True)`` flag. The flag crashed/recycled the deployed
+    worker mid-request (0 events streamed); the env var populates the same
+    agent/tool/model span tree in Cloud Trace without touching the request path.
+    (The managed runtime still strips gen_ai.* prompt/response *content* from
+    those spans — see docs/notes/agent-analytics-bigquery.md — but the structural
+    tree is what makes traces appear for the deployment at all.)
     """
     builders = {"session_service_builder": _session_service_builder}
     if _wants_memory(agent):
@@ -340,7 +349,7 @@ def deploy_agent(agent, display_name: str | None = None) -> str:
     config = _build_config(agent, display_name)
 
     remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
-    resource_name = getattr(remote, 'resource_name', None) or remote.api_resource.name
+    resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
     print(f"  Created: {resource_name}")
     return resource_name
 
@@ -359,7 +368,7 @@ def update_agent(agent, engine_id: str, display_name: str | None = None) -> str:
         agent=_build_app(agent),
         config=config,
     )
-    resource_name = getattr(remote, 'resource_name', None) or remote.api_resource.name
+    resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
     print(f"  Updated: {resource_name}")
     return resource_name
 
@@ -374,7 +383,11 @@ OPUS_ENGINE_ID = os.environ.get("OPUS_ENGINE_ID", "")
 
 AGENT_SETS = {
     "coordinator": {
-        "loader": lambda: __import__("src.agents.coordinator_agent", fromlist=["coordinator_agent"]).coordinator_agent,
+        "loader": lambda: (
+            __import__(
+                "src.agents.coordinator_agent", fromlist=["coordinator_agent"]
+            ).coordinator_agent
+        ),
         "engine_id": COORDINATOR_ENGINE_ID,
         "env_var": "COORDINATOR_AGENT_ID",
     },
@@ -389,7 +402,9 @@ AGENT_SETS = {
         "env_var": "LITE_ENGINE_ID",
     },
     "flash": {
-        "loader": lambda: __import__("src.agents.flash_agent", fromlist=["flash_agent"]).flash_agent,
+        "loader": lambda: (
+            __import__("src.agents.flash_agent", fromlist=["flash_agent"]).flash_agent
+        ),
         "engine_id": FLASH_ENGINE_ID,
         "env_var": "FLASH_ENGINE_ID",
     },
@@ -399,7 +414,9 @@ AGENT_SETS = {
         "env_var": "PRO_ENGINE_ID",
     },
     "sonnet": {
-        "loader": lambda: __import__("src.agents.sonnet_agent", fromlist=["sonnet_agent"]).sonnet_agent,
+        "loader": lambda: (
+            __import__("src.agents.sonnet_agent", fromlist=["sonnet_agent"]).sonnet_agent
+        ),
         "engine_id": SONNET_ENGINE_ID,
         "env_var": "SONNET_ENGINE_ID",
     },
@@ -417,7 +434,7 @@ def _update_env_file(env_var: str, value: str):
     lines = []
     found = False
     if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "r") as f:
+        with open(ENV_FILE) as f:
             lines = f.readlines()
         for i, line in enumerate(lines):
             if line.startswith(f"{env_var}="):
@@ -444,7 +461,9 @@ def run_deploy(
              (e.g. tag="demo1" → "coordinator_agent_demo1") to keep a deploy
              batch grouped in the Agent Engine console.
     """
-    vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}")
+    vertexai.init(
+        project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
+    )
 
     if agent_set == "all":
         sets = list(AGENT_SETS.keys())
@@ -481,14 +500,19 @@ def run_deploy(
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Deploy or update ADK agents on Agent Engine")
-    parser.add_argument("agent_set", nargs="?", default="all", help="coordinator, router, or all (default: all)")
-    parser.add_argument("--update", action="store_true", help="Update existing agents instead of creating new ones")
+    parser.add_argument(
+        "agent_set", nargs="?", default="all", help="coordinator, router, or all (default: all)"
+    )
+    parser.add_argument(
+        "--update", action="store_true", help="Update existing agents instead of creating new ones"
+    )
     parser.add_argument(
         "--tag",
         default=None,
         help="Suffix appended to each agent's console display name "
-             "(e.g. --tag demo1 → coordinator_agent_demo1) to group a deploy batch",
+        "(e.g. --tag demo1 → coordinator_agent_demo1) to group a deploy batch",
     )
     args = parser.parse_args()
 
