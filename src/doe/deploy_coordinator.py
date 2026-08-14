@@ -41,27 +41,50 @@ def parse_resource_from_output(stdout: str) -> str | None:
     return resource
 
 
-def main(argv: Sequence[str] | None = None, *, deploy_fn=None, agent=None) -> int:
-    """Deploy one coordinator engine and print its resource name (marker line).
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    deploy_fn=None,
+    update_fn=None,
+    agent=None,
+) -> int:
+    """Deploy or update one coordinator engine; print its resource (marker line).
 
-    ``deploy_fn`` / ``agent`` are injectable so tests exercise the wiring without a
-    real deploy; by default they bind the real ``deploy_agent`` and the coordinator
-    (imported lazily so a fresh subprocess picks up this point's ``COORDINATOR_MODEL``).
+    ``deploy_fn`` / ``update_fn`` / ``agent`` are injectable so tests exercise the
+    wiring without a real deploy; by default they bind the real ``deploy_agent`` /
+    ``update_agent`` and the coordinator (imported lazily so a fresh subprocess
+    picks up this point's ``COORDINATOR_MODEL``).
+
+    With ``--update <engine-id>`` the engine is updated **in place** — a new
+    revision of the same reasoningEngine via ``agent_engines.update`` — instead of
+    creating a fresh one. This is how a persistent probe engine is iterated as
+    revisions; ``update_agent`` never writes ``.env`` (only ``run_deploy`` does).
     """
-    parser = argparse.ArgumentParser(description="Deploy one bake-off coordinator engine")
+    parser = argparse.ArgumentParser(description="Deploy or update one coordinator engine")
     parser.add_argument(
         "--display-name",
         default=None,
         help="Console display name for the deployed engine (e.g. per-backbone tag)",
     )
+    parser.add_argument(
+        "--update",
+        default=None,
+        metavar="ENGINE_ID",
+        help="Update this existing engine in place (new revision) instead of creating one",
+    )
     args = parser.parse_args(argv)
 
-    if deploy_fn is None:
-        from src.deploy.deploy_agents import deploy_agent as deploy_fn
     if agent is None:
         from src.agents.coordinator_agent import coordinator_agent as agent
 
-    resource = deploy_fn(agent, args.display_name)
+    if args.update:
+        if update_fn is None:
+            from src.deploy.deploy_agents import update_agent as update_fn
+        resource = update_fn(agent, args.update, args.display_name)
+    else:
+        if deploy_fn is None:
+            from src.deploy.deploy_agents import deploy_agent as deploy_fn
+        resource = deploy_fn(agent, args.display_name)
     print(f"{RESOURCE_MARKER}{resource}")
     return 0
 
