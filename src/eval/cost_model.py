@@ -42,6 +42,14 @@ RATES: dict[str, dict] = {
         "input_usd_per_token": 1.50 / 1_000_000,
         "output_usd_per_token": 7.50 / 1_000_000,
     },
+    "gemini-3.7-flash": {
+        # Directional — mirrors the 3.6-flash list price so the native-Gemini
+        # outage probe can price its usage instead of KeyError-ing. Verify
+        # against live Vertex pricing before quoting a 3.7-flash figure.
+        "kind": "per_token",
+        "input_usd_per_token": 1.50 / 1_000_000,
+        "output_usd_per_token": 7.50 / 1_000_000,
+    },
     "claude-sonnet-5": {
         "kind": "gsu",
         # Vertex partner-model GSU burndown at <200k context.
