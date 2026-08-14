@@ -164,3 +164,19 @@ the persistent-deploy path is synchronous.)
   engines to produce offline/pairwise/traffic signal until the platform issue
   clears; re-verify with a `stream_query` probe (expect events>0) before running
   `run_bakeoff --execute` again. See [[coordinator-outage-is-runtime-not-model]].
+
+  **UPDATE 2026-08-14 — the native path no longer reproduces the outage.** A
+  fresh coordinator deployed on the **native ADK `Gemini`** backbone
+  (`gemini-3.7-flash`, global endpoint, no LiteLlm — the resolution added in the
+  Gemini-3 native switch, see
+  [gemini3-native-model-resolution](./gemini3-native-model-resolution.md))
+  **streams cleanly**: it returns text answers, drives real MCP tool calls, and
+  ran a 119-request load with **0 errors**. So the "backbone-independent, every
+  fresh engine built after ~09:44 UTC fails" claim above holds for the
+  **LiteLlm-wrapped** deploys we ruled out on 2026-08-13, but **not** for the
+  native path today. The confound is unresolved (one arm, one day later — a
+  native-code fix and a platform-side recovery are indistinguishable from a
+  single probe), so this is not proof the switch *caused* the recovery; it is
+  evidence the outage no longer blocks a fresh native-Gemini coordinator. Before
+  running `run_bakeoff --execute`, still probe first (`src.eval.probe_engine
+  <engine>`, PASS = events>0). See [[coordinator-outage-is-runtime-not-model]].
