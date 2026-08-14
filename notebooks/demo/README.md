@@ -27,6 +27,7 @@ run top-to-bottom safely: every live/billable cell is opt-in behind a
 | --- | --- |
 | `GEAP_RUN_QUERY=1` | Stream against the deployed engine; run the async complexity classifier. |
 | `GEAP_RUN_DEPLOY=1` | `run_deploy(...)` — creates billable Agent Runtime engines (~3-5 min each). |
+| `GEAP_RUN_MEMORY=1` | Cross-session Memory Bank recall — preference set in session A, recalled in a fresh session B (live, ~1-2 min). |
 | `GEAP_RUN_EVAL=1` | Rapid rubric eval + publish to Cloud Monitoring + router-efficiency + failure clustering. |
 | `GEAP_RUN_OPT=1` | Run the GEPA optimizer (heavy). |
 
