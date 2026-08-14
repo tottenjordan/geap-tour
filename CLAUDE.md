@@ -152,6 +152,7 @@ The **coordinator model bake-off** compares two coordinator deployments that dif
 - MCP servers use FastMCP with `streamable-http` transport.
 - Tests validate agent configuration (tool count, sub-agent names, callback presence) without requiring live GCP or MCP connections.
 - `.env` is the source of truth for deployed engine IDs — `deploy_agents.py` auto-updates it after each deploy.
+- SDK-first demo notebooks live in [`notebooks/demo/`](notebooks/demo/) (platform + evaluation tours on this repo's modules); every live/billable cell is opt-in behind a `GEAP_RUN_*` flag, and the eval notebook uses the offline bridge (native Online Evaluators are platform-blocked). See [notebooks/demo/README.md](notebooks/demo/README.md).
 
 ## Code standards
 
