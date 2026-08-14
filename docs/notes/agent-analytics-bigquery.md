@@ -1,8 +1,12 @@
 # Agent-analytics content logging to BigQuery
 
-**Status:** wired, **opt-in** (`ENABLE_AGENT_ANALYTICS=0` by default). The live
-content-capture verification (below) is **pending a deploy** — do not assume rows
-land until Task 1.4 is run and this note is updated with the result.
+**Status:** wired but **dormant/off** (`ENABLE_AGENT_ANALYTICS=0` by default).
+**Task 1.4 ran on 2026-08-13 and FAILED the decision gate — do not use this path.**
+The plugin's schema setup raises inside the served runtime and aborts the run, so
+enabling it produces **0 BigQuery rows *and* 0 agent responses**. The opt-in
+wiring is kept (dormant) as a capability marker, but the served-image deps were
+**reverted** so normal deploys carry no dead weight. See "Decision-gate result"
+below.
 
 ## Why this exists
 
@@ -37,8 +41,16 @@ bake-off comparison.
   - `_build_app()` passes `plugins=[plugin]` to `AdkApp` when enabled, for **every**
     agent (so both bake-off coordinators log). `AdkApp` forwards `plugins` to the
     Runner and deep-copies them on `clone()`, so they survive the deploy cycle.
-  - `REQUIREMENTS` gains `google-cloud-bigquery-storage`, `google-cloud-storage`,
-    `pyarrow` (transitive of the adk extra, pinned so they land in the served image).
+  - `REQUIREMENTS` **no longer** ships `google-cloud-bigquery-storage`,
+    `google-cloud-storage`, `pyarrow` — they were added for this path, then
+    reverted after Task 1.4 proved content-logging fails on the managed runtime
+    (no reason to bloat every served image). Re-enabling would require adding
+    those three back **and** resolving the runtime schema-setup failure below.
+- `pyproject.toml` — the same three libs also live in the **`analytics` dependency
+  group**, because `_analytics_plugin()` imports and constructs the plugin *in the
+  local deploy process* (the plugin object is serialized into the `AdkApp`), so an
+  analytics-enabled deploy must run under `uv run --group analytics …` or it fails
+  with `ModuleNotFoundError: google.cloud.bigquery_storage_v1`.
 
 ## Prerequisites (run once, before Task 1.4)
 
@@ -78,7 +90,9 @@ building any downstream analysis on this surface:
 
 ```bash
 # Keep the bake-off engines UP — update in place, don't teardown/redeploy.
-ENABLE_AGENT_ANALYTICS=1 uv run python -m src.deploy.deploy_agents coordinator --update
+# NB: the plugin is constructed *locally* at deploy time (to serialize into the
+# AdkApp), so the deploy env needs the BQ Storage libs → use the `analytics` group.
+ENABLE_AGENT_ANALYTICS=1 uv run --group analytics python -m src.deploy.deploy_agents coordinator --update
 # → drive a little traffic, then:
 #   SELECT * FROM `geap_agent_analytics.v_llm_request` ORDER BY ... LIMIT 20
 #   confirm NON-EMPTY prompt/response content. Repeat for the Claude engine.
@@ -88,6 +102,31 @@ ENABLE_AGENT_ANALYTICS=1 uv run python -m src.deploy.deploy_agents coordinator -
 (Workstream 2 can read real trajectories from BQ). Empty → STOP, record it here,
 and do not build on it. Update memory `online-eval-content-capture-blocked` with the
 outcome either way.
+
+## Decision-gate result (2026-08-13): FAILED — do not use
+
+Ran `ENABLE_AGENT_ANALYTICS=1 … deploy_agents coordinator --update` against the
+Gemini bake-off engine and drove traffic. Outcome:
+
+- **0 rows** in `geap_agent_analytics.*` **and 0 agent responses** — the runs
+  aborted instead of just failing to log.
+- Server logs (Cloud Logging, engine `4181778621234413568`, 16:11–16:17) show
+  repeated `ERROR` tracebacks in
+  `google/adk/plugins/bigquery_agent_analytics_plugin.py:_ensure_schema_exists`
+  (`self.client.get_table(...)` line ~4501, then `self.client.create_table(...)`
+  line ~4516). That callback is **not** `@_safe_callback`, so a raise there
+  **aborts the whole run** — which is why enabling the plugin took the coordinator
+  down (0 responses), not merely produced empty telemetry.
+- Root behavior: schema setup fails inside the managed runtime (the plugin does
+  **not** create the dataset, and its get/create-table path errors there even
+  though IAM/API prerequisites are met from the local side). This is a *different*
+  failure from the OTEL content-stripping — here the surface never gets a chance to
+  write at all.
+
+**Verdict:** the model-neutral BigQuery content-logging antidote does **not** work
+on this managed Agent Engine runtime as of the pinned `google-adk`. Kept opt-in and
+**off**; served-image deps reverted; no downstream analysis (Workstream 2 trajectory
+reads from BQ) is built on it. Memory `online-eval-content-capture-blocked` updated.
 
 ## Caveats
 

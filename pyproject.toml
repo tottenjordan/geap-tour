@@ -47,6 +47,11 @@ ignore = ["E501"]
 python-version = "3.12"
 
 [dependency-groups]
+analytics = [
+    "google-cloud-bigquery-storage>=2",
+    "google-cloud-storage>=2",
+    "pyarrow>=25.0.1",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

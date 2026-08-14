@@ -80,6 +80,7 @@ def test_tagged_display_name_defaults_to_deploy_tag():
     """No explicit tag falls back to DEPLOY_TAG (jt1), so display names match
     the rest of this operator's engines and a plain --update never drops it."""
     import src.config as cfg
+
     assert _tagged_display_name(_fake_agent(), None) == f"coordinator_agent_{cfg.DEPLOY_TAG}"
     assert _tagged_display_name(_fake_agent(), "") == f"coordinator_agent_{cfg.DEPLOY_TAG}"
 
@@ -175,3 +176,22 @@ def test_build_app_no_plugins_when_disabled(monkeypatch):
     da._build_app(_memory_agent())
 
     assert _CapturingAdkApp.last_kwargs.get("plugins") is None
+
+
+def test_build_app_relies_on_env_var_telemetry(monkeypatch):
+    """_build_app must NOT pass enable_tracing=True to AdkApp.
+
+    The in-process ``enable_tracing`` flag crashed/recycled the deployed worker
+    mid-request (0 events streamed). Structural OTEL tracing is instead enabled
+    by the managed runtime via the GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY
+    env var (the GCP-recommended path, asserted in
+    test_build_config_enables_agent_engine_telemetry), which populates the Cloud
+    Trace span tree without the crashing flag.
+    """
+    monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
+    monkeypatch.setattr(da, "_analytics_plugin", lambda: None)
+
+    da._build_app(_memory_agent())
+
+    assert _CapturingAdkApp.last_kwargs.get("enable_tracing") is not True
+    assert "enable_tracing" not in _CapturingAdkApp.last_kwargs

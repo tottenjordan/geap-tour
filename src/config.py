@@ -75,7 +75,7 @@ OTEL_ENV_VARS = {
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
 
-# Per-agent model overrides (default to the shared AGENT_MODEL; overridable for DOE experiments)
+# Per-agent model overrides (default to the shared AGENT_MODEL; overridable for DOE experiments).
 COORDINATOR_MODEL = os.environ.get("COORDINATOR_MODEL", AGENT_MODEL)
 TRAVEL_MODEL = os.environ.get("TRAVEL_MODEL", AGENT_MODEL)
 EXPENSE_MODEL = os.environ.get("EXPENSE_MODEL", AGENT_MODEL)
