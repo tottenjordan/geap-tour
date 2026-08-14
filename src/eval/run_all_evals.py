@@ -20,7 +20,7 @@ from src.config import (
     AGENT_ENGINE_ID,
     EVAL_OUTPUT_DIR,
 )
-from src.eval.publish_offline_eval import publish_offline_scores
+from src.eval.publish_offline_eval import _apply_standalone_judges, publish_offline_scores
 from src.eval.publish_router_efficiency import publish_router_efficiency
 
 
@@ -183,6 +183,14 @@ def _run_publish_phase(results: dict):
     (next phase) then reads the freshly-written points.
     """
     print("[Phase 6/7] PUBLISH OFFLINE EVAL SCORES")
+    # Splice the standalone-judge scores (delegation-aware tool_use + policy)
+    # into the batch before publishing, so the canonical path reports the same
+    # corrected tool_use_accuracy as the `publish_offline_eval --run` CLI. Each
+    # judge is independently guarded; this call never aborts the run.
+    try:
+        _apply_standalone_judges(results.get("batch", {}))
+    except Exception as e:
+        print(f"  Standalone judges failed: {e}")
     try:
         published = publish_offline_scores(results.get("batch", {}))
         results["published_metrics"] = published

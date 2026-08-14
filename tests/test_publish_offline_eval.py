@@ -165,6 +165,92 @@ def test_inject_policy_defaults_to_env_engine(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Tool-use accuracy: delegation-aware standalone judge overwrites the batch's
+# mis-rubriced score in place (the B3 false-negative fix)
+# --------------------------------------------------------------------------- #
+def test_inject_tool_use_overwrites_batch_key_in_place(monkeypatch):
+    # The batch carries the delegation-blind ~0.27 score; the judge must replace
+    # it (in the SAME key) so publish emits exactly ONE tool_use_accuracy point.
+    def fake_run(arn, **kwargs):
+        return {"score": 0.9, "n_scored": 8, "n_total": 8}
+
+    monkeypatch.setattr("src.eval.tool_use_judge.run_tool_use_eval", fake_run)
+
+    batch = _batch({"agent_engine_0/tool_use_quality_v1": 0.27})
+    off._inject_tool_use_accuracy(batch, agent_id="ENGINE_X")
+
+    metrics = batch["agents"]["coordinator_agent"]["metrics"]
+    # Overwritten in place — no duplicate tool-use key introduced.
+    assert metrics["agent_engine_0/tool_use_quality_v1"] == {"score": 0.9}
+    tool_keys = [k for k in metrics if "tool_use" in k]
+    assert len(tool_keys) == 1
+
+    published = off.publish_offline_scores(batch)
+    assert published["tool_use_accuracy"] == 4.5  # 0.9 * 5, not 0.27 * 5 = 1.35
+
+
+def test_inject_tool_use_inserts_key_when_absent(monkeypatch):
+    def fake_run(arn, **kwargs):
+        return {"score": 0.8, "n_scored": 5, "n_total": 5}
+
+    monkeypatch.setattr("src.eval.tool_use_judge.run_tool_use_eval", fake_run)
+
+    batch: dict = {}
+    off._inject_tool_use_accuracy(batch, agent_id="ENGINE_X")
+    metrics = batch["agents"]["coordinator_agent"]["metrics"]
+    assert metrics["agent_engine_0/tool_use_quality"] == {"score": 0.8}
+
+
+def test_inject_tool_use_targets_explicit_engine(monkeypatch):
+    captured = {}
+
+    def fake_run(arn, **kwargs):
+        captured["arn"] = arn
+        return {"score": 0.7, "n_scored": 4, "n_total": 4}
+
+    monkeypatch.setattr("src.eval.tool_use_judge.run_tool_use_eval", fake_run)
+    off._inject_tool_use_accuracy({}, agent_id="ENGINE_X")
+    assert captured["arn"].endswith("/reasoningEngines/ENGINE_X")
+
+
+def test_inject_tool_use_none_score_leaves_batch_untouched(monkeypatch):
+    def fake_run(arn, **kwargs):
+        return {"score": None, "n_scored": 0, "n_total": 3}
+
+    monkeypatch.setattr("src.eval.tool_use_judge.run_tool_use_eval", fake_run)
+    batch = _batch({"agent_engine_0/tool_use_quality_v1": 0.27})
+    off._inject_tool_use_accuracy(batch)
+    metrics = batch["agents"]["coordinator_agent"]["metrics"]
+    assert metrics["agent_engine_0/tool_use_quality_v1"] == {"score": 0.27}
+
+
+def test_apply_standalone_judges_runs_both(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        off, "_inject_policy_compliance", lambda b, agent_id=None: calls.append("policy")
+    )
+    monkeypatch.setattr(
+        off, "_inject_tool_use_accuracy", lambda b, agent_id=None: calls.append("tool_use")
+    )
+    off._apply_standalone_judges({}, agent_id="E")
+    assert calls == ["policy", "tool_use"]
+
+
+def test_apply_standalone_judges_isolates_failures(monkeypatch):
+    # A failing policy judge must not prevent the tool_use judge from running.
+    def boom(b, agent_id=None):
+        raise RuntimeError("policy blew up")
+
+    ran = []
+    monkeypatch.setattr(off, "_inject_policy_compliance", boom)
+    monkeypatch.setattr(
+        off, "_inject_tool_use_accuracy", lambda b, agent_id=None: ran.append("tool_use")
+    )
+    off._apply_standalone_judges({})  # must not raise
+    assert ran == ["tool_use"]
+
+
+# --------------------------------------------------------------------------- #
 # CLI load helper
 # --------------------------------------------------------------------------- #
 def test_load_results_full_results_shape(tmp_path):

@@ -150,11 +150,76 @@ def _inject_policy_compliance(batch: dict, agent_id: str | None = None) -> None:
     print(f"  policy_compliance: {score:.3f} (over {result.get('n_scored')} responses)")
 
 
+# Base names (after ``_strip_engine_prefix``) that all alias to the monitored
+# ``tool_use_accuracy`` series in ``publish_eval_metrics.EVAL_METRIC_ALIASES``.
+_TOOL_USE_ALIASES = ("tool_use_quality_v1", "tool_use_quality", "tool_use")
+
+
+def _inject_tool_use_accuracy(batch: dict, agent_id: str | None = None) -> None:
+    """Score tool_use via the delegation-aware standalone judge and splice it in.
+
+    The batch eval scores tool use with the generic, delegation-blind
+    ``TOOL_USE_QUALITY`` rubric, a confirmed false-negative for a domain router
+    (see ``docs/notes/coordinator-tool-use-quality.md``). This overwrites that
+    score *in place* with the delegation-aware ``geap_tool_use`` judge
+    (:mod:`src.eval.tool_use_judge`) so exactly one tool-use source reaches the
+    monitored ``tool_use_accuracy`` series (no dict-ordering ambiguity). Guarded:
+    a failure just leaves the batch's original score untouched.
+
+    ``agent_id`` selects the engine under test (bare id or full resource name),
+    defaulting to ``AGENT_ENGINE_ID`` only when unset — the same contract as
+    :func:`_inject_policy_compliance` so a bake-off scores the right deployment.
+    """
+    from src.config import AGENT_ENGINE_ID
+    from src.eval.batch_eval import _resolve_agent_resource_name
+    from src.eval.tool_use_judge import run_tool_use_eval
+
+    arn = _resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID)
+    result = run_tool_use_eval(arn)
+    score = result.get("score")
+    if score is None:
+        print(
+            f"  tool_use_accuracy: not scored ({result.get('n_scored')}/{result.get('n_total')} cases)"
+        )
+        return
+    metrics = (
+        batch.setdefault("agents", {})
+        .setdefault(DEFAULT_COORDINATOR_AGENT, {})
+        .setdefault("metrics", {})
+    )
+    # Overwrite the batch's mis-rubriced tool-use key in place if present; else
+    # insert a canonical one (still aliases to tool_use_accuracy downstream).
+    target_key = next(
+        (k for k in metrics if _strip_engine_prefix(k) in _TOOL_USE_ALIASES),
+        "agent_engine_0/tool_use_quality",
+    )
+    metrics[target_key] = {"score": score}
+    print(f"  tool_use_accuracy: {score:.3f} (over {result.get('n_scored')} responses)")
+
+
+def _apply_standalone_judges(batch: dict, agent_id: str | None = None) -> None:
+    """Splice both standalone-judge metrics (policy + tool_use) into ``batch``.
+
+    Each judge is best-effort and independently guarded, so one failing never
+    blocks the other or the surrounding publish. Shared by the ``--run`` CLI and
+    the ``run_all_evals`` publish phase so both paths report the same corrected
+    ``tool_use_accuracy`` (and ``policy_compliance``).
+    """
+    try:
+        _inject_policy_compliance(batch, agent_id=agent_id)
+    except Exception as e:  # policy scoring is best-effort
+        print(f"  policy_compliance scoring failed: {e}")
+    try:
+        _inject_tool_use_accuracy(batch, agent_id=agent_id)
+    except Exception as e:  # tool_use scoring is best-effort
+        print(f"  tool_use_accuracy scoring failed: {e}")
+
+
 def _run_fresh(agent_id: str | None = None) -> dict:
-    """Run a fresh coordinator batch eval (plus the standalone policy judge).
+    """Run a fresh coordinator batch eval (plus the standalone judges).
 
     ``agent_id`` targets a specific deployment (bake-off); when unset the batch
-    eval and policy judge both use the ``AGENT_ENGINE_ID`` env default.
+    eval and both judges use the ``AGENT_ENGINE_ID`` env default.
     """
     from src.config import AGENT_ENGINE_ID
     from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
@@ -162,10 +227,7 @@ def _run_fresh(agent_id: str | None = None) -> dict:
     batch = run_multi_agent_batch_eval(
         agents=[DEFAULT_COORDINATOR_AGENT], agent_id=agent_id or AGENT_ENGINE_ID
     )
-    try:
-        _inject_policy_compliance(batch, agent_id=agent_id)
-    except Exception as e:  # policy scoring is best-effort
-        print(f"  policy_compliance scoring failed: {e}")
+    _apply_standalone_judges(batch, agent_id=agent_id)
     return batch
 
 

@@ -111,10 +111,17 @@ uv run python -m src.eval.verify_monitors --format json    # read both series: c
    `before_agent_callback` blocks them, emitting a `guardrail.blocked` span event
    + a `custom.googleapis.com/agent_armor/blocked` metric (visible on the board
    and in the trace).
-6. **Build/Scale — Memory Bank.** The load generator's `CONVERSATIONS` establish
-   a preference in one session; a later session recalls it. Prove it:
-   `uv run python -m src.eval.verify_memory --user-id alice`. Memory Bank console
-   view shows persisted facts.
+6. **Build/Scale — Memory Bank.** The money-shot is genuine cross-session recall:
+   `uv run python -m src.eval.verify_cross_session_recall --user-id alice` states
+   a preference in session A, waits for Memory Bank to generate facts, then opens
+   a **brand-new session B** and shows the coordinator recall it (`RECALL: PASS`)
+   via `PreloadMemoryTool` — not the live session's context window (the load
+   generator's `CONVERSATIONS` stay in one session, so they don't prove this).
+   Corroborate the store directly with
+   `uv run python -m src.eval.verify_memory --user-id alice`; the Memory Bank
+   console view shows the same persisted facts. Both target the pinned coordinator
+   engine in `.env` (the post-rollout regression crashes freshly-built engines —
+   see [[coordinator-outage-is-runtime-not-model]]).
 7. **Build/Scale — A2A (preview-optional).**
    `uv run python -m src.deploy.register_a2a` registers the coordinator's agent
    card in Agent Registry; `--discover` lists A2A agents. If the preview surface
