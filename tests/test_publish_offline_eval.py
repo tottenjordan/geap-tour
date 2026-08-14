@@ -185,7 +185,10 @@ def test_inject_tool_use_overwrites_batch_key_in_place(monkeypatch):
     tool_keys = [k for k in metrics if "tool_use" in k]
     assert len(tool_keys) == 1
 
-    published = off.publish_offline_scores(batch)
+    # Fake writer (as the sibling publish tests do) so this never touches Cloud
+    # Monitoring / ADC — otherwise the real MetricsWriter client fails in CI.
+    writer = MetricsWriter(project_id="proj-x", client=FakeMetricClient())
+    published = off.publish_offline_scores(batch, writer=writer)
     assert published["tool_use_accuracy"] == 4.5  # 0.9 * 5, not 0.27 * 5 = 1.35
 
 
