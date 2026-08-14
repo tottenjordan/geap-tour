@@ -135,6 +135,25 @@ def test_build_config_enables_agent_engine_telemetry():
     assert env["GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"] == "true"
 
 
+def test_build_config_pins_full_trace_sampling():
+    """Deployed engines pin 100% trace sampling (defensive against a future
+    runtime default that could silently drop traces)."""
+    env = _build_config(_fake_agent())["env_vars"]
+    assert env["OTEL_TRACES_SAMPLER"] == "parentbased_traceidratio"
+    assert env["OTEL_TRACES_SAMPLER_ARG"] == "1.0"
+
+
+def test_build_config_omits_genai_upload_hook():
+    """The genai completion-hook UPLOAD path must NOT be baked in: it is a no-op
+    for LiteLlm-backed agents (only the native google.genai instrumentor invokes
+    it) and would run a request-path hook that captures no content. Verified
+    locally 2026-08-14. Guard against a well-meaning re-add."""
+    env = _build_config(_fake_agent())["env_vars"]
+    assert "OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK" not in env
+    assert "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH" not in env
+    assert "OTEL_INSTRUMENTATION_GENAI_UPLOAD_FORMAT" not in env
+
+
 class _CapturingAdkApp:
     """Fake AdkApp that records the kwargs it was built with (no GCP/ADC)."""
 

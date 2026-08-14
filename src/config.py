@@ -69,9 +69,29 @@ MCP_SERVER_URLS = {
 # were reverted as no-ops. For agents on a *native* google.genai model, EVENT_ONLY
 # routes gen_ai.* content to log events (gen_ai.system_instructions), the one
 # path the evaluator can still parse.
+#
+# OTEL_TRACES_SAMPLER pins 100% trace sampling (parent-based, ratio 1.0) so a
+# future runtime default can never silently start dropping traces. This is
+# defensive, not a fix: empirically every request on a *healthy* engine already
+# traces (8/8 in a probe), and the Agent Engine docs don't list this var as a
+# guaranteed-honored override, so treat it as belt-and-suspenders that may be a
+# runtime no-op.
+#
+# DELIBERATELY NOT here: the genai completion-hook UPLOAD path
+# (OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK=upload +
+# OTEL_INSTRUMENTATION_GENAI_UPLOAD_{FORMAT,BASE_PATH}). It is a no-op for THIS
+# codebase: the "upload" hook is invoked only from the native google.genai
+# generate_content instrumentation, but every agent here runs through LiteLlm
+# (resolve_model wraps gemini-3.x + Claude for the global endpoint), which never
+# hits that instrumentor. Verified locally 2026-08-14: native google.genai
+# uploaded inputs/outputs JSONL, the LiteLlm path uploaded nothing. Adding it
+# would run a request-path hook that captures zero content while implying it
+# does. It would only help if agents moved to native google.genai models.
 OTEL_ENV_VARS = {
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
+    "OTEL_TRACES_SAMPLER": "parentbased_traceidratio",
+    "OTEL_TRACES_SAMPLER_ARG": "1.0",
 }
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
