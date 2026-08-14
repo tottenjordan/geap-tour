@@ -47,29 +47,62 @@ to `2.6.3` (`uv.lock`). Pinning to `==2.6.3` gets the fork's determinism benefit
 below the version we test and lock against. Pinning to 2.5.0 as the fork did would be a downgrade and
 contradicts our outage findings (see below), so it was rejected.
 
-## Coordinator-outage hypothesis (untested until the live probe runs)
+## Coordinator-outage hypothesis — tested 2026-08-14 (native-Gemini fresh deploy is healthy)
 
 Our `coordinator-outage-is-runtime-not-model` memory concluded the empty-stream outage was a **platform
-regression**, having ruled out backbone/tracing/deps. But two facts make LiteLlm-on-Gemini-3 an untested
+regression**, having ruled out backbone/tracing/deps. But two facts made LiteLlm-on-Gemini-3 an untested
 alternative: (1) the crash signature localizes the death **exactly at the LiteLlm completion boundary**
 ("failing engines never emit `LiteLLM completion()` … die between memory and the first Vertex/gRPC call"),
 and (2) **every fresh engine we tested was LiteLlm-wrapped** — we never isolated a native-Gemini deploy.
-The fork built a *fresh* coordinator on `gemini-3.7-flash` after dropping LiteLlm. This does not prove
-causation (our symptom is SIGKILL/empty-stream; theirs was hallucinated tool calls), but it is worth a
-controlled test.
+The fork built a *fresh* coordinator on `gemini-3.7-flash` after dropping LiteLlm. This did not prove
+causation (our symptom is SIGKILL/empty-stream; theirs was hallucinated tool calls), so we ran a controlled
+probe.
 
 **Live probe (operator, opt-in — does NOT touch the pinned `.env` engine):** deploy a brand-new engine
-under its own display name and stream-probe it:
+under its own display name and stream-probe it with the honest event-counter `src.eval.probe_engine`:
 
 ```bash
-COORDINATOR_MODEL=gemini-3.5-flash \
-  uv run python -m src.doe.deploy_coordinator --display-name coordinator-native-gemini-probe
-# capture the "BAKEOFF_ENGINE: projects/.../reasoningEngines/<ID>" line, then stream_query it
-# (events > 0 → native un-blocks fresh deploys; 0 → platform regression confirmed independent of LiteLlm)
-# tear down with agent_engines.delete(<resource>, force=True) — engines live in us-central1 (leak risk)
+COORDINATOR_MODEL=gemini-3.7-flash \
+  uv run python -m src.doe.deploy_coordinator --display-name coordinator-native-gemini37-probe
+# capture the "BAKEOFF_ENGINE: projects/.../reasoningEngines/<ID>" line, then:
+uv run python -m src.eval.probe_engine <resource> --json    # ok=true, events>0 → it streams
+# iterate the SAME engine as new revisions (in place; never writes .env):
+COORDINATOR_MODEL=gemini-3.7-flash \
+  uv run python -m src.doe.deploy_coordinator --update <ID> --display-name coordinator-native-gemini37-probe
+# (engines live in us-central1 — teardown is agent_engines.delete(<resource>, force=True) if disposing)
 ```
 
-**Result:** _(not yet run — fill in after the probe; then update the outage memory accordingly)_.
+### Observations (engine `…/reasoningEngines/4380288848559603712`, kept live)
+
+| Measure | Result |
+|---|---|
+| Backbone / resolution | `gemini-3.7-flash` → **native ADK `Gemini`** (global endpoint), no LiteLlm |
+| Engine | `coordinator-native-gemini37-probe`, **us-central1**, id `4380288848559603712` (kept running, not torn down) |
+| Probe (multi-intent prompt) | `ok=true, events=1, text_events=0` — the single streamed event is a `function_call` (tool delegation, carries no visible text); first event 25.0s, elapsed 31.0s |
+| Diagnostic — "What is 2+2?" | **1 event with visible text** ("2 + 2 is 4 …"); `finish_reason` + `usage_metadata` present |
+| Diagnostic — "Find a flight SFO→JFK" | **3 events**: `function_call` → `function_response` (**real MCP flight results**) → text answer |
+| Load (`--load --qps 2 --duration 1`) | Offered 119, **Sent OK 119, Errors 0**; achieved 0.40 qps (latency-bound, 8 workers); **p50 15.8s / p95 42.2s**; metrics emitted to `custom.googleapis.com/agent_traffic/*` labeled `model=gemini-3.7-flash` |
+| Traces | Not fetched this run; per `online-eval-content-capture-blocked` the runtime strips prompt/response content — structure only |
+
+**Result / interpretation (best read):** the fresh **native-Gemini** coordinator is **healthy** — it streams
+events, returns visible answer text, executes real tool calls against the MCP servers, and served **0 errors
+across 119 concurrent requests**. This is emphatically **not** the empty-stream outage (HTTP 200, 0 events,
+SIGKILL) that crashed every fresh coordinator on 2026-08-13. So a fresh coordinator deploy **works again on
+the native path as of 2026-08-14**.
+
+**Honest confound — one arm, one day.** This single probe cannot fully separate two explanations: (a) the
+**LiteLlm-on-Gemini-3 path** was the (or a) cause and dropping it un-blocks fresh deploys, vs. (b) the
+**platform regression cleared** between 2026-08-13 and 2026-08-14 (in which case a fresh *LiteLlm* deploy
+might now succeed too). We did **not** run the control arm (a fresh LiteLlm-wrapped Gemini-3 deploy today),
+so we don't claim causation. What is established: **native Gemini-3 fresh coordinator deploys serve
+healthily now**, and the native switch is the correct modernization regardless (it also kills the
+`[GEMINI_VIA_LITELLM]` thought-signature mangling of finding #2). The `p50 15.8s` latency is high but
+expected for a multi-tool coordinator doing real MCP round-trips; no baseline to call it a regression.
+
+**Follow-up (separate operator decision, NOT done here):** repointing `.env` / redeploying the *real*
+coordinator on the native path is gated on this result and left to the operator. The probe engine is
+**kept live** and iterated as **in-place revisions** via `deploy_coordinator --update <ID>` (never rewrites
+`.env`, never touches the pinned engine `3639024497392091136`).
 
 Related: [[coordinator-outage-is-runtime-not-model]] (memory),
 [model-armor-security-dashboard](./model-armor-security-dashboard.md),
