@@ -57,7 +57,18 @@ def test_router_monitored_metrics_shape():
     assert by_name["cost_savings_pct"] == "LT"
 
 
-def test_setup_all_alerts_covers_both_families(monkeypatch):
+def test_online_monitored_metrics_shape():
+    from src.eval.quality_alerts import ALL_MONITORED_METRICS, ONLINE_MONITORED_METRICS
+
+    # The online quality surface mirrors the coordinator's three rubrics on the
+    # same 1-5 axis, so it alerts on the same floor (3.0) — only the metric
+    # family (agent_online_eval) differs.
+    assert {m[0] for m in ONLINE_MONITORED_METRICS} == {m[0] for m in ALL_MONITORED_METRICS}
+    for _name, threshold in ONLINE_MONITORED_METRICS:
+        assert threshold == 3.0
+
+
+def test_setup_all_alerts_covers_all_families(monkeypatch):
     from src.eval import quality_alerts as qa
 
     calls = []
@@ -77,8 +88,12 @@ def test_setup_all_alerts_covers_both_families(monkeypatch):
     qa.setup_all_alerts()
 
     families = {c[3] for c in calls}
-    assert families == {"agent_eval", "agent_router"}
+    assert families == {"agent_eval", "agent_router", "agent_online_eval"}
     # Coordinator metrics keep LT/agent_eval; router latency uses GT/agent_router.
     router_latency = [c for c in calls if c[0] == "classifier_latency_ms"]
     assert router_latency and router_latency[0][2] == "GT"
     assert router_latency[0][3] == "agent_router"
+    # Online quality alerts on the floor (LT) in its own family.
+    online = [c for c in calls if c[3] == "agent_online_eval"]
+    assert online and all(c[2] == "LT" for c in online)
+    assert {c[0] for c in online} == {"helpfulness", "tool_use_accuracy", "policy_compliance"}

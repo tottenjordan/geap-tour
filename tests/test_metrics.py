@@ -168,6 +168,35 @@ def test_write_quality_scores_emits_all():
     assert vals["custom.googleapis.com/agent_eval/policy_compliance"] == 3.9
 
 
+def test_online_quality_metric_types_derive_from_list():
+    """Online quality metric types must match ONLINE_MONITORED_METRICS exactly."""
+    from src.eval.quality_alerts import ONLINE_MONITORED_METRICS
+    from src.observability.metrics import ONLINE_QUALITY_METRIC_TYPES
+
+    expected = {
+        f"custom.googleapis.com/agent_online_eval/{name}"
+        for name, _threshold in ONLINE_MONITORED_METRICS
+    }
+    assert set(ONLINE_QUALITY_METRIC_TYPES) == expected
+    assert "custom.googleapis.com/agent_online_eval/helpfulness" in ONLINE_QUALITY_METRIC_TYPES
+
+
+def test_write_online_quality_scores_emits_agent_online_eval():
+    """Online scores land on the separate agent_online_eval/* family, verbatim."""
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    metrics.write_online_quality_scores(
+        {"helpfulness": 4.5, "tool_use_accuracy": 3.8},
+        writer=w,
+        extra_labels={"eval_mode": "online"},
+    )
+    vals = _by_type(client)
+    assert vals["custom.googleapis.com/agent_online_eval/helpfulness"] == 4.5
+    assert vals["custom.googleapis.com/agent_online_eval/tool_use_accuracy"] == 3.8
+    for ts in client.flatten():
+        assert ts.metric.labels["eval_mode"] == "online"
+
+
 def test_router_metric_types_derive_from_list():
     """Router metric types must match ROUTER_MONITORED_METRICS exactly."""
     from src.eval.quality_alerts import ROUTER_MONITORED_METRICS

@@ -4,7 +4,9 @@ Builds a Cloud Monitoring dashboard proto whose widgets chart the custom metrics
 emitted by ``src/observability/metrics.py``:
 
 * traffic: request latency (p50/p95), achieved QPS, error rate, injected count
-* quality: the coordinator ``agent_eval/*`` scores (1-5 rubric axis)
+* quality: the coordinator ``agent_eval/*`` scores (1-5 rubric axis, offline snapshot)
+* online quality: the ``agent_online_eval/*`` scores (1-5 axis, continuous
+  live-traffic sampling — sidesteps the platform-blocked native Online Evaluators)
 * router: the ``agent_router/*`` efficiency scores (native units: %, ms)
 
 ``build_dashboard()`` is a pure function (no API calls) so tests assert on the
@@ -24,6 +26,7 @@ from google.cloud import monitoring_dashboard_v1 as dashboard_v1
 
 from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 from src.observability.metrics import (
+    ONLINE_QUALITY_METRIC_TYPES,
     QUALITY_METRIC_TYPES,
     ROUTER_METRIC_TYPES,
     TRAFFIC_METRIC_TYPES,
@@ -42,6 +45,9 @@ _TITLES = {
     "custom.googleapis.com/agent_eval/helpfulness": "Eval: Helpfulness",
     "custom.googleapis.com/agent_eval/tool_use_accuracy": "Eval: Tool-Use Accuracy",
     "custom.googleapis.com/agent_eval/policy_compliance": "Eval: Policy Compliance",
+    "custom.googleapis.com/agent_online_eval/helpfulness": "Online Eval: Helpfulness",
+    "custom.googleapis.com/agent_online_eval/tool_use_accuracy": "Online Eval: Tool-Use Accuracy",
+    "custom.googleapis.com/agent_online_eval/policy_compliance": "Online Eval: Policy Compliance",
     "custom.googleapis.com/agent_router/routing_accuracy_pct": "Router: Routing Accuracy (%)",
     "custom.googleapis.com/agent_router/cost_savings_pct": ("Router: Cost Savings vs All-Opus (%)"),
     "custom.googleapis.com/agent_router/classifier_latency_ms": ("Router: Classifier Latency (ms)"),
@@ -94,19 +100,25 @@ def _xy_widget(metric_type: str, breakdown_label: str | None = None) -> dashboar
 def build_dashboard() -> dashboard_v1.Dashboard:
     """Return the Dashboard proto (no API calls).
 
-    Each metric gets an aggregate (all-series-mean) widget. Traffic and quality
-    metrics additionally get a per-``model`` breakdown widget so a bake-off's two
-    coordinator deployments render as separate lines; router metrics don't (the
-    router is a single agent, not a per-model comparison).
+    Each metric gets an aggregate (all-series-mean) widget. Traffic, quality, and
+    online-quality metrics additionally get a per-``model`` breakdown widget so a
+    bake-off's two coordinator deployments render as separate lines; router
+    metrics don't (the router is a single agent, not a per-model comparison).
     """
     # (metric_type, breakdown_label) — None means the plain aggregate widget.
     specs: list[tuple[str, str | None]] = [
         (mt, None)
         for mt in list(TRAFFIC_METRIC_TYPES)
         + list(QUALITY_METRIC_TYPES)
+        + list(ONLINE_QUALITY_METRIC_TYPES)
         + list(ROUTER_METRIC_TYPES)
     ]
-    specs += [(mt, "model") for mt in list(TRAFFIC_METRIC_TYPES) + list(QUALITY_METRIC_TYPES)]
+    specs += [
+        (mt, "model")
+        for mt in list(TRAFFIC_METRIC_TYPES)
+        + list(QUALITY_METRIC_TYPES)
+        + list(ONLINE_QUALITY_METRIC_TYPES)
+    ]
 
     tiles = []
     for i, (metric_type, breakdown) in enumerate(specs):

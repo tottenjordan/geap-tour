@@ -137,6 +137,20 @@ ROUTER_MONITORED_METRICS = [
     ("classifier_latency_ms", 8000.0, "GT"),
 ]
 
+# Online coordinator quality series (``agent_online_eval/*``). Same three rubrics
+# as ALL_MONITORED_METRICS on the same 1-5 axis (so the same 3.0 floor applies),
+# but a SEPARATE family so continuous, client-side-sampled live-traffic scores
+# (``eval_mode=online``) never blur into the periodic offline snapshot
+# (``agent_eval/*``, ``eval_mode=offline``). The native Vertex Online Evaluators
+# are platform-blocked (the managed runtime strips prompt/response from traces —
+# INSUFFICIENT_DATA), so this surface is fed by scoring live ``stream_query``
+# responses captured client-side (see src/eval/online_monitor.py).
+ONLINE_MONITORED_METRICS = [
+    ("helpfulness", 3.0),
+    ("tool_use_accuracy", 3.0),
+    ("policy_compliance", 3.0),
+]
+
 
 def setup_all_alerts(notification_channel: str | None = None) -> list:
     """Create alert policies for every monitored metric (both families)."""
@@ -160,6 +174,17 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
                 notification_channel=notification_channel,
                 comparison=comparison,
                 family="agent_router",
+            )
+            results.append(result)
+        except Exception as e:
+            print(f"  Warning: failed to create alert for {metric_name}: {e}")
+    for metric_name, threshold in ONLINE_MONITORED_METRICS:
+        try:
+            result = create_quality_alert(
+                metric_name=metric_name,
+                threshold=threshold,
+                notification_channel=notification_channel,
+                family="agent_online_eval",
             )
             results.append(result)
         except Exception as e:
