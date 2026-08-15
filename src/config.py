@@ -40,6 +40,7 @@ def resource_labels_bq_flags() -> list[str]:
         flags += ["--label", f"{k}:{v}"]
     return flags
 
+
 SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
 BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
 EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")
@@ -61,14 +62,18 @@ MCP_SERVER_URLS = {
 #
 # NOTE: the Agent Engine managed runtime does NOT honor ADK's content-capture
 # env vars (ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS / ADK_TELEMETRY_IGNORE_RUN_CONFIG
-# / SPAN_AND_EVENT). Verified 2026-08-12 against google.adk 2.6.3: setting them
-# had zero effect — call_llm spans still carry gcp.vertex.agent.llm_request={}
-# and execute_tool spans tool_call_args={}, so the native Online Evaluators
-# always return INSUFFICIENT_DATA. Content capture for LiteLlm-backed agents is
-# blocked at the platform level. Keep this minimal (EVENT_ONLY) — the extra vars
-# were reverted as no-ops. For agents on a *native* google.genai model, EVENT_ONLY
-# routes gen_ai.* content to log events (gen_ai.system_instructions), the one
-# path the evaluator can still parse.
+# / SPAN_AND_EVENT) baked in via env. Verified 2026-08-12 against google.adk 2.6.3:
+# setting them here had zero effect — call_llm spans still carried
+# gcp.vertex.agent.llm_request={} and execute_tool spans tool_call_args={}.
+# ROOT CAUSE (2026-08-15): this is NOT a hard platform strip. The managed AdkApp
+# runtime's set_up() hard-overwrites ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS at
+# container start based *solely* on the deprecated enable_tracing template flag,
+# clobbering whatever we bake into the deployment spec here. The lever that opens
+# the gate is AdkApp(enable_tracing=True) — see ENABLE_SPAN_CONTENT_CAPTURE below
+# and docs/notes/online-eval-content-capture.md. So keep this minimal (EVENT_ONLY):
+# the extra content-capture vars are no-ops *from env* and enable_tracing is the
+# real switch. For agents on a *native* google.genai model, EVENT_ONLY still routes
+# gen_ai.* content to log events (gen_ai.system_instructions).
 #
 # OTEL_TRACES_SAMPLER pins 100% trace sampling (parent-based, ratio 1.0) so a
 # future runtime default can never silently start dropping traces. This is
@@ -155,6 +160,7 @@ def resolve_model(model_str: str):
         model_str = f"vertex_ai/{model_str}"
     return LiteLlm(model=model_str, vertex_location="global")
 
+
 # Multi-model router (5-tier: lite → flash → pro → sonnet → opus)
 LITE_MODEL = os.environ.get("LITE_MODEL", "gemini-3.1-flash-lite")
 FLASH_MODEL = os.environ.get("FLASH_MODEL", "gemini-3.5-flash")
@@ -193,6 +199,30 @@ BQ_EVAL_DATASET = os.environ.get("BQ_EVAL_DATASET", "geap_workshop_logs")
 # Default off so normal deploys don't require the extra BQ Storage Write API +
 # dataset IAM. See docs/notes/agent-analytics-bigquery.md.
 ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", "true", "True")
+
+# ENABLE_SPAN_CONTENT_CAPTURE=1 deploys the coordinator with
+# ``AdkApp(enable_tracing=True)``. This is the ONE lever that unblocks native
+# Online Evaluators: the managed AdkApp runtime's set_up() hard-overwrites
+# ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS at container start based *solely* on this
+# deprecated template flag (not on GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY),
+# so any content-capture env var baked into the deployment spec is clobbered
+# unless this is set. With it on, call_llm spans carry the real
+# gcp.vertex.agent.llm_request (system_instruction + contents) / llm_response
+# instead of "{}", so the evaluator stops returning INSUFFICIENT_DATA.
+# VALIDATED LIVE 2026-08-15 on a throwaway native-gemini-3.7-flash engine: with
+# this flag on, 46/46 call_llm spans carried real gcp.vertex.agent.llm_request
+# (system_instruction + contents) and llm_response — the gate is open. Default
+# OFF: the flag was historically removed after an Aug-2026 deploy appeared to
+# crash the worker mid-request (0 events streamed) — a signature that matches the
+# concurrent platform outage that crashed ALL fresh engines and no longer
+# reproduces on the native-Gemini path (the 08-15 throwaway probe streamed
+# healthily). Enable on the native-Gemini backbone.
+# See docs/notes/online-eval-content-capture.md.
+ENABLE_SPAN_CONTENT_CAPTURE = os.environ.get("ENABLE_SPAN_CONTENT_CAPTURE", "0") in (
+    "1",
+    "true",
+    "True",
+)
 BQ_AGENT_ANALYTICS_DATASET = os.environ.get("BQ_AGENT_ANALYTICS_DATASET", "geap_agent_analytics")
 AGENT_ANALYTICS_TABLE = os.environ.get("AGENT_ANALYTICS_TABLE", "agent_events")
 AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
@@ -232,6 +262,7 @@ def disable_pyopenssl():
     """
     try:
         import OpenSSL.SSL as _ssl
+
         for attr in dir(_ssl.Context):
             method = getattr(_ssl.Context, attr, None)
             if callable(method) and hasattr(method, "__wrapped__"):

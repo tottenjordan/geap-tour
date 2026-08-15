@@ -38,6 +38,7 @@ from src.config import (
     DEPLOY_TAG,
     ENABLE_AGENT_ANALYTICS,
     ENABLE_MEMORY_BANK,
+    ENABLE_SPAN_CONTENT_CAPTURE,
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
     EXPENSE_MODEL,
@@ -229,21 +230,33 @@ def _build_app(agent):
     ``_analytics_plugin``). AdkApp forwards ``plugins`` to the Runner and
     deep-copies them on clone(), so they survive the deploy cycle.
 
-    Structural OTEL tracing is enabled by the managed runtime via the
+    Structural OTEL tracing (the agent/tool/model span *tree* in Cloud Trace) is
+    enabled by the managed runtime via the
     ``GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true`` env var set in
-    ``_build_config`` — the GCP-recommended path that *replaces* the in-process
-    ``AdkApp(enable_tracing=True)`` flag. The flag crashed/recycled the deployed
-    worker mid-request (0 events streamed); the env var populates the same
-    agent/tool/model span tree in Cloud Trace without touching the request path.
-    (The managed runtime still strips gen_ai.* prompt/response *content* from
-    those spans — see docs/notes/agent-analytics-bigquery.md — but the structural
-    tree is what makes traces appear for the deployment at all.)
+    ``_build_config``. That is enough for traces to *appear*, but it does NOT put
+    prompt/response *content* on the spans: the managed AdkApp ``set_up()``
+    hard-overwrites ``ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`` at container start
+    based *solely* on the deprecated ``enable_tracing`` template flag (not on the
+    telemetry env var), forcing it ``"false"`` when the flag is absent — which is
+    why every content-capture env var baked into the deploy spec was a no-op and
+    the native Online Evaluators returned ``INSUFFICIENT_DATA``.
+
+    ``ENABLE_SPAN_CONTENT_CAPTURE=1`` opts into ``AdkApp(enable_tracing=True)``,
+    the one lever that opens that gate so ``call_llm`` spans carry the real
+    ``gcp.vertex.agent.llm_request`` (system_instruction + contents) /
+    ``llm_response``. Default OFF: the flag was previously removed after a deploy
+    appeared to crash the worker mid-request (0 events streamed) — a signature
+    matching the concurrent platform outage that crashed *all* fresh engines and
+    no longer reproduces on the native-Gemini path. Enable it on the
+    native-Gemini backbone. See docs/notes/online-eval-content-capture.md.
     """
     builders = {"session_service_builder": _session_service_builder}
     if _wants_memory(agent):
         builders["memory_service_builder"] = _memory_service_builder
     plugin = _analytics_plugin()
     plugins = [plugin] if plugin else None
+    if ENABLE_SPAN_CONTENT_CAPTURE:
+        builders["enable_tracing"] = True
     return agent_engines.AdkApp(agent=agent, plugins=plugins, **builders)
 
 

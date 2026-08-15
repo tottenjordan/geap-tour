@@ -22,6 +22,12 @@ file; keep this index short (< 200 lines).
   same rubrics as the offline bridge and publishes a third monitored surface
   (`eval_mode=online`, same 1-5/3.0 axis) — sidesteps the platform-blocked native
   Online Evaluators by using client-side response content the trace surface strips.
+- [Online-eval INSUFFICIENT_DATA — true root cause & fix](./online-eval-content-capture.md)
+  — the native Online Evaluators failed because the managed runtime's `set_up()`
+  forces the ADK span-content gate closed unless deployed with
+  `AdkApp(enable_tracing=True)` (NOT a hard content strip); the opt-in
+  `ENABLE_SPAN_CONTENT_CAPTURE` flag opens it, validated live (46/46 spans carry
+  real content). Corrects the earlier "no lever" conclusion.
 - [DOE framework for scaling experimentation](./doe-framework.md) — factor
   registry → fractional-factorial design → one PipelineJob per point → harvest →
   main-effects report; factor channels, subprocess-per-point, cost caveat.
