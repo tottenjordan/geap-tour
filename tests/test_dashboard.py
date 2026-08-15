@@ -164,6 +164,7 @@ def test_update_when_found():
     existing = dashboard_v1.Dashboard(
         name="projects/proj-x/dashboards/abc123",
         display_name=DASHBOARD_DISPLAY_NAME,
+        etag="etag-xyz",
     )
     client = FakeDashboardClient(existing=existing)
     create_or_update_dashboard(client=client, project_id="proj-x")
@@ -171,6 +172,9 @@ def test_update_when_found():
     assert len(client.updated) == 1
     # The updated proto must carry the existing resource name so patch targets it.
     assert client.updated[0].name == "projects/proj-x/dashboards/abc123"
+    # ...and the existing etag, which the update API requires (else it 400s with
+    # "Update Dashboard should specify a non empty etag").
+    assert client.updated[0].etag == "etag-xyz"
 
 
 def test_update_handles_list_notfound_gracefully():

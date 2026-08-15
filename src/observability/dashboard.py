@@ -175,6 +175,9 @@ def create_or_update_dashboard(client=None, project_id: str = GCP_PROJECT_ID):
 
     if existing is not None:
         desired.name = existing.name
+        # The patch API rejects an update without the current etag ("400 Update
+        # Dashboard should specify a non empty etag"), so carry it over.
+        desired.etag = existing.etag
         result = client.update_dashboard(request={"dashboard": desired})
         action = "Updated"
     else:
