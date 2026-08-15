@@ -236,6 +236,53 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
+# Step 0b: Agent Registry read for the per-engine agent identity
+# ─────────────────────────────────────────────────────────────
+#
+# With identityType=AGENT_IDENTITY (Step 0), a deployed engine runs under its
+# OWN per-engine SPIFFE workload identity — NOT the RE service agent. So the MCP
+# toolset resolution done in src/registry.py:get_mcp_tools() (which calls the
+# Agent Registry control plane, agentregistry.mcpServers.get) is authorized
+# against that per-engine identity, and roles granted to the RE service agent do
+# NOT apply. Without this grant the deployed agent gets a 403 IAM_PERMISSION_DENIED
+# and silently falls back to the direct Cloud Run URLs (a WARNING in the logs).
+# See docs/notes/agent-registry-mcp-resolution.md.
+#
+# The IAM member is `principal://<effectiveIdentity>`, where effectiveIdentity is
+# read back from the engine spec (deterministic once AGENT_IDENTITY is set). We
+# grant roles/agentregistry.viewer (includes agentregistry.mcpServers.get/list/search)
+# per-engine — narrowest blast radius; a project/org principalSet over the pool
+# is the broader alternative (admin decision, not done here).
+#
+# NOTE: an existing engine caches its toolset resolution per container instance,
+# so the cutover to the registry path completes when the engine recycles — e.g.
+# an in-place `deploy_agents coordinator --update`.
+
+grant_registry_read() {
+    local label="$1"
+    local engine_id="$2"
+    local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
+    local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
+
+    local eff
+    eff=$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" "${api_base}/${engine_path}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null)
+    if [ -z "$eff" ]; then
+        warn "${label}: no effectiveIdentity (identityType may not be AGENT_IDENTITY yet) — skipping registry grant"
+        return 1
+    fi
+
+    run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="principal://${eff}" \
+        --role="roles/agentregistry.viewer" \
+        --condition=None >/dev/null && ok "${label}: agentregistry.viewer granted to agent identity"
+}
+
+step "Step 0b: Agent Registry read for agent identity"
+grant_registry_read "Coordinator" "$AGENT_ENGINE_ID"
+grant_registry_read "Router" "$ROUTER_ENGINE_ID"
+
+# ─────────────────────────────────────────────────────────────
 # Layer 1: IAM Allow Policies (egress control via IAP)
 # ─────────────────────────────────────────────────────────────
 #

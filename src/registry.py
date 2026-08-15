@@ -23,9 +23,7 @@ _registry = None
 def get_registry() -> AgentRegistry:
     global _registry
     if _registry is None:
-        _registry = AgentRegistry(
-            project_id=GCP_PROJECT_ID, location=AGENT_REGISTRY_LOCATION
-        )
+        _registry = AgentRegistry(project_id=GCP_PROJECT_ID, location=AGENT_REGISTRY_LOCATION)
     return _registry
 
 
@@ -33,20 +31,32 @@ def get_mcp_tools(server_name: str):
     try:
         toolset = get_registry().get_mcp_toolset(server_name)
         # Agent Registry uses default 5s/300s — override for Cloud Run
-        if hasattr(toolset, '_connection_params'):
-            if hasattr(toolset._connection_params, 'timeout'):
+        if hasattr(toolset, "_connection_params"):
+            if hasattr(toolset._connection_params, "timeout"):
                 toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS
-            if hasattr(toolset._connection_params, 'sse_read_timeout'):
+            if hasattr(toolset._connection_params, "sse_read_timeout"):
                 toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS
         return toolset
-    except RuntimeError:
+    except (RuntimeError, ValueError) as exc:
+        # ADK raises RuntimeError on registry control-plane HTTP/creds errors and
+        # ValueError when the resolved entry has no endpoint URI — both mean the
+        # registry couldn't hand us a usable toolset, so fall back to the direct
+        # Cloud Run URL. Log at WARNING (not INFO): a coordinator quietly running
+        # on the fallback path is exactly the silent degradation we want visible.
         url = MCP_SERVER_URLS.get(server_name)
         if not url:
             raise
-        log.info("Agent Registry unavailable for %s — using direct URL %s", server_name, url)
-        return McpToolset(connection_params=StreamableHTTPConnectionParams(
-            url=url, timeout=MCP_TIMEOUT_SECONDS, sse_read_timeout=MCP_READ_TIMEOUT_SECONDS
-        ))
+        log.warning(
+            "Agent Registry resolution failed for %s (%s) — falling back to direct URL %s",
+            server_name,
+            exc,
+            url,
+        )
+        return McpToolset(
+            connection_params=StreamableHTTPConnectionParams(
+                url=url, timeout=MCP_TIMEOUT_SECONDS, sse_read_timeout=MCP_READ_TIMEOUT_SECONDS
+            )
+        )
 
 
 # --- A2A agents (preview-optional) -----------------------------------------

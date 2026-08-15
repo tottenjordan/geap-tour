@@ -1,9 +1,11 @@
 """Expense MCP server — exposes expense submission, policy checks, and history over StreamableHTTP."""
 
 import logging
+
 logging.basicConfig(level=logging.INFO)
 try:
     from otel_setup import setup_opentelemetry
+
     setup_opentelemetry("expense-mcp")
 except Exception as e:
     logging.warning("OTel setup failed: %s", e)
@@ -53,4 +55,7 @@ def get_user_expenses(user_id: str) -> list[dict]:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8003)
+    # stateless_http=True: any Cloud Run instance can serve any POST, so scaling
+    # can't drop an MCP session mid-conversation ("Session terminated" 404).
+    # See docs/notes/agent-registry-mcp-resolution.md.
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8003, stateless_http=True)

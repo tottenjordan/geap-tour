@@ -15,13 +15,27 @@ SERVERS = [
 def _build_deploy_cmd(server: dict) -> list[str]:
     """Build the `gcloud run deploy` argv for a server, labels included."""
     return [
-        "gcloud", "run", "deploy", server["name"],
-        "--source", server["path"],
-        "--region", GCP_REGION,
-        "--project", GCP_PROJECT_ID,
-        "--port", str(server["port"]),
+        "gcloud",
+        "run",
+        "deploy",
+        server["name"],
+        "--source",
+        server["path"],
+        "--region",
+        GCP_REGION,
+        "--project",
+        GCP_PROJECT_ID,
+        "--port",
+        str(server["port"]),
         "--allow-unauthenticated",
-        "--labels", resource_labels_gcloud(),
+        # Keep one instance warm: a cold start can exceed the coordinator's 60s
+        # MCP connect timeout. Cross-instance session drops ("Session terminated")
+        # are prevented by stateless HTTP in each server's mcp.run(), not here —
+        # so no --max-instances/--session-affinity pinning is needed.
+        "--min-instances",
+        "1",
+        "--labels",
+        resource_labels_gcloud(),
         "--quiet",
     ]
 
@@ -39,10 +53,17 @@ def deploy_server(server: dict) -> str:
         raise RuntimeError(f"Failed to deploy {name}")
 
     url_cmd = [
-        "gcloud", "run", "services", "describe", name,
-        "--region", GCP_REGION,
-        "--project", GCP_PROJECT_ID,
-        "--format", "value(status.url)",
+        "gcloud",
+        "run",
+        "services",
+        "describe",
+        name,
+        "--region",
+        GCP_REGION,
+        "--project",
+        GCP_PROJECT_ID,
+        "--format",
+        "value(status.url)",
     ]
     url_result = subprocess.run(url_cmd, capture_output=True, text=True)
     service_url = url_result.stdout.strip()
