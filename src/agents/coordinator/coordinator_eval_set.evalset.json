@@ -40,43 +40,6 @@
       }
     },
     {
-      "eval_id": "hotel_search_miami",
-      "conversation": [
-        {
-          "user_content": {
-            "parts": [
-              {
-                "text": "Find me a hotel in Miami"
-              }
-            ],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "I found the Fontainebleau Miami at $400/night with a 4.7 rating."
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "search_hotels",
-                "args": {
-                  "city": "Miami"
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "geap_workshop",
-        "user_id": "eval_user"
-      }
-    },
-    {
       "eval_id": "book_flight",
       "conversation": [
         {
@@ -141,84 +104,6 @@
                 "args": {
                   "category": "meals",
                   "amount": 50
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "geap_workshop",
-        "user_id": "eval_user"
-      }
-    },
-    {
-      "eval_id": "expense_policy_over_limit",
-      "conversation": [
-        {
-          "user_content": {
-            "parts": [
-              {
-                "text": "Check policy for a $500 entertainment expense"
-              }
-            ],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "A $500 entertainment expense exceeds the $150 policy limit for entertainment. It requires manager review."
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "check_expense_policy",
-                "args": {
-                  "category": "entertainment",
-                  "amount": 500
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "geap_workshop",
-        "user_id": "eval_user"
-      }
-    },
-    {
-      "eval_id": "expense_submit_within",
-      "conversation": [
-        {
-          "user_content": {
-            "parts": [
-              {
-                "text": "Submit a $45 meals expense for lunch meeting, user ID EMP001"
-              }
-            ],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "Your $45 meals expense for lunch meeting has been submitted and approved."
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "submit_expense",
-                "args": {
-                  "user_id": "EMP001",
-                  "category": "meals",
-                  "amount": 45,
-                  "description": "lunch meeting"
                 }
               }
             ]
@@ -536,89 +421,6 @@
       }
     },
     {
-      "eval_id": "flight_search_no_results",
-      "conversation": [
-        {
-          "user_content": {
-            "parts": [
-              {
-                "text": "Find flights from XYZ to ABC"
-              }
-            ],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "I wasn't able to find any flights from XYZ to ABC. These don't appear to be valid airport codes. Could you provide valid origin and destination airports?"
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "search_flights",
-                "args": {
-                  "origin": "XYZ",
-                  "destination": "ABC"
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "geap_workshop",
-        "user_id": "eval_user"
-      }
-    },
-    {
-      "eval_id": "multi_intent_travel_expense",
-      "conversation": [
-        {
-          "user_content": {
-            "parts": [
-              {
-                "text": "Submit a $30 meal receipt for user EMP001"
-              }
-            ],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "Your $30 meal expense for EMP001 has been submitted and approved, within the $75 policy limit."
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "search_flights",
-                "args": {
-                  "destination": "ORD"
-                }
-              },
-              {
-                "name": "submit_expense",
-                "args": {
-                  "user_id": "EMP001",
-                  "category": "meals",
-                  "amount": 30
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "geap_workshop",
-        "user_id": "eval_user"
-      }
-    },
-    {
       "eval_id": "hotel_search_no_results",
       "conversation": [
         {
@@ -775,7 +577,7 @@
           "final_response": {
             "parts": [
               {
-                "text": "Yes. A $75 meal expense is within policy \u2014 it meets the $75 meals limit exactly."
+                "text": "Yes. A $75 meal expense is within policy — it meets the $75 meals limit exactly."
               }
             ],
             "role": "model"

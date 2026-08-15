@@ -17,6 +17,12 @@ file; keep this index short (< 200 lines).
   offline bridge became the canonical source for two honest surfaces: coordinator
   quality (`agent_eval/*`, 1-5) via `publish_offline_eval` and router efficiency
   (`agent_router/*`, native units) via `publish_router_efficiency`.
+- [Evaluation robustness — assessment + roadmap](./evaluation-robustness-roadmap.md)
+  — grounded audit of the eval surface (G1–G6: judge non-determinism, train/eval
+  contamination, no statistical rigor, static thresholds, coverage holes, correctness
+  nits) with a P0/P1/P2 roadmap. **P0 shipped:** shared deterministic+retry judge
+  client, a held-out eval split with a contamination guard test, and the CLI
+  threshold-default fix.
 - [Online quality monitor (`agent_online_eval/*`)](./online-quality-monitor.md) —
   continuous client-side eval: scores sampled live `stream_query` traffic with the
   same rubrics as the offline bridge and publishes a third monitored surface

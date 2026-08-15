@@ -350,8 +350,8 @@ def main():
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.5,
-        help="Minimum score to pass (1-5). Default: 0.5",
+        default=3.0,
+        help="Minimum score to pass (1-5). Default: 3.0",
     )
     parser.add_argument(
         "--output",

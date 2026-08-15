@@ -254,22 +254,10 @@ ONLINE_PROBE_PROMPTS = [
 def _default_generate_fn(
     judge_model: str, project: str | None, location: str | None
 ) -> Callable[[str], str]:
-    """Build a direct google.genai judge call (Vertex backend) — same as the judges."""
-    from google import genai
+    """Deterministic (temperature=0) + retrying Vertex judge call (shared helper)."""
+    from src.eval.judge_client import build_judge_generate_fn
 
-    from src.config import GCP_PROJECT_ID, GCP_REGION
-
-    client = genai.Client(
-        vertexai=True,
-        project=project or GCP_PROJECT_ID,
-        location=location or GCP_REGION,
-    )
-
-    def _generate(prompt: str) -> str:
-        resp = client.models.generate_content(model=judge_model, contents=prompt)
-        return resp.text or ""
-
-    return _generate
+    return build_judge_generate_fn(judge_model, project, location)
 
 
 def capture_live_interactions(
