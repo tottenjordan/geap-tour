@@ -39,7 +39,11 @@ from google.api import metric_pb2, monitored_resource_pb2
 from google.cloud import monitoring_v3
 
 from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, RESOURCE_LABELS
-from src.eval.quality_alerts import ALL_MONITORED_METRICS, ROUTER_MONITORED_METRICS
+from src.eval.quality_alerts import (
+    ALL_MONITORED_METRICS,
+    ONLINE_MONITORED_METRICS,
+    ROUTER_MONITORED_METRICS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -64,6 +68,7 @@ def parse_labels(pairs) -> dict[str, str]:
         out[key] = value
     return out
 
+
 # Quality metric types, derived from the SAME source quality_alerts.py alerts on.
 QUALITY_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_eval/{name}" for name, _threshold in ALL_MONITORED_METRICS
@@ -74,6 +79,13 @@ QUALITY_METRIC_TYPES = [
 ROUTER_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_router/{name}"
     for name, _threshold, _comparison in ROUTER_MONITORED_METRICS
+]
+
+# Online coordinator-quality metric types (``agent_online_eval/*``), continuous
+# live-traffic scores on the same 1-5 axis as ``agent_eval/*`` but a distinct
+# family, from the SAME source the online alert policies read.
+ONLINE_QUALITY_METRIC_TYPES = [
+    f"{METRIC_PREFIX}agent_online_eval/{name}" for name, _threshold in ONLINE_MONITORED_METRICS
 ]
 
 # Traffic metric types (bare, un-prefixed) emitted from a load-run summary.
@@ -204,6 +216,26 @@ def write_quality_scores(
     labels = _default_labels(extra_labels)
     for name, value in scores.items():
         writer.write_gauge(f"agent_eval/{name}", value, labels)
+
+
+def write_online_quality_scores(
+    scores: Mapping[str, float],
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> None:
+    """Emit ``agent_online_eval/<name>`` gauges for continuous live-traffic scores.
+
+    Keys are the bare metric names (e.g. ``helpfulness``) matching
+    ``quality_alerts.ONLINE_MONITORED_METRICS``. Values are on the SAME 1-5 axis
+    as :func:`write_quality_scores` (the caller scales 0-1 -> 1-5 before publish),
+    but land on a separate ``agent_online_eval/*`` family so continuous online
+    samples (``eval_mode=online``) stay distinct from the periodic offline
+    snapshot (``agent_eval/*``, ``eval_mode=offline``).
+    """
+    writer = writer or MetricsWriter()
+    labels = _default_labels(extra_labels)
+    for name, value in scores.items():
+        writer.write_gauge(f"agent_online_eval/{name}", value, labels)
 
 
 def write_router_metrics(

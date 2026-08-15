@@ -17,6 +17,11 @@ file; keep this index short (< 200 lines).
   offline bridge became the canonical source for two honest surfaces: coordinator
   quality (`agent_eval/*`, 1-5) via `publish_offline_eval` and router efficiency
   (`agent_router/*`, native units) via `publish_router_efficiency`.
+- [Online quality monitor (`agent_online_eval/*`)](./online-quality-monitor.md) —
+  continuous client-side eval: scores sampled live `stream_query` traffic with the
+  same rubrics as the offline bridge and publishes a third monitored surface
+  (`eval_mode=online`, same 1-5/3.0 axis) — sidesteps the platform-blocked native
+  Online Evaluators by using client-side response content the trace surface strips.
 - [DOE framework for scaling experimentation](./doe-framework.md) — factor
   registry → fractional-factorial design → one PipelineJob per point → harvest →
   main-effects report; factor channels, subprocess-per-point, cost caveat.

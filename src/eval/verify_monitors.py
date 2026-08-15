@@ -6,7 +6,12 @@ agents:
 
 * ``coordinator_quality`` — the ``agent_eval/*`` gauges (LLM rubrics on a 1-5
   axis; alert on the floor, ``LT``). The coordinator is a task executor: success
-  is output quality.
+  is output quality. These are the periodic *offline* snapshot (one write per
+  eval run, ``eval_mode=offline``).
+* ``online_quality`` — the ``agent_online_eval/*`` gauges (same 1-5 rubric axis,
+  same ``LT`` floor). These are *continuous* scores sampled off live traffic
+  (``eval_mode=online``, published by ``src.eval.online_monitor``) — a separate
+  family so the continuous online series never blurs with the offline snapshot.
 * ``router_efficiency`` — the ``agent_router/*`` gauges (native units: routing
   accuracy %, cost savings %, classifier latency ms). The router is an economic
   optimizer: routing accuracy / cost savings alert on the floor (``LT``) and
@@ -30,7 +35,11 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
-from src.eval.quality_alerts import ALL_MONITORED_METRICS, ROUTER_MONITORED_METRICS
+from src.eval.quality_alerts import (
+    ALL_MONITORED_METRICS,
+    ONLINE_MONITORED_METRICS,
+    ROUTER_MONITORED_METRICS,
+)
 
 DEFAULT_THRESHOLD = 3.0
 
@@ -50,6 +59,10 @@ SURFACES = {
     "coordinator_quality": Surface(
         prefix="custom.googleapis.com/agent_eval/",
         metrics=[(name, threshold, "LT") for name, threshold in ALL_MONITORED_METRICS],
+    ),
+    "online_quality": Surface(
+        prefix="custom.googleapis.com/agent_online_eval/",
+        metrics=[(name, threshold, "LT") for name, threshold in ONLINE_MONITORED_METRICS],
     ),
     "router_efficiency": Surface(
         prefix="custom.googleapis.com/agent_router/",
@@ -306,8 +319,8 @@ def verify_monitor_results(
 
     Returns:
         dict with results when ``output_format == "json"``, else ``None``. The
-        monitoring path returns two surface blocks (``coordinator_quality``,
-        ``router_efficiency``) plus a top-level ``status``.
+        monitoring path returns three surface blocks (``coordinator_quality``,
+        ``online_quality``, ``router_efficiency``) plus a top-level ``status``.
     """
     if source == "bigquery":
         data = _verify_from_bigquery(hours, threshold, bq_client=bq_client)
@@ -322,7 +335,8 @@ def verify_monitor_results(
 
 
 _SURFACE_TITLES = {
-    "coordinator_quality": "COORDINATOR QUALITY (agent_eval/*, 1-5 rubric)",
+    "coordinator_quality": "COORDINATOR QUALITY (agent_eval/*, 1-5 rubric, offline snapshot)",
+    "online_quality": "ONLINE QUALITY (agent_online_eval/*, 1-5 rubric, live sampled)",
     "router_efficiency": "ROUTER EFFICIENCY (agent_router/*, native units)",
 }
 

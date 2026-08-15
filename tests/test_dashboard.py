@@ -16,6 +16,7 @@ from src.observability.dashboard import (
     create_or_update_dashboard,
 )
 from src.observability.metrics import (
+    ONLINE_QUALITY_METRIC_TYPES,
     QUALITY_METRIC_TYPES,
     ROUTER_METRIC_TYPES,
     TRAFFIC_METRIC_TYPES,
@@ -49,10 +50,18 @@ def test_build_returns_dashboard_with_display_name():
 def test_build_has_widget_per_metric():
     d = build_dashboard()
     tiles = list(d.mosaic_layout.tiles)
-    # One tile per traffic + quality + router metric, PLUS a per-model breakdown
-    # variant for every traffic + quality metric (router is a single agent).
-    base = len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES) + len(ROUTER_METRIC_TYPES)
-    breakdown = len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES)
+    # One tile per traffic + quality + online-quality + router metric, PLUS a
+    # per-model breakdown variant for every traffic + quality + online-quality
+    # metric (router is a single agent, no per-model split).
+    base = (
+        len(TRAFFIC_METRIC_TYPES)
+        + len(QUALITY_METRIC_TYPES)
+        + len(ONLINE_QUALITY_METRIC_TYPES)
+        + len(ROUTER_METRIC_TYPES)
+    )
+    breakdown = (
+        len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES) + len(ONLINE_QUALITY_METRIC_TYPES)
+    )
     assert len(tiles) == base + breakdown
 
 
@@ -64,18 +73,34 @@ def test_model_breakdown_widgets_group_by_model_label():
         tile
         for tile in d.mosaic_layout.tiles
         for ds in tile.widget.xy_chart.data_sets
-        if "metric.label.model" in list(ds.time_series_query.time_series_filter.aggregation.group_by_fields)
+        if "metric.label.model"
+        in list(ds.time_series_query.time_series_filter.aggregation.group_by_fields)
     ]
-    # One grouped variant per traffic + quality metric.
-    assert len(grouped) == len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES)
+    # One grouped variant per traffic + quality + online-quality metric.
+    assert len(grouped) == (
+        len(TRAFFIC_METRIC_TYPES) + len(QUALITY_METRIC_TYPES) + len(ONLINE_QUALITY_METRIC_TYPES)
+    )
     # Their titles are marked as per-model.
     assert all("by model" in tile.widget.title for tile in grouped)
+
+
+def test_online_quality_widgets_present_and_titled():
+    d = build_dashboard()
+    titles = {tile.widget.title for tile in d.mosaic_layout.tiles}
+    assert "Online Eval: Helpfulness" in titles
+    assert "Online Eval: Tool-Use Accuracy" in titles
+    assert "Online Eval: Policy Compliance" in titles
 
 
 def test_every_metric_type_appears_in_some_widget():
     d = build_dashboard()
     blob = _all_filters(d)
-    for mt in TRAFFIC_METRIC_TYPES + QUALITY_METRIC_TYPES + ROUTER_METRIC_TYPES:
+    for mt in (
+        TRAFFIC_METRIC_TYPES
+        + QUALITY_METRIC_TYPES
+        + ONLINE_QUALITY_METRIC_TYPES
+        + ROUTER_METRIC_TYPES
+    ):
         assert mt in blob, f"metric type {mt} missing from dashboard widgets"
 
 
