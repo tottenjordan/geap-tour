@@ -107,6 +107,7 @@ def _query_surface_series(client, prefix: str, metric_specs, hours: int):
     each monitored metric is queried with an exact ``metric.type`` match and the
     results are chained.
     """
+    from google.api_core import exceptions as gexc
     from google.cloud import monitoring_v3
 
     now = datetime.now(tz=UTC)
@@ -121,7 +122,14 @@ def _query_surface_series(client, prefix: str, metric_specs, hours: int):
             "interval": interval,
             "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
         }
-        yield from client.list_time_series(request=request)
+        try:
+            yield from client.list_time_series(request=request)
+        except gexc.NotFound:
+            # This metric's descriptor was never materialized (nothing has ever
+            # been written to it). Treat as "no data for this metric" rather than
+            # aborting the whole multi-surface read — a surface that was never
+            # seeded should read as empty, not crash.
+            continue
 
 
 def _window_avg(

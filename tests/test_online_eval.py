@@ -209,6 +209,34 @@ def test_verify_monitoring_empty_series_no_crash():
     assert data["router_efficiency"]["status"] == "empty"
 
 
+def test_verify_tolerates_missing_metric_descriptor():
+    # A metric that was never written has no descriptor; the API 404s for that
+    # exact-match query. verify must skip it (no data) rather than aborting the
+    # whole multi-surface read.
+    from google.api_core import exceptions as gexc
+
+    present = _make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0, 5.0])
+
+    class PartialClient(FakeMonitoringClient):
+        def list_time_series(self, request=None, **kwargs):
+            req = request or kwargs
+            self.requests.append(req)
+            # Only helpfulness has ever been written; everything else 404s.
+            if "agent_eval/helpfulness" in req.get("filter", ""):
+                return [present]
+            raise gexc.NotFound("Cannot find metric(s) that match type")
+
+    client = PartialClient([present])
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    # The present metric still reads back; missing descriptors are just absent.
+    assert data["coordinator_quality"]["status"] == "ok"
+    assert data["coordinator_quality"]["metrics"]["helpfulness"]["eval_count"] == 2
+    assert "policy_compliance" not in data["coordinator_quality"]["metrics"]
+    # Surfaces whose every metric 404'd degrade to empty, not a crash.
+    assert data["router_efficiency"]["status"] == "empty"
+
+
 def test_verify_group_by_model_splits_into_per_model_buckets():
     # Same metric type, two deployments distinguished by the ``model`` label.
     series = [
