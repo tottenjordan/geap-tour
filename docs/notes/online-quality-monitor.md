@@ -1,26 +1,32 @@
 # Online quality monitor (`agent_online_eval/*`, continuous live-traffic scores)
 
-**Posture:** the native Vertex Online Evaluators are platform-blocked for our
-agents, so continuous evaluation runs **client-side**. `src/eval/online_monitor.py`
-samples live coordinator traffic, scores each response with LLM rubrics, and
-publishes a continuous `custom.googleapis.com/agent_online_eval/*` series
-(`eval_mode=online`) onto the same dashboard + alert surface as the offline
-snapshot — a third honest monitored surface alongside the offline
+**Posture:** continuous evaluation runs **client-side by choice**.
+`src/eval/online_monitor.py` samples live coordinator traffic, scores each
+response with LLM rubrics, and publishes a continuous
+`custom.googleapis.com/agent_online_eval/*` series (`eval_mode=online`) onto the
+same dashboard + alert surface as the offline snapshot — a third honest monitored
+surface alongside the offline
 [`agent_eval/*`](./offline-eval-monitoring-bridge.md) and `agent_router/*` series.
 
-## Why native online eval stays dead — and why *this* works anyway
+## Why client-side — and what the native path actually was
 
-The managed Agent Engine runtime strips prompt/response content from the ADK
-trace surface the native `onlineEvaluator` parses, so every native cycle returns
-`INSUFFICIENT_DATA` (root cause in [[online-eval-content-capture-blocked]] and
-[offline-eval-monitoring-bridge.md](./offline-eval-monitoring-bridge.md)). **No
-lever from our side unblocks the trace surface.**
+The native Vertex Online Evaluators returned `INSUFFICIENT_DATA` under a default
+deploy because prompt/response content never landed on the `call_llm` spans the
+`onlineEvaluator` parses. That was **not** a hard platform strip (corrected
+2026-08-15): the managed `AdkApp` `set_up()` forces the ADK span-content gate
+closed unless deployed with `AdkApp(enable_tracing=True)`, now wired behind the
+opt-in `ENABLE_SPAN_CONTENT_CAPTURE` flag (root cause + fix in
+[[online-eval-content-capture-blocked]] and
+[online-eval-content-capture.md](./online-eval-content-capture.md)). So the native
+path is **unblockable on demand** — this client-side monitor is the shipped
+default **by choice** (model-neutral, no privacy-off content capture on the served
+engine), not because the native surface is dead.
 
-The load-bearing insight: only the *trace* surface is stripped — the live
-response **content is available client-side** off `stream_query`. The traffic
-generator already captures `full_response`. So an online monitor is buildable by
-scoring sampled live `(prompt, response)` pairs captured client-side, entirely
-sidestepping the trace stripping.
+The load-bearing insight this monitor exploits: the live response **content is
+available client-side** off `stream_query` regardless of the span gate. The
+traffic generator already captures `full_response`. So an online monitor is
+buildable by scoring sampled live `(prompt, response)` pairs captured client-side,
+independent of the trace surface entirely.
 
 ## Two surfaces, never blurred
 
@@ -109,10 +115,82 @@ widgets (aggregate + per-`model` breakdown) chart the series live.
 - **Client-side sampling cost:** every scored interaction is one LLM judge call
   per rubric; `--sample-rate` bounds that cost. Sampling is a fixed stride, so a
   low rate scores a reproducible subset, not a random one.
-- **Still not the native surface:** this is a client-side workaround, not the
-  managed online evaluator. It proves continuous eval for the demo despite the
-  platform block; it does not un-block the native path.
+- **Client-side by choice, not the native surface:** this is a deliberate
+  client-side monitor, not the managed online evaluator. The native path is
+  unblockable on demand (`ENABLE_SPAN_CONTENT_CAPTURE=1` →
+  `AdkApp(enable_tracing=True)`, see
+  [online-eval-content-capture.md](./online-eval-content-capture.md)); this surface
+  is preferred because it's model-neutral and needs no privacy-off content capture
+  on the served engine.
+
+## Interpretation of a real run (2026-08-15, 31-pair bunch)
+
+A full end-to-end run drove the traffic generator's `QUERIES` corpus (28 cases:
+travel/expense/routing across low/medium/high complexity) plus 3 adversarial
+`INJECTED_QUERIES` through the pinned coordinator `3639024497392091136` via
+`stream_query`, captured client-side, then scored the whole bunch with
+`online_monitor --from-json` (99 judge calls: 3 rubrics × 31 pairs). **31/31
+captured, 0 errors** (every request returned HTTP 200).
+
+**Published online aggregate (`agent_online_eval/*`, 1-5 axis):**
+
+| Metric | Online (this bunch) | Offline snapshot (`agent_eval/*`) | Δ |
+|---|---|---|---|
+| `helpfulness` | **2.871** — below the 3.0 floor (alerts) | 4.03 | −1.16 |
+| `tool_use_accuracy` | 3.258 | 4.893 | −1.64 |
+| `policy_compliance` | 3.032 | 4.846 | −1.81 |
+
+**The headline result: telemetry said 100% success; the online monitor said
+helpfulness 2.87 (alerting).** The gap is entirely explained by **empty
+responses** — requests that stream 0 characters of visible text yet return HTTP
+200. Of the 31 captured pairs, **12 (39%) were empty**, concentrated at the two
+extremes of complexity:
+
+| Complexity | Empty / total | Why |
+|---|---|---|
+| low | 6 / 13 | **cold-start** — the first ~7 requests after an idle engine returned 0c, then it warmed up and answered normally |
+| medium | 1 / 7 | one warm blip |
+| high | 5 / 8 | **multi-step timeouts** — heavy multi-tool prompts stream only tool-calls / time out before emitting a final answer |
+| injected (adversarial) | 0 / 3 | all three got a clean, short (96c) refusal: *"I'm sorry, I can't process that request. Please rephrase your question about travel or expenses."* |
+
+An empty response is correctly scored as **low helpfulness** by the judge (there
+is nothing helpful in 0 characters), which is exactly what drags the online
+helpfulness mean under the 3.0 floor while the offline snapshot — scored on
+curated cases that always elicit a substantive answer — reads 4.03. **This gap is
+the entire point of the online surface:** the offline batch and raw request
+telemetry both miss silent empty-stream degradation because both see "HTTP 200,
+success"; only content-level scoring of *real sampled traffic* catches it.
+
+Why the other two metrics also dip but stay above floor: the empties also blunt
+`tool_use_accuracy` (a response with no tool output reads as weaker tool use) and
+`policy_compliance` (an empty answer neither cites nor violates policy, scoring
+mid-band, ~3.0), but both aggregates stay ≥ 3.0 because the substantive and
+adversarial responses (clean refusals score high on policy) pull them back up.
+
+**How it reads across all three surfaces** (`verify_monitors --format json`):
+- `coordinator_quality` (offline): 3 metrics all 4.0–4.9, `out_of_bounds=0` — a
+  healthy periodic snapshot.
+- `online_quality` (this run is the latest of 3 points): helpfulness
+  `out_of_bounds=1` (this run's 2.871), 1h trend = this bunch's exact values
+  (2.871 / 3.032 / 3.258); the 24h averages (3.90 / 3.46 / 3.98) stay above floor
+  because earlier warm-only probe runs scored higher.
+- `router_efficiency`: unaffected and all green (routing 91.7%, cost savings
+  63.9%, classifier latency 3436 ms) — a different agent on a different axis, as
+  intended.
+
+**Operator takeaways.**
+1. The online monitor is doing its job: it turned an invisible "39% empty at
+   HTTP 200" into a **fired helpfulness alert**. Neither offline eval nor uptime
+   telemetry would have surfaced it.
+2. The two empty-response causes are **operational, not model-quality**:
+   cold-start (mitigate with `--min-instances`/a warmer, or exclude the warm-up
+   window from sampling) and high-complexity multi-step timeouts (a latency/step
+   budget issue). A production monitor sampling *steady* warm traffic (rather than
+   a cold burst of 31) would read materially higher.
+3. Empty ≠ error in telemetry — so **content-level online scoring is the only
+   layer that sees it**. Keep helpfulness on the alert path.
 
 Related: [[online-eval-content-capture-blocked]] (memory),
+[online-eval-content-capture.md](./online-eval-content-capture.md),
 [offline-eval-monitoring-bridge.md](./offline-eval-monitoring-bridge.md),
 [coordinator-tool-use-quality.md](./coordinator-tool-use-quality.md).
