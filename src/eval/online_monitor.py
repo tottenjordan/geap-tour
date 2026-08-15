@@ -1,17 +1,22 @@
 """Online quality monitor — continuously score live coordinator traffic.
 
-The native Vertex Online Evaluators are **platform-blocked**: the managed Agent
-Engine runtime strips prompt/response content from the traces the evaluator
-parses, so every cycle returns ``INSUFFICIENT_DATA`` (see
-``docs/notes/offline-eval-monitoring-bridge.md`` and memory
-``online-eval-content-capture-blocked``). But the live response *content is
-available client-side* off ``stream_query`` — the traffic generator already
-captures ``full_response``. This module samples that live client-side traffic,
-scores each ``(prompt, response)`` with the SAME rubrics the offline bridge uses
-(the delegation-aware ``geap_tool_use`` judge + the ``policy_compliance`` judge)
-plus a helpfulness rubric, and publishes a continuous ``agent_online_eval/*``
-series (``eval_mode=online``) onto the same dashboard + alert surface as the
-offline snapshot — sidestepping the trace stripping entirely.
+The native Vertex Online Evaluators returned ``INSUFFICIENT_DATA`` under a default
+deploy because prompt/response content never landed on the ``call_llm`` spans the
+evaluator parses — **not** a hard platform strip: the managed ``AdkApp``
+``set_up()`` forces the ADK span-content gate closed unless deployed with
+``AdkApp(enable_tracing=True)`` (wired behind the opt-in
+``ENABLE_SPAN_CONTENT_CAPTURE`` flag; see
+``docs/notes/online-eval-content-capture.md`` and memory
+``online-eval-content-capture-blocked``). This client-side monitor is the shipped
+default **by choice** — model-neutral, no privacy-off content capture on the
+served engine — while the native path stays unblockable on demand. The live
+response content is available client-side off ``stream_query`` (the traffic
+generator already captures ``full_response``). This module samples that live
+traffic, scores each ``(prompt, response)`` with the SAME rubrics the offline
+bridge uses (the delegation-aware ``geap_tool_use`` judge + the
+``policy_compliance`` judge) plus a helpfulness rubric, and publishes a continuous
+``agent_online_eval/*`` series (``eval_mode=online``) onto the same dashboard +
+alert surface as the offline snapshot.
 
 Two honest surfaces, never blurred:
 
