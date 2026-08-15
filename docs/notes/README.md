@@ -51,6 +51,17 @@ file; keep this index short (< 200 lines).
   doesn't slow dev: always-on deterministic safety checks (Tier 1) plus an opt-in,
   label-gated rubric eval (Tier 2) against the shared deployed engine; honest
   limitation that it scores the deployed engine, not the PR diff.
+- [Agent Registry MCP resolution — two failure surfaces](./agent-registry-mcp-resolution.md)
+  — the deployed coordinator fell back to direct Cloud Run URLs because it ran under
+  a per-engine `AGENT_IDENTITY` that lacked `agentregistry.mcpServers.get` (a 403
+  wrong-principal IAM denial surfaced by the loud fallback — NOT a platform block, and
+  not fixed by granting the RE service agent). **Remediated (2026-08-15):** granted
+  `roles/agentregistry.viewer` to the engine's `principal://<effectiveIdentity>` and
+  recycled its cached toolsets with an in-place `--update` (toolsets resolve once per
+  container; a *recreate* needs a fresh grant — see "Step 0b" in
+  `setup_governance_policies.sh`). The fallback is now loud, the MCP servers are
+  stateless (kills "Session terminated"), and `verify_mcp_tools` detects tool-less
+  toolsets.
 - [Gemini-3 native model resolution + family-aware Model Armor](./gemini3-native-model-resolution.md)
   — why `resolve_model()` now returns native ADK `Gemini` for Gemini-3 (LiteLlm mangles
   thought signatures) and attaches server-side Model Armor only for Gemini-2.x; the

@@ -1,9 +1,11 @@
 """Search MCP server — exposes flight and hotel search tools over StreamableHTTP."""
 
 import logging
+
 logging.basicConfig(level=logging.INFO)
 try:
     from otel_setup import setup_opentelemetry
+
     setup_opentelemetry("search-mcp")
 except Exception as e:
     logging.warning("OTel setup failed: %s", e)
@@ -28,9 +30,9 @@ def search_flights(origin: str, destination: str, date: str | None = None) -> li
         date: Optional date filter (YYYY-MM-DD)
     """
     results = [
-        f for f in FLIGHTS
-        if f["origin"].upper() == origin.upper()
-        and f["destination"].upper() == destination.upper()
+        f
+        for f in FLIGHTS
+        if f["origin"].upper() == origin.upper() and f["destination"].upper() == destination.upper()
     ]
     if date:
         results = [f for f in results if f["date"] == date]
@@ -52,4 +54,9 @@ def search_hotels(city: str, max_price: float | None = None) -> list[dict]:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8001)
+    # stateless_http=True drops the per-instance Mcp-Session-Id binding so ANY
+    # Cloud Run instance can serve ANY POST. Without it, autoscaling/instance
+    # recycling replaces the instance that owns a session and the next call 404s
+    # → the MCP client raises "Session terminated" and ADK silently drops the
+    # toolset. See docs/notes/agent-registry-mcp-resolution.md.
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8001, stateless_http=True)

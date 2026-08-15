@@ -4,6 +4,7 @@ Integrates Vertex AI Agent Engine Memory Bank so the agent remembers user
 interactions (past bookings, expense submissions, preferences) across sessions.
 """
 
+import logging
 import os
 import re
 
@@ -22,12 +23,18 @@ GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
 AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
 AGENT_REGISTRY_LOCATION = os.environ.get("AGENT_REGISTRY_LOCATION", "us-central1")
 
-SEARCH_MCP_SERVER = os.environ.get("SEARCH_MCP_SERVER",
-    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-4bce-24e82cd98045")
-BOOKING_MCP_SERVER = os.environ.get("BOOKING_MCP_SERVER",
-    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-f126-e49a4e2ae9c9")
-EXPENSE_MCP_SERVER = os.environ.get("EXPENSE_MCP_SERVER",
-    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-1089-2fb19b9297d7")
+SEARCH_MCP_SERVER = os.environ.get(
+    "SEARCH_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-4bce-24e82cd98045",
+)
+BOOKING_MCP_SERVER = os.environ.get(
+    "BOOKING_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-f126-e49a4e2ae9c9",
+)
+EXPENSE_MCP_SERVER = os.environ.get(
+    "EXPENSE_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-1089-2fb19b9297d7",
+)
 
 SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
 BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
@@ -42,7 +49,10 @@ MCP_SERVER_URLS = {
 MCP_TIMEOUT_SECONDS = 60.0
 MCP_READ_TIMEOUT_SECONDS = 90.0
 
+log = logging.getLogger(__name__)
+
 _registry = None
+
 
 def _get_registry() -> AgentRegistry:
     global _registry
@@ -50,22 +60,34 @@ def _get_registry() -> AgentRegistry:
         _registry = AgentRegistry(project_id=GCP_PROJECT_ID, location=AGENT_REGISTRY_LOCATION)
     return _registry
 
+
 def _get_mcp_tools(server_name: str):
     try:
         toolset = _get_registry().get_mcp_toolset(server_name)
-        if hasattr(toolset, '_connection_params'):
-            if hasattr(toolset._connection_params, 'timeout'):
+        if hasattr(toolset, "_connection_params"):
+            if hasattr(toolset._connection_params, "timeout"):
                 toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS
-            if hasattr(toolset._connection_params, 'sse_read_timeout'):
+            if hasattr(toolset._connection_params, "sse_read_timeout"):
                 toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS
         return toolset
-    except RuntimeError:
+    except (RuntimeError, ValueError) as exc:
+        # Kept in sync with src/registry.py:get_mcp_tools — fall back to the direct
+        # Cloud Run URL on both registry failure classes, and warn loudly so the
+        # fallback path is never silent.
         url = MCP_SERVER_URLS.get(server_name)
         if not url:
             raise
-        return McpToolset(connection_params=StreamableHTTPConnectionParams(
-            url=url, timeout=MCP_TIMEOUT_SECONDS, sse_read_timeout=MCP_READ_TIMEOUT_SECONDS
-        ))
+        log.warning(
+            "Agent Registry resolution failed for %s (%s) — falling back to direct URL %s",
+            server_name,
+            exc,
+            url,
+        )
+        return McpToolset(
+            connection_params=StreamableHTTPConnectionParams(
+                url=url, timeout=MCP_TIMEOUT_SECONDS, sse_read_timeout=MCP_READ_TIMEOUT_SECONDS
+            )
+        )
 
 
 MAX_INPUT_LENGTH = 4000
@@ -90,7 +112,11 @@ def input_guardrail_callback(callback_context=None, **kwargs):
     if not user_message:
         return None
     if len(user_message) > MAX_INPUT_LENGTH:
-        return Content(parts=[Part(text=f"Input too long ({len(user_message)} chars, max {MAX_INPUT_LENGTH}).")])
+        return Content(
+            parts=[
+                Part(text=f"Input too long ({len(user_message)} chars, max {MAX_INPUT_LENGTH}).")
+            ]
+        )
     for pattern in BLOCKED_PATTERNS:
         if pattern.search(user_message):
             return Content(parts=[Part(text="I'm sorry, I can't process that request.")])
@@ -127,6 +153,7 @@ If the user asks about travel, direct them to the travel assistant.""",
         _get_mcp_tools(EXPENSE_MCP_SERVER),
     ],
 )
+
 
 async def save_memories_callback(callback_context: CallbackContext = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
@@ -181,4 +208,5 @@ When a request comes in, first determine if you can fulfill it directly using yo
 )
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=root_agent)

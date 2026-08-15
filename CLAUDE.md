@@ -92,9 +92,9 @@ bash scripts/setup_model_armor_floor_settings.sh  # project floor setting (inspe
 
 Agents connect to MCP servers through two mechanisms in `src/registry.py`:
 - **Agent Registry** (primary): `get_mcp_tools(server_name)` looks up the server by its registered resource name via `AgentRegistry.get_mcp_toolset()`.
-- **Direct URL** (fallback): falls back to Cloud Run URLs from `MCP_SERVER_URLS` mapping in `src/config.py`.
+- **Direct URL** (fallback): on any registry failure (`RuntimeError` control-plane error *or* `ValueError` missing endpoint URI) it falls back to the Cloud Run URLs in the `MCP_SERVER_URLS` mapping (`src/config.py`), logging the fallback at **WARNING** with the underlying error — a coordinator quietly running on the fallback path is exactly the silent degradation we want visible. Inside the managed Agent Engine runtime the engine runs under a per-engine `AGENT_IDENTITY`; registry resolution used to fall back on every request because that identity lacked `agentregistry.mcpServers.get` (a 403 wrong-principal IAM denial, **not** an unreachable API and **not** fixed by granting the RE service agent). **Remediated (2026-08-15):** grant `roles/agentregistry.viewer` to the engine's `principal://<effectiveIdentity>` (reproducible as "Step 0b" in `scripts/setup_governance_policies.sh`), then recycle cached toolsets with an in-place `deploy_agents … --update` (toolsets resolve once per container; a *recreate* mints a new identity and needs a fresh grant). The MCP servers also run **stateless HTTP** so Cloud Run scaling can't drop a session ("Session terminated" 404). See [docs/notes/agent-registry-mcp-resolution.md](docs/notes/agent-registry-mcp-resolution.md).
 
-The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_MCP_SERVER` hold Agent Registry resource names — these are NOT optional and will crash on import if missing.
+The three required env vars `SEARCH_MCP_SERVER`, `BOOKING_MCP_SERVER`, `EXPENSE_MCP_SERVER` hold Agent Registry resource names — these are NOT optional and will crash on import if missing. Verify all three toolsets actually resolve their real tools (turns a silent tool-less agent into a non-zero exit): `uv run python -m src.eval.verify_mcp_tools [--json]`.
 
 ### A2A (Agent-to-Agent) — preview-optional
 
