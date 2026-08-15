@@ -135,6 +135,27 @@ def test_build_config_enables_agent_engine_telemetry():
     assert env["GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"] == "true"
 
 
+def test_build_config_pins_full_trace_sampling():
+    """Deployed engines pin 100% trace sampling (defensive against a future
+    runtime default that could silently drop traces)."""
+    env = _build_config(_fake_agent())["env_vars"]
+    assert env["OTEL_TRACES_SAMPLER"] == "parentbased_traceidratio"
+    assert env["OTEL_TRACES_SAMPLER_ARG"] == "1.0"
+
+
+def test_build_config_omits_genai_upload_hook():
+    """The genai completion-hook UPLOAD path must NOT be baked in: proven on a
+    live native-gemini-3.7-flash coordinator in the managed runtime (2026-08-14)
+    to capture ZERO content (no GCS JSONL over 55+ healthy streams) while adding
+    ~6s median request latency, with no effect on the empty-stream failure rate
+    (Fisher's exact p=1.0). See config.OTEL_ENV_VARS + the gemini3-native note.
+    Guard against a well-meaning re-add."""
+    env = _build_config(_fake_agent())["env_vars"]
+    assert "OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK" not in env
+    assert "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH" not in env
+    assert "OTEL_INSTRUMENTATION_GENAI_UPLOAD_FORMAT" not in env
+
+
 class _CapturingAdkApp:
     """Fake AdkApp that records the kwargs it was built with (no GCP/ADC)."""
 

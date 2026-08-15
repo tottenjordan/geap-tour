@@ -69,9 +69,45 @@ MCP_SERVER_URLS = {
 # were reverted as no-ops. For agents on a *native* google.genai model, EVENT_ONLY
 # routes gen_ai.* content to log events (gen_ai.system_instructions), the one
 # path the evaluator can still parse.
+#
+# OTEL_TRACES_SAMPLER pins 100% trace sampling (parent-based, ratio 1.0) so a
+# future runtime default can never silently start dropping traces. This is
+# defensive, not a fix: empirically every request on a *healthy* engine already
+# traces (8/8 in a probe), and the Agent Engine docs don't list this var as a
+# guaranteed-honored override, so treat it as belt-and-suspenders that may be a
+# runtime no-op.
+#
+# DELIBERATELY NOT here: the genai completion-hook UPLOAD path
+# (OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK=upload +
+# OTEL_INSTRUMENTATION_GENAI_UPLOAD_{FORMAT,BASE_PATH}). It captures no content on
+# our deployments and adds request-path latency for no benefit — proven on the
+# live managed runtime, NOT just locally.
+#
+# The "upload" hook fires only from the native google.genai generate_content
+# instrumentation. A local mechanism test (2026-08-14) confirmed the split:
+# native google.genai uploaded inputs/outputs JSONL, the LiteLlm path uploaded
+# nothing. The coordinator now runs on a *native* ADK Gemini backbone (resolve_model
+# switched gemini-3.x off LiteLlm — see gemini3-native-model-resolution.md), so
+# the old "every agent is LiteLlm, so it can never fire" reasoning no longer holds
+# and the hook had to be tested on the real native path. It was, on a live
+# native-gemini-3.7-flash coordinator engine in the managed Agent Engine runtime
+# (2026-08-14):
+#   * Content captured: ZERO — no _inputs/_outputs JSONL in the GCS base path
+#     across 55+ healthy streaming requests. The managed runtime does not invoke
+#     the completion-hook upload even on the native path.
+#   * Latency: the hook added ~6s (~50%) to the median successful request
+#     (18.9s vs 12.7s clean) — a request-path cost with no captured content.
+#   * Failure rate: NO measurable effect (clean 7.5% vs hook 10% empty-stream over
+#     20-probe blocks; Fisher's exact p=1.0 — the ~5-10% flakiness is background
+#     platform behavior, independent of the hook).
+# So it is baked out deliberately: it would run a request-path hook that captures
+# nothing while implying it does, and slows every request. See
+# docs/notes/gemini3-native-model-resolution.md for the probe methodology.
 OTEL_ENV_VARS = {
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
+    "OTEL_TRACES_SAMPLER": "parentbased_traceidratio",
+    "OTEL_TRACES_SAMPLER_ARG": "1.0",
 }
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
