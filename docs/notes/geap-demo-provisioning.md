@@ -45,17 +45,19 @@ stale placeholders).
      custom metric type that has never had a TimeSeries written — Cloud
      Monitoring returns `404 Cannot find metric(s) that match type =
      custom.googleapis.com/agent_eval/helpfulness`. Write one placeholder point
-     to each `agent_eval/*` series to materialize the descriptors:
+     to each `agent_eval/*` **and** `agent_online_eval/*` series to materialize
+     the descriptors:
      ```bash
-     uv run python -c "from src.observability.metrics import write_quality_scores; from src.eval.quality_alerts import ALL_MONITORED_METRICS; write_quality_scores({n: 5.0 for n,_ in ALL_MONITORED_METRICS})"
+     uv run python -c "from src.observability.metrics import write_quality_scores, write_online_quality_scores; from src.eval.quality_alerts import ALL_MONITORED_METRICS, ONLINE_MONITORED_METRICS; write_quality_scores({n: 5.0 for n,_ in ALL_MONITORED_METRICS}); write_online_quality_scores({n: 5.0 for n,_ in ONLINE_MONITORED_METRICS})"
      ```
      (New descriptors can take up to ~10 min to become queryable; in practice
      the alert create below usually succeeds within seconds.)
    - alert policies: `uv run python -m src.eval.quality_alerts all` — the `all`
-     subcommand creates a policy for every metric in `ALL_MONITORED_METRICS`
-     (helpfulness, tool_use_accuracy, policy_compliance,
-     complexity_routing_accuracy). NOTE: bare `quality_alerts` with no arg only
-     creates the single `helpfulness` policy.
+     subcommand creates a policy for every metric across all three families:
+     coordinator quality (`agent_eval/*`), online quality (`agent_online_eval/*`,
+     the continuous client-side series), and router efficiency (`agent_router/*`).
+     NOTE: bare `quality_alerts` with no arg only creates the single
+     `helpfulness` policy.
    - dashboard-as-code: `uv run python -m src.observability.dashboard`
      (idempotent create/update; prints the console deep-link).
 4. **Governance backups (preview-optional, skip if unavailable):**
@@ -79,7 +81,7 @@ is excluded via `_wants_memory`).
 
 ```bash
 uv run python -m src.eval.run_all_evals --skip-traffic     # publish both surfaces: agent_eval/* (coordinator) + agent_router/* (router)
-uv run python -m src.eval.verify_monitors --format json    # read both series: coordinator_quality + router_efficiency
+uv run python -m src.eval.verify_monitors --format json    # read all three surfaces: coordinator_quality + online_quality + router_efficiency
 ```
 
 ## Run of show (the four money-shots)
@@ -98,9 +100,19 @@ uv run python -m src.eval.verify_monitors --format json    # read both series: c
    `boundaries.*`, explaining *why* a query went lite vs opus; coordinator spans
    carry `session.id`/`user.id` and ADK-emitted per-tool spans. Fallback:
    `uv run python -m src.observability.fetch_trace <TRACE_ID>`.
-4. **Continuous evaluation.** The online monitor shows scored samples in the
-   console; `verify` bridges scores onto the same `agent_eval/*` series the
-   dashboard charts.
+4. **Continuous evaluation.** The native Vertex Online Evaluators are
+   platform-blocked (the managed runtime strips prompt/response content from
+   traces → `INSUFFICIENT_DATA`), so continuous eval runs **client-side**: the
+   online monitor samples live coordinator traffic, scores each response with the
+   same rubrics the offline bridge uses, and publishes a continuous
+   `agent_online_eval/*` series (`eval_mode=online`) onto the SAME dashboard +
+   1-5/3.0 alert surface as the offline `agent_eval/*` snapshot:
+   ```bash
+   uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID>   # sample live traffic → agent_online_eval/*
+   ```
+   The dashboard's "Online Eval: *" widgets move in real time next to the offline
+   snapshot; `verify_monitors` reads the new series as its `online_quality` block.
+   See [online-quality-monitor.md](./online-quality-monitor.md).
 5. **Governance block.** Re-run traffic with injection:
    ```bash
    uv run python -m src.traffic.generate_traffic <ENGINE_ID> \

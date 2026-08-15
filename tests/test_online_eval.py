@@ -1,11 +1,11 @@
 """Offline tests for the periodic-snapshot eval publish + verify flow.
 
-Covers the score->metric bridge and the two-surface monitor verification:
+Covers the score->metric bridge and the three-surface monitor verification:
 
 * ``publish_eval_metrics`` — bridges eval scores onto the ``agent_eval/*`` series.
-* ``verify_monitors``      — reads the canonical source (Cloud Monitoring) as two
-  surfaces (coordinator quality + router efficiency), tolerating the absent
-  optional BigQuery ``online_eval_results`` export table.
+* ``verify_monitors``      — reads the canonical source (Cloud Monitoring) as three
+  surfaces (coordinator quality + online quality + router efficiency), tolerating
+  the absent optional BigQuery ``online_eval_results`` export table.
 
 All Vertex / Cloud Monitoring / BigQuery clients are faked; no credentials.
 """
@@ -187,10 +187,12 @@ def test_verify_queries_one_exact_metric_per_request():
 
     data = vm.verify_monitor_results(output_format="json", client=client)
 
-    # One request per monitored metric across BOTH surfaces, each an exact match.
-    from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
+    # One request per monitored metric across ALL THREE surfaces, each an exact match.
+    from src.eval.quality_alerts import ONLINE_MONITORED_METRICS, ROUTER_MONITORED_METRICS
 
-    expected_requests = len(ALL_MONITORED_METRICS) + len(ROUTER_MONITORED_METRICS)
+    expected_requests = (
+        len(ALL_MONITORED_METRICS) + len(ONLINE_MONITORED_METRICS) + len(ROUTER_MONITORED_METRICS)
+    )
     assert len(client.requests) == expected_requests
     for req in client.requests:
         assert "starts_with" not in req["filter"]

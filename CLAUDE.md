@@ -46,7 +46,12 @@ uv run python -m src.eval.run_all_evals
 uv run python -m src.eval.publish_offline_eval --latest       # bridge newest coordinator quality scores → agent_eval/* (no engine cost)
 uv run python -m src.eval.publish_offline_eval --run          # fresh coordinator batch, then publish
 uv run python -m src.eval.publish_router_efficiency --from-json <full_results.json>  # router efficiency → agent_router/* (native units)
-uv run python -m src.eval.verify_monitors --format json       # summarize both surfaces: coordinator_quality + router_efficiency
+uv run python -m src.eval.verify_monitors --format json       # summarize all three surfaces: coordinator_quality + online_quality + router_efficiency
+
+# Continuous online quality monitor — client-side, since native Online Evaluators are platform-blocked (runtime strips trace content)
+uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID>            # score sampled live stream_query traffic → agent_online_eval/* (eval_mode=online, same 1-5/3.0 axis as offline)
+uv run python -m src.eval.online_monitor --from-json <pairs.json>          # score externally-captured [{prompt,response},...] instead of live traffic
+uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --sample-rate 0.5 --dry-run  # sample a fraction; preview without writing; see docs/notes/online-quality-monitor.md
 
 # CI/CD eval gate — fast coordinator rubric score for a PR (advisory; --limit caps cases)
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent --agent-id <ENGINE_ID> --threshold 3.0 --limit 8
