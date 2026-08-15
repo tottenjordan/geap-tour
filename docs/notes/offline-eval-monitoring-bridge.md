@@ -1,31 +1,37 @@
 # Offline-eval → monitoring bridge (canonical quality source)
 
-**Posture:** the native Vertex Online Evaluators are platform-blocked for our
-agents, so the **offline-eval bridge** is the canonical source feeding two
+**Posture:** the **offline-eval bridge** is the canonical source feeding two
 monitored series — `custom.googleapis.com/agent_eval/*` (coordinator quality,
 1-5) and `custom.googleapis.com/agent_router/*` (router efficiency, native
-units) — that drive the dashboard, alerts, and `verify_monitors`.
+units) — that drive the dashboard, alerts, and `verify_monitors`. It is
+model-neutral and needs no privacy-off content capture on the served engine.
 
-## Why the native online path is dead
+## Why the native online path returned INSUFFICIENT_DATA (and how it's now fixable)
 
-The managed Agent Engine (ReasoningEngine) runtime does not emit
-prompt/response/system_instruction content into the OTel trace/log path, so the
-native `onlineEvaluator` cannot score predefined metrics — every cycle returns
-`INSUFFICIENT_DATA`. This was verified empirically (google-adk 2.6.3):
+By default the managed Agent Engine runtime emits **empty** prompt/response
+content into the OTel span path, so the native `onlineEvaluator` cannot score
+predefined metrics — every cycle returns `INSUFFICIENT_DATA`. Verified
+empirically (google-adk 2.6.3):
 
 - `gcp.vertex.agent.llm_request` / `llm_response` on every `call_llm` span are
   `{}`; the documented content-capture env vars
   (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`,
   `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`,
-  `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`, `ADK_TELEMETRY_IGNORE_RUN_CONFIG`) are
-  baked into the engine and have **zero effect**.
-- The native-Gemini lever also failed (redeployed coordinator on plain
-  `gemini-2.5-flash`, still `{}` spans, 0 `gen_ai.system_instructions` log hits) —
-  the `opentelemetry-instrumentation-google-genai` instrumentor isn't active in
-  the managed image, and `LiteLlm` bypasses it anyway.
+  `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`, `ADK_TELEMETRY_IGNORE_RUN_CONFIG`)
+  baked into the engine have **zero effect** *from env*.
 
-Full root cause is in memory `online-eval-content-capture-blocked`. Conclusion:
-no lever from our side unblocks it — hard platform limitation.
+**Corrected root cause (2026-08-15):** this is **not** a hard platform strip. The
+managed `AdkApp` runtime's `set_up()` hard-overwrites
+`ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` at container start based **solely** on the
+deprecated `enable_tracing` template flag — clobbering the deploy-spec env var.
+Deploying with `AdkApp(enable_tracing=True)` opens the gate: `call_llm` spans then
+carry real content (validated live — 46/46 spans with `system_instruction` +
+contents). Wired behind the opt-in `ENABLE_SPAN_CONTENT_CAPTURE` flag (default
+OFF, since it writes prompt/response into Cloud Trace). Full write-up in
+[online-eval-content-capture](./online-eval-content-capture.md) and memory
+`online-eval-content-capture-blocked` (corrected). The offline bridge below
+remains the canonical shipped surface **by choice** — the native path is now
+unblockable on demand, not a dead end.
 
 ## What the bridge does instead
 
@@ -100,9 +106,12 @@ uv run python -m src.eval.verify_monitors --format json   # two blocks: coordina
 - **Snapshot, not per-request:** gauges are point-in-time per eval run, not
   continuous request telemetry — the `eval_mode=offline` label makes this
   explicit. `verify_monitors` 1h/6h/24h trends reflect sparse snapshots.
-- **Native resource removed:** the dead `onlineEvaluator` setup + its deprecation
-  shim were deleted (they only ever returned `INSUFFICIENT_DATA`). The
-  offline-eval bridge is the sole, canonical quality source.
+- **Native resource removed:** the `onlineEvaluator` setup + its deprecation shim
+  were deleted (they returned `INSUFFICIENT_DATA` under the default deploy). The
+  offline-eval bridge is the canonical quality source; the native online path is
+  now unblockable on demand via `ENABLE_SPAN_CONTENT_CAPTURE=1` (see
+  [online-eval-content-capture](./online-eval-content-capture.md)) but is not the
+  shipped default.
 
 Related: [[online-eval-content-capture-blocked]] (memory),
 [coordinator-tool-use-quality](./coordinator-tool-use-quality.md).

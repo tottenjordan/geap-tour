@@ -199,20 +199,38 @@ def test_build_app_no_plugins_when_disabled(monkeypatch):
     assert _CapturingAdkApp.last_kwargs.get("plugins") is None
 
 
-def test_build_app_relies_on_env_var_telemetry(monkeypatch):
-    """_build_app must NOT pass enable_tracing=True to AdkApp.
+def test_build_app_omits_enable_tracing_by_default(monkeypatch):
+    """By default _build_app must NOT pass enable_tracing to AdkApp.
 
-    The in-process ``enable_tracing`` flag crashed/recycled the deployed worker
-    mid-request (0 events streamed). Structural OTEL tracing is instead enabled
-    by the managed runtime via the GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY
-    env var (the GCP-recommended path, asserted in
-    test_build_config_enables_agent_engine_telemetry), which populates the Cloud
-    Trace span tree without the crashing flag.
+    Content capture stays off unless explicitly opted in: the managed runtime's
+    set_up() forces ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS="false" when
+    enable_tracing is absent. Structural OTEL tracing still comes from the
+    GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY env var (asserted in
+    test_build_config_enables_agent_engine_telemetry).
     """
     monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
     monkeypatch.setattr(da, "_analytics_plugin", lambda: None)
+    monkeypatch.setattr(da, "ENABLE_SPAN_CONTENT_CAPTURE", False)
 
     da._build_app(_memory_agent())
 
     assert _CapturingAdkApp.last_kwargs.get("enable_tracing") is not True
     assert "enable_tracing" not in _CapturingAdkApp.last_kwargs
+
+
+def test_build_app_enables_tracing_when_span_content_capture_opted_in(monkeypatch):
+    """ENABLE_SPAN_CONTENT_CAPTURE=1 → _build_app passes enable_tracing=True.
+
+    This is the ONE lever that opens the content gate: the managed AdkApp
+    set_up() sets ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS="true" only when the
+    deprecated enable_tracing template flag is truthy, so call_llm spans then
+    carry real gcp.vertex.agent.llm_request/llm_response instead of "{}" and the
+    native Online Evaluators stop returning INSUFFICIENT_DATA.
+    """
+    monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
+    monkeypatch.setattr(da, "_analytics_plugin", lambda: None)
+    monkeypatch.setattr(da, "ENABLE_SPAN_CONTENT_CAPTURE", True)
+
+    da._build_app(_memory_agent())
+
+    assert _CapturingAdkApp.last_kwargs.get("enable_tracing") is True
