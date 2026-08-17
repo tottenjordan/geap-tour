@@ -194,9 +194,7 @@ class TestCoordinatorRegression:
     def test_coordinator_has_preload_memory_tool(self):
         from src.agents.coordinator_agent import coordinator_agent
 
-        assert any(
-            isinstance(t, PreloadMemoryTool) for t in coordinator_agent.tools
-        )
+        assert any(isinstance(t, PreloadMemoryTool) for t in coordinator_agent.tools)
 
     def test_wants_memory_true_for_real_coordinator(self):
         from src.agents.coordinator_agent import coordinator_agent
@@ -237,9 +235,7 @@ class TestMemoryBankToggle:
         importlib.reload(ca)
         try:
             assert cfg.ENABLE_MEMORY_BANK is False
-            assert not any(
-                isinstance(t, PreloadMemoryTool) for t in ca.coordinator_agent.tools
-            )
+            assert not any(isinstance(t, PreloadMemoryTool) for t in ca.coordinator_agent.tools)
             assert ca.coordinator_agent.after_agent_callback is None
             assert da._wants_memory(ca.coordinator_agent) is False
         finally:
@@ -296,11 +292,34 @@ class TestVerifyMemory:
         assert call["scope"]["user_id"] == "carol"
         assert "123" in call["name"]
 
+    def test_default_app_name_is_engine_id(self):
+        """Default scope app_name is the engine id — the deployed runtime's scope."""
+        client = _FakeMemClient([])
+        vm.fetch_memories("carol", engine_id="123", client=client)
+        assert client.agent_engines.calls[0]["scope"]["app_name"] == "123"
+
+    def test_full_resource_name_scopes_by_bare_engine_id(self):
+        client = _FakeMemClient([])
+        vm.fetch_memories(
+            "carol",
+            engine_id="projects/p/locations/us-central1/reasoningEngines/999",
+            client=client,
+        )
+        assert client.agent_engines.calls[0]["scope"]["app_name"] == "999"
+
+    def test_explicit_app_name_none_scopes_by_user_only(self):
+        client = _FakeMemClient([])
+        vm.fetch_memories("carol", engine_id="123", app_name=None, client=client)
+        assert "app_name" not in client.agent_engines.calls[0]["scope"]
+
+    def test_explicit_app_name_overrides_default(self):
+        client = _FakeMemClient([])
+        vm.fetch_memories("carol", engine_id="123", app_name="custom", client=client)
+        assert client.agent_engines.calls[0]["scope"]["app_name"] == "custom"
+
     def test_skips_entries_with_missing_fact(self):
         client = _FakeMemClient([_FakeRetrieved(""), _FakeRetrieved("real fact")])
-        assert vm.fetch_memories("dan", engine_id="123", client=client) == [
-            "real fact"
-        ]
+        assert vm.fetch_memories("dan", engine_id="123", client=client) == ["real fact"]
 
     def test_render_reports_empty_without_crash(self):
         out = vm.render_memories("erin", [])

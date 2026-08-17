@@ -123,17 +123,35 @@ uv run python -m src.eval.verify_monitors --format json    # read all three surf
    `before_agent_callback` blocks them, emitting a `guardrail.blocked` span event
    + a `custom.googleapis.com/agent_armor/blocked` metric (visible on the board
    and in the trace).
-6. **Build/Scale — Memory Bank.** The money-shot is genuine cross-session recall:
-   `uv run python -m src.eval.verify_cross_session_recall --user-id alice` states
-   a preference in session A, waits for Memory Bank to generate facts, then opens
-   a **brand-new session B** and shows the coordinator recall it (`RECALL: PASS`)
-   via `PreloadMemoryTool` — not the live session's context window (the load
-   generator's `CONVERSATIONS` stay in one session, so they don't prove this).
-   Corroborate the store directly with
-   `uv run python -m src.eval.verify_memory --user-id alice`; the Memory Bank
-   console view shows the same persisted facts. Both target the pinned coordinator
-   engine in `.env` (the post-rollout regression crashes freshly-built engines —
-   see [[coordinator-outage-is-runtime-not-model]]).
+6. **Build/Scale — Memory Bank.** *Pre-seed any time ahead* (direct creation is
+   synchronous — no async lag to wait on):
+   `uv run python -m src.eval.seed_demo_memories --engine-id 4380288848559603712`
+   writes curated persona facts (alice/dana/sam) **directly** via
+   `agent_engines.create_memory`, scoped by the engine id (the runtime's own
+   `app_name`), so the console Memory Bank view is instantly rich and the
+   coordinator's `PreloadMemoryTool` recalls them. It reads each persona back to
+   confirm and exits non-zero if any failed (idempotent — re-running enriches, not
+   duplicates). This deliberately skips the "organic" path (drive a session → the
+   coordinator's `add_session_to_memory` → async distillation): that path is
+   unreliable for a demo and persisted **zero** retrievable facts here — async lag,
+   a `try/except: pass` in the callback, and (the real killer) an app_name scope
+   mismatch. See [[memory-bank-app-name-scope]]. Then the money-shot is genuine
+   cross-session recall:
+   `uv run python -m src.eval.verify_cross_session_recall --user-id alice --engine-id 4380288848559603712`
+   states a preference in session A, confirms the store, then opens a **brand-new
+   session B** and shows the coordinator recall it (`RECALL: PASS`) via
+   `PreloadMemoryTool` — not the live session's context window (the load
+   generator's `CONVERSATIONS` stay in one session, so they don't prove this). Its
+   probe is a pure-recall question ("remind me of my saved travel preferences") —
+   a *booking* probe streams empty on the probe engine — and it retries an empty
+   probe stream (`--probe-attempts`, default 3). Corroborate the store directly
+   with `uv run python -m src.eval.verify_memory --user-id alice --engine-id 4380288848559603712`
+   (also engine-scoped by default); the Memory Bank console view shows the same
+   persisted facts. This demo targets the **probe engine `4380288848559603712`**
+   (the same engine as the traffic + online-monitor run), not the pinned `.env`
+   coordinator — pass `--engine-id` explicitly (the post-rollout regression crashes
+   freshly-built engines, but the native-Gemini probe is healthy — see
+   [[coordinator-outage-is-runtime-not-model]] and [[native-gemini-probe-engine]]).
 7. **Build/Scale — A2A (preview-optional).**
    `uv run python -m src.deploy.register_a2a` registers the coordinator's agent
    card in Agent Registry; `--discover` lists A2A agents. If the preview surface

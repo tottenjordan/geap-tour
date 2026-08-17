@@ -78,6 +78,33 @@ def test_recalled_false_when_signal_absent(monkeypatch):
     assert result["recalled"] is False
 
 
+def test_probe_retries_on_empty_stream(monkeypatch):
+    """An empty probe stream (cold-start empty-at-200) retries in a fresh session."""
+    # sess-2 (first probe) is empty; sess-3 (retry) carries the recall.
+    agent = FakeAgent(responses={"sess-3": "A window seat, as you prefer."}, default_response="")
+    monkeypatch.setattr(xr, "fetch_memories", lambda *a, **k: ["x"])
+
+    result = xr.run_cross_session_recall(
+        "alice", agent=agent, expected_signals=["window"], sleep_fn=_no_sleep
+    )
+
+    assert result["recalled"] is True
+    assert result["session_b_id"] == "sess-3"  # advanced to the retry session
+    assert result["probe_response"] == "A window seat, as you prefer."
+
+
+def test_probe_attempts_one_disables_retry(monkeypatch):
+    agent = FakeAgent(responses={"sess-3": "window"}, default_response="")
+    monkeypatch.setattr(xr, "fetch_memories", lambda *a, **k: ["x"])
+
+    result = xr.run_cross_session_recall(
+        "alice", agent=agent, expected_signals=["window"], probe_attempts=1, sleep_fn=_no_sleep
+    )
+
+    assert result["session_b_id"] == "sess-2"  # no retry
+    assert result["recalled"] is False  # empty probe → no signal
+
+
 def test_poll_waits_until_facts_appear(monkeypatch):
     agent = FakeAgent(responses={"sess-2": "window"})
     # First two polls empty, third returns facts -> sleep called exactly twice.
