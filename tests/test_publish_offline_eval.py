@@ -7,6 +7,8 @@ Router efficiency is a separate surface (see test_publish_router_efficiency).
 All Cloud Monitoring clients are faked.
 """
 
+import pytest
+
 from src.eval import publish_offline_eval as off
 from src.eval.publish_eval_metrics import MetricsWriter
 
@@ -227,7 +229,7 @@ def test_inject_tool_use_none_score_leaves_batch_untouched(monkeypatch):
     assert metrics["agent_engine_0/tool_use_quality_v1"] == {"score": 0.27}
 
 
-def test_apply_standalone_judges_runs_both(monkeypatch):
+def test_apply_standalone_judges_runs_all(monkeypatch):
     calls = []
     monkeypatch.setattr(
         off, "_inject_policy_compliance", lambda b, agent_id=None: calls.append("policy")
@@ -235,12 +237,15 @@ def test_apply_standalone_judges_runs_both(monkeypatch):
     monkeypatch.setattr(
         off, "_inject_tool_use_accuracy", lambda b, agent_id=None: calls.append("tool_use")
     )
+    monkeypatch.setattr(
+        off, "_inject_tool_faithfulness", lambda b, agent_id=None: calls.append("faithfulness")
+    )
     off._apply_standalone_judges({}, agent_id="E")
-    assert calls == ["policy", "tool_use"]
+    assert calls == ["policy", "tool_use", "faithfulness"]
 
 
 def test_apply_standalone_judges_isolates_failures(monkeypatch):
-    # A failing policy judge must not prevent the tool_use judge from running.
+    # A failing policy judge must not prevent the later judges from running.
     def boom(b, agent_id=None):
         raise RuntimeError("policy blew up")
 
@@ -249,8 +254,54 @@ def test_apply_standalone_judges_isolates_failures(monkeypatch):
     monkeypatch.setattr(
         off, "_inject_tool_use_accuracy", lambda b, agent_id=None: ran.append("tool_use")
     )
+    monkeypatch.setattr(
+        off, "_inject_tool_faithfulness", lambda b, agent_id=None: ran.append("faithfulness")
+    )
     off._apply_standalone_judges({})  # must not raise
-    assert ran == ["tool_use"]
+    assert ran == ["tool_use", "faithfulness"]
+
+
+# --------------------------------------------------------------------------- #
+# Tool-call faithfulness: grounded-judge score spliced from stream_query
+# trajectory (NOT the client.evals path the other two injectors use).
+# --------------------------------------------------------------------------- #
+def test_inject_faithfulness_splices_score(monkeypatch):
+    def fake_run(agent_id=None, **kwargs):
+        return {"score": 0.75, "n_scored": 6, "n_total": 6, "flagged": []}
+
+    monkeypatch.setattr("src.eval.tool_faithfulness.run_tool_faithfulness_eval", fake_run)
+
+    batch: dict = {}
+    off._inject_tool_faithfulness(batch, agent_id="ENGINE_X")
+    metrics = batch["agents"]["coordinator_agent"]["metrics"]
+    assert metrics["agent_engine_0/tool_faithfulness"] == {"score": 0.75}
+
+    # The bridge scales 0-1 → 1-5 onto the coordinator-quality series.
+    writer = MetricsWriter(project_id="proj-x", client=FakeMetricClient())
+    published = off.publish_offline_scores(batch, writer=writer)
+    assert published["tool_faithfulness"] == pytest.approx(3.75)  # 0.75 * 5
+
+
+def test_inject_faithfulness_targets_explicit_engine(monkeypatch):
+    captured = {}
+
+    def fake_run(agent_id=None, **kwargs):
+        captured["arn"] = agent_id
+        return {"score": 0.9, "n_scored": 4, "n_total": 4, "flagged": []}
+
+    monkeypatch.setattr("src.eval.tool_faithfulness.run_tool_faithfulness_eval", fake_run)
+    off._inject_tool_faithfulness({}, agent_id="ENGINE_X")
+    assert captured["arn"].endswith("/reasoningEngines/ENGINE_X")
+
+
+def test_inject_faithfulness_none_score_leaves_batch_untouched(monkeypatch):
+    def fake_run(agent_id=None, **kwargs):
+        return {"score": None, "n_scored": 0, "n_total": 3, "flagged": []}
+
+    monkeypatch.setattr("src.eval.tool_faithfulness.run_tool_faithfulness_eval", fake_run)
+    batch: dict = {}
+    off._inject_tool_faithfulness(batch)
+    assert batch == {}  # nothing spliced when the judge can't score
 
 
 # --------------------------------------------------------------------------- #
