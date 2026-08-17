@@ -113,11 +113,18 @@ alert floors (`quality_alerts.py:112-152`).
    the "1-5" help), and unify scenario/turn counts to one constant.
 
 ### P1 — medium effort, big robustness
-4. **Judge panel / self-consistency + report agreement.** Either (a) a 3-model
-   panel (e.g. `gemini-2.5-flash` + a Gemini-3 tier + a Claude tier) with
-   median/majority, or (b) N-sample self-consistency of one judge with the
-   **median + variance** reported. Compute inter-rater agreement
-   (Krippendorff/Cohen). Reuses the `pairwise_eval.py:48` `sampling_count` pattern.
+4. **Judge panel / self-consistency + report agreement.** ✅ **implemented**
+   (`src/eval/judge_panel.py`, `tests/test_judge_panel.py`). Shipped as option
+   (a) — a 3-model cross-family panel (`gemini-2.5-flash` + `gemini-3.5-flash` +
+   `claude-sonnet-4-6`, `DEFAULT_PANEL_MODELS`), each pinned to `temperature=0`
+   via the P0 `judge_client` (self-consistency of one temp=0 judge would be
+   degenerate, so the panel spans *models*, not samples). Per item the verdict is
+   the **median** (robust to one contrarian judge); the batch reports **inter-rater
+   reliability** as **Krippendorff's alpha (interval)** plus mean per-item spread.
+   Wired as an opt-in path into `policy_judge.run_policy_compliance_eval`
+   (`panel=True` / injectable `judges=`); the aggregation core is pure and
+   unit-tested with fakes (no GCP). Generic `score_pairs_with_panel` is reusable by
+   the other pointwise judges.
 5. **Confidence intervals + sample-size floors.** Bootstrap CI on each aggregate;
    refuse pass/fail (or mark `low_confidence`) when `n < floor`; add a binomial
    significance test to the pairwise win-rate. Surfaces in `verify_monitors`.

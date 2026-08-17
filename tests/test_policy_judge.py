@@ -106,3 +106,43 @@ def test_run_policy_compliance_eval_with_fakes():
     assert res["score"] == 0.8
     assert res["n_scored"] == 1
     assert res["n_total"] == 1  # the error row was filtered before judging
+
+
+def test_run_policy_compliance_eval_with_panel():
+    class FakeInf:
+        def __init__(self, df):
+            self.eval_dataset_df = df
+
+    class FakeEvals:
+        def run_inference(self, agent=None, src=None):
+            return FakeInf(
+                pd.DataFrame(
+                    [{"prompt": "Expense $500 dinner (meals)?", "response": "Over the $75 limit."}]
+                )
+            )
+
+    class FakeClient:
+        evals = FakeEvals()
+
+    # A three-model panel: two agree at 4/5, one contrarian at 2/5. The median
+    # (0.8) is robust to the outlier, and reliability is reported.
+    panel = [lambda _p: "Score: 4", lambda _p: "Score: 4", lambda _p: "Score: 2"]
+    res = pj.run_policy_compliance_eval(
+        "projects/x/locations/us-central1/reasoningEngines/1",
+        cases=[
+            {
+                "prompt": "Expense $500 dinner (meals)?",
+                "category": "expense_policy",
+                "expected_tool": "t",
+                "expected_signals": [],
+                "description": "d",
+            }
+        ],
+        client=FakeClient(),
+        judges=panel,
+        warm=False,
+    )
+    assert res["score"] == 0.8  # median of {0.8, 0.8, 0.4}
+    assert res["n_scored"] == 1
+    assert res["reliability"]["n_judges"] == 3
+    assert "alpha" in res["reliability"]
