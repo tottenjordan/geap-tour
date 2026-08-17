@@ -1,8 +1,8 @@
 """Offline tests for the curated Memory Bank demo-seeding driver.
 
-The driver drives short preference-stating sessions per persona (so the deployed
-coordinator's ``save_memories_callback`` fires) then polls Memory Bank until facts
-appear. All engine/store calls are faked — no live GCP.
+The driver writes each persona's facts directly to Memory Bank via
+``create_memory`` (synchronous, no async distillation) then reads them back to
+confirm. All engine/store calls are faked — no live GCP.
 """
 
 import pytest
@@ -10,86 +10,118 @@ import pytest
 from src.eval import seed_demo_memories as sd
 
 
-class FakeAgent:
-    """Hands out incrementing session ids and logs every stream_query turn."""
+class FakeMemories:
+    """Records create_memory calls and serves them back via fetch_memories path."""
 
     def __init__(self):
-        self._n = 0
-        self.sessions_created = []
-        self.queries = []
+        # (user_id) -> list[fact]
+        self.store: dict[str, list[str]] = {}
+        self.creates: list[tuple[str, str, dict]] = []
 
-    def create_session(self, user_id=None):
-        self._n += 1
-        sid = f"sess-{self._n}"
-        self.sessions_created.append((user_id, sid))
-        return {"id": sid}
-
-    def stream_query(self, user_id=None, session_id=None, message=None):
-        self.queries.append((user_id, session_id, message))
-        yield {"content": {"parts": [{"text": "ok"}]}}
+    def create_memory(self, *, name, fact, scope):
+        self.creates.append((name, fact, scope))
+        self.store.setdefault(scope["user_id"], []).append(fact)
 
 
-def _persona(uid="alice", n=2):
-    return sd.Persona(user_id=uid, messages=tuple(f"m{i}" for i in range(n)), signals=("x",))
+class FakeAgentEngines:
+    def __init__(self, memories):
+        self._memories = memories
+
+    def create_memory(self, *, name, fact, scope):
+        self._memories.create_memory(name=name, fact=fact, scope=scope)
+
+    def retrieve_memories(self, *, name, scope, simple_retrieval_params=None):
+        for fact in self._memories.store.get(scope["user_id"], []):
+            yield type("M", (), {"fact": fact})()
 
 
-def test_seed_persona_creates_session_and_sends_all_turns():
-    agent = FakeAgent()
-    sid = sd.seed_persona(agent, _persona("alice", 2))
-    assert sid == "sess-1"
-    assert agent.sessions_created == [("alice", "sess-1")]
-    msgs = [m for (_, s, m) in agent.queries if s == "sess-1"]
-    assert msgs == ["m0", "m1"]
+class FakeClient:
+    def __init__(self):
+        self.memories = FakeMemories()
+        self.agent_engines = FakeAgentEngines(self.memories)
 
 
-def test_run_seed_seeds_all_personas_and_returns_facts(monkeypatch):
-    agent = FakeAgent()
-    personas = (_persona("alice", 1), _persona("dana", 1))
-    monkeypatch.setattr(sd, "_poll_for_facts", lambda uid, **k: [f"{uid} fact"])
+def _persona(uid="alice", facts=("f0", "f1")):
+    return sd.Persona(user_id=uid, facts=tuple(facts), signals=("x",))
 
-    results = sd.run_seed(personas, agent=agent)
 
+def test_create_persona_memories_writes_each_fact():
+    client = FakeClient()
+    created = sd.create_persona_memories(client, _persona("alice", ("a", "b")), engine_id="123")
+    assert created == ["a", "b"]
+    assert [f for (_, f, _) in client.memories.creates] == ["a", "b"]
+    # scope carries user_id + the engine-id app_name (the runtime's scope)
+    _, _, scope = client.memories.creates[0]
+    assert scope["user_id"] == "alice"
+    assert scope["app_name"] == "123"
+
+
+def test_create_persona_memories_scopes_by_full_name_engine_id():
+    """A full resource name is reduced to the bare engine id for the app_name scope."""
+    client = FakeClient()
+    sd.create_persona_memories(
+        client,
+        _persona("alice", ("a",)),
+        engine_id="projects/p/locations/us-central1/reasoningEngines/999",
+    )
+    _, _, scope = client.memories.creates[0]
+    assert scope["app_name"] == "999"
+
+
+def test_create_persona_memories_is_idempotent():
+    client = FakeClient()
+    p = _persona("alice", ("a", "b"))
+    sd.create_persona_memories(client, p, engine_id="123")
+    again = sd.create_persona_memories(client, p, engine_id="123")
+    assert again == []  # both facts already present → nothing new
+    assert client.memories.store["alice"] == ["a", "b"]  # no duplicates
+
+
+def test_run_seed_creates_and_confirms_all_personas():
+    client = FakeClient()
+    personas = (_persona("alice", ("a",)), _persona("dana", ("b",)))
+    results = sd.run_seed(personas, client=client, engine_id="123")
     assert [r["user_id"] for r in results] == ["alice", "dana"]
-    assert [r["session_id"] for r in results] == ["sess-1", "sess-2"]
     assert all(r["seeded"] for r in results)
+    assert results[0]["facts"] == ["a"]
     assert results[0]["n_facts"] == 1
-    assert results[0]["facts"] == ["alice fact"]
+    assert results[0]["created"] == ["a"]
 
 
-def test_run_seed_seeds_all_before_polling(monkeypatch):
-    """Every persona's session is created before any poll begins (async-friendly)."""
-    agent = FakeAgent()
-    seen = []
+def test_run_seed_no_verify_skips_readback(monkeypatch):
+    """verify=False does no read-back — only the idempotency fetch runs (1 per persona)."""
+    client = FakeClient()
+    calls = {"n": 0}
+    orig = sd.fetch_memories
 
-    def fake_poll(uid, **k):
-        seen.append(len(agent.sessions_created))
-        return ["f"]
+    def counting_fetch(*a, **k):
+        calls["n"] += 1
+        return orig(*a, **k)
 
-    monkeypatch.setattr(sd, "_poll_for_facts", fake_poll)
-    sd.run_seed((_persona("alice", 1), _persona("dana", 1)), agent=agent)
+    monkeypatch.setattr(sd, "fetch_memories", counting_fetch)
 
-    # By the first poll, both sessions already exist.
-    assert seen[0] == 2
-
-
-def test_run_seed_timeout_marks_not_seeded(monkeypatch):
-    agent = FakeAgent()
-    monkeypatch.setattr(sd, "_poll_for_facts", lambda uid, **k: [])
-    results = sd.run_seed((_persona("alice", 1),), agent=agent)
-    assert results[0]["seeded"] is False
-    assert results[0]["n_facts"] == 0
-
-
-def test_run_seed_no_wait_skips_polling(monkeypatch):
-    agent = FakeAgent()
-
-    def boom(*a, **k):
-        raise AssertionError("_poll_for_facts must not run when wait=False")
-
-    monkeypatch.setattr(sd, "_poll_for_facts", boom)
-    results = sd.run_seed((_persona("alice", 1),), agent=agent, wait=False)
+    results = sd.run_seed(
+        (_persona("alice", ("a",)),), client=client, engine_id="123", verify=False
+    )
     assert results[0]["seeded"] is True
-    assert results[0]["facts"] == []
+    assert results[0]["facts"] == ["a"]  # created facts, not a read-back
+    assert calls["n"] == 1  # idempotency check only; no confirmation read-back
+
+
+def test_run_seed_verify_does_readback(monkeypatch):
+    """verify=True adds a confirmation read-back on top of the idempotency fetch."""
+    client = FakeClient()
+    calls = {"n": 0}
+    orig = sd.fetch_memories
+
+    def counting_fetch(*a, **k):
+        calls["n"] += 1
+        return orig(*a, **k)
+
+    monkeypatch.setattr(sd, "fetch_memories", counting_fetch)
+
+    sd.run_seed((_persona("alice", ("a",)),), client=client, engine_id="123", verify=True)
+    assert calls["n"] == 2  # idempotency check + confirmation read-back
 
 
 def test_select_personas_filters_by_user():
@@ -103,7 +135,7 @@ def test_main_exit_codes(monkeypatch):
         return [
             {
                 "user_id": p.user_id,
-                "session_id": "s",
+                "created": ["f"] if seeded else [],
                 "facts": ["f"] if seeded else [],
                 "n_facts": 1 if seeded else 0,
                 "seeded": seeded,
@@ -138,3 +170,13 @@ def test_alice_signals_match_recall_defaults():
     alice = next(p for p in sd.DEMO_PERSONAS if p.user_id == "alice")
     expected = {s.lower() for s in xr.DEFAULT_EXPECTED_SIGNALS}
     assert expected <= {s.lower() for s in alice.signals}
+
+
+def test_alice_facts_contain_expected_signals():
+    """The literal facts (not just signal labels) mention each recall signal."""
+    from src.eval import verify_cross_session_recall as xr
+
+    alice = next(p for p in sd.DEMO_PERSONAS if p.user_id == "alice")
+    blob = " ".join(alice.facts).lower()
+    for sig in xr.DEFAULT_EXPECTED_SIGNALS:
+        assert sig.lower() in blob

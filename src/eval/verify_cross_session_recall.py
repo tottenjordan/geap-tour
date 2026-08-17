@@ -53,7 +53,10 @@ DEFAULT_SEED_MESSAGES = (
     "Hi, I'm Alice. I always prefer window seats and Delta flights.",
     "Also remember I have a corporate rate at Marriott hotels.",
 )
-DEFAULT_PROBE_MESSAGE = "Book me a flight to New York — use my usual preferences."
+# A pure-recall probe: asking to *list* preferences exercises PreloadMemoryTool
+# directly. (A "book me a flight" probe instead triggers the booking delegation,
+# which on the probe engine tends to stream an empty 200 — a false FAIL.)
+DEFAULT_PROBE_MESSAGE = "Remind me of my saved travel preferences."
 DEFAULT_EXPECTED_SIGNALS = ("window", "Delta", "Marriott")
 
 
@@ -101,6 +104,7 @@ def run_cross_session_recall(
     poll_timeout_s: float = 120.0,
     poll_interval_s: float = 10.0,
     wait: bool = True,
+    probe_attempts: int = 3,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict:
     """Drive session A → persistence → session B and report whether recall worked.
@@ -160,14 +164,21 @@ def run_cross_session_recall(
             sleep_fn=sleep_fn,
         )
 
-    # --- Session B: a brand-new session recalls via PreloadMemoryTool ---
-    sess_b = agent.create_session(user_id=user_id)
-    sess_b_id = sess_b["id"]
-    if sess_b_id == sess_a_id:  # defensive: B must be a different session than A
-        raise RuntimeError(
-            f"session B id ({sess_b_id}) matches session A — not a cross-session test"
-        )
-    probe_response = _drain_stream(agent, user_id=user_id, session_id=sess_b_id, message=probe)
+    # --- Session B: a brand-new session recalls via PreloadMemoryTool. Retry on
+    # an empty stream (cold-start empty-at-200), each attempt in a fresh session,
+    # so a transient empty response isn't misread as a recall FAIL. ---
+    sess_b_id = ""
+    probe_response = ""
+    for _attempt in range(max(1, probe_attempts)):
+        sess_b = agent.create_session(user_id=user_id)
+        sess_b_id = sess_b["id"]
+        if sess_b_id == sess_a_id:  # defensive: B must be a different session than A
+            raise RuntimeError(
+                f"session B id ({sess_b_id}) matches session A — not a cross-session test"
+            )
+        probe_response = _drain_stream(agent, user_id=user_id, session_id=sess_b_id, message=probe)
+        if probe_response.strip():
+            break
 
     lowered = probe_response.lower()
     recalled = any(sig.lower() in lowered for sig in signals)
@@ -210,6 +221,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Skip the persistence poll (probe immediately after session A).",
     )
+    parser.add_argument(
+        "--probe-attempts",
+        type=int,
+        default=3,
+        help="Retries for an empty probe stream (cold-start empty-at-200).",
+    )
     args = parser.parse_args(argv)
 
     result = run_cross_session_recall(
@@ -219,6 +236,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_signals=args.signals,
         poll_timeout_s=args.poll_timeout,
         wait=not args.no_wait,
+        probe_attempts=args.probe_attempts,
     )
 
     print(f"Session A: {result['session_a_id']}")

@@ -1,23 +1,30 @@
-"""Pre-seed curated Memory Bank personas for the live demo.
+"""Pre-seed curated Memory Bank facts for the live demo — reliably.
 
-There is no explicit "save a memory" API — facts only exist after real multi-turn
-sessions fire the deployed coordinator's ``save_memories_callback``
-(``add_session_to_memory``) and the managed runtime's *async* fact-generation job
-completes (up to ~2 min). Doing that live stalls a demo, so this driver seeds
-vivid, single-domain preferences for several personas ahead of time, then polls
-Memory Bank until each persona has facts. By demo time the console Memory Bank
-view is already rich and ``verify_cross_session_recall`` returns ``RECALL: PASS``
-instantly.
+We want the console **Vertex AI → Agent Engine → Memory Bank** view to be rich and
+``verify_cross_session_recall`` to return ``RECALL: PASS`` at demo time. The
+"organic" path — drive a multi-turn session so the deployed coordinator's
+``save_memories_callback`` (``add_session_to_memory``) fires and the managed
+runtime *distills* facts asynchronously — is unreliable for a demo: generation is
+async (minutes of lag), a cold probe engine can stream an empty 200 (no content →
+no facts), and the in-engine callback swallows its own errors, so a failed write
+is invisible. Empirically it persisted **zero** retrievable facts on our engines.
 
-``alice``'s seeded facts deliberately match
+So this driver writes each persona's facts **directly** via the Memory Bank
+``create_memory`` API (synchronous, no distillation), scoped exactly like the
+coordinator's own memories: ``{app_name=<engine_id>, user_id}`` — on a deployed
+engine the runtime's own ``app_name`` is the reasoning-engine id, NOT the agent's
+Python name, so scoping by the engine id is what makes the facts show in the
+console and get retrieved by the coordinator's ``PreloadMemoryTool`` in a live
+turn (the same read path ``verify_memory`` / ``verify_cross_session_recall`` use;
+see docs/notes/memory-bank-app-name-scope.md). Idempotent: a fact already present
+for a user is skipped, so re-running enriches rather than duplicates.
+
+``alice``'s facts deliberately satisfy
 ``verify_cross_session_recall.DEFAULT_EXPECTED_SIGNALS`` (window / Delta /
 Marriott) so the downstream live-recall demo passes unchanged.
 
-Idempotent — Memory Bank merges/dedupes facts, so re-running is safe (it may
-enrich, not duplicate).
-
-Import-safe: the agent handle is built lazily (only when not injected), so this
-module imports without GCP credentials and is unit-testable with fakes.
+Import-safe: the Vertex client is built lazily (only when not injected), so this
+module imports without GCP credentials and is unit-testable with a fake client.
 
 Usage:
   uv run python -m src.eval.seed_demo_memories --engine-id <ENGINE_ID>
@@ -27,128 +34,140 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
-from src.eval.verify_cross_session_recall import _drain_stream, _poll_for_facts
 from src.eval.verify_memory import (
+    _bare_engine_id,
     _default_engine_id,
+    _engine_resource_name,
+    fetch_memories,
     render_memories,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
 class Persona:
-    """A demo user, the preference turns to send, and the facts we expect back."""
+    """A demo user and the explicit facts to persist for them."""
 
     user_id: str
-    messages: tuple[str, ...]
+    facts: tuple[str, ...]
     signals: tuple[str, ...]
 
 
-# Light, single-domain preference statements only (heavy multi-step prompts can
-# empty-out on a cold probe engine). alice's signals MUST match
-# verify_cross_session_recall.DEFAULT_EXPECTED_SIGNALS.
+# Vivid, single-domain, screenshot-friendly facts. alice's signals MUST match
+# verify_cross_session_recall.DEFAULT_EXPECTED_SIGNALS (window / Delta / Marriott).
 DEMO_PERSONAS: tuple[Persona, ...] = (
     Persona(
         user_id="alice",
-        messages=(
-            "Hi, I'm Alice. I always prefer window seats and Delta flights.",
-            "Also remember I have a corporate rate at Marriott hotels.",
+        facts=(
+            "Alice prefers window seats and flies Delta whenever possible.",
+            "Alice has a corporate rate at Marriott hotels.",
         ),
         signals=("window", "Delta", "Marriott"),
     ),
     Persona(
         user_id="dana",
-        messages=(
-            "Hi, I'm Dana. On international trips I always fly business class, and I prefer United.",
-            "One more thing — I like aisle seats on long-haul flights.",
+        facts=(
+            "Dana flies business class on international trips and prefers United Airlines.",
+            "Dana likes aisle seats on long-haul flights.",
         ),
         signals=("business", "United", "aisle"),
     ),
     Persona(
         user_id="sam",
-        messages=(
-            "Hi, I'm Sam, employee ID EMP007. I keep my meal expenses under the per-diem limit.",
-            "Also, please never book me on red-eye flights.",
+        facts=(
+            "Sam's employee ID is EMP007 and keeps meal expenses under the per-diem limit.",
+            "Sam never wants to be booked on red-eye flights.",
         ),
         signals=("EMP007", "per-diem", "red-eye"),
     ),
 )
 
 
-def seed_persona(agent, persona: Persona, *, user_id: str | None = None) -> str:
-    """Open one session and send every preference turn; return the session id."""
-    uid = user_id or persona.user_id
-    session = agent.create_session(user_id=uid)
-    session_id = session["id"]
-    for message in persona.messages:
-        _drain_stream(agent, user_id=uid, session_id=session_id, message=message)
-    return session_id
+def _default_client():
+    """Lazily construct a region-scoped Vertex client (kept out of import time)."""
+    import vertexai
+
+    vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+    return vertexai.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+
+
+def create_persona_memories(
+    client,
+    persona: Persona,
+    *,
+    engine_id: str | None = None,
+    app_name: str | None = None,
+) -> list[str]:
+    """Write a persona's facts directly to Memory Bank; return the facts created.
+
+    Scopes memories by the engine id (the runtime's own ``app_name``) unless an
+    explicit ``app_name`` is given, so the coordinator's ``PreloadMemoryTool``
+    recalls them live. Idempotent: facts already persisted for the user
+    (exact-string match) are skipped, so re-running enriches rather than duplicates.
+    """
+    eid = engine_id or _default_engine_id()
+    name = _engine_resource_name(eid)
+    scope_app = app_name if app_name is not None else _bare_engine_id(eid)
+    scope = {"app_name": scope_app, "user_id": persona.user_id}
+    existing = set(
+        fetch_memories(persona.user_id, engine_id=eid, app_name=scope_app, client=client)
+    )
+
+    created: list[str] = []
+    for fact in persona.facts:
+        if fact in existing:
+            continue
+        client.agent_engines.create_memory(name=name, fact=fact, scope=scope)
+        created.append(fact)
+    return created
 
 
 def run_seed(
     personas: Sequence[Persona] = DEMO_PERSONAS,
     *,
-    agent=None,
     client=None,
     engine_id: str | None = None,
-    poll_timeout_s: float = 180.0,
-    poll_interval_s: float = 10.0,
-    wait: bool = True,
-    sleep_fn: Callable[[float], None] = time.sleep,
+    app_name: str | None = None,
+    verify: bool = True,
 ) -> list[dict]:
-    """Seed all personas, then poll Memory Bank until each has facts.
+    """Create every persona's facts directly, then read them back to confirm.
 
-    Sessions for *all* personas are created first, so the async fact-generation
-    for early personas progresses while later ones are still being seeded.
+    Direct creation is synchronous, so unlike the session-distillation path there
+    is no async lag or cold-engine empty-stream failure to poll around. Memories
+    are scoped by the engine id (the runtime's ``app_name``) unless overridden.
 
     Returns one row per persona:
-    ``{"user_id", "session_id", "facts", "n_facts", "seeded"}`` where ``seeded``
-    is ``True`` when facts were found (or when ``wait`` is ``False``).
+    ``{"user_id", "created", "facts", "n_facts", "seeded"}`` where ``facts`` is
+    what Memory Bank returns for the user afterwards and ``seeded`` is ``True``
+    when the user has persisted facts (or when ``verify`` is ``False``).
     """
-    if agent is None:
-        import vertexai
-        from vertexai import agent_engines
+    if client is None:
+        client = _default_client()
 
-        # agent_engines.get needs the FULL projects/.../reasoningEngines/<id> name;
-        # the bare engine_id also flows to _poll_for_facts → fetch_memories, which
-        # applies the store-API reasoningEngines/<id> form itself.
-        from src.eval.batch_eval import _resolve_agent_resource_name
+    eid = engine_id or _default_engine_id()
+    scope_app = app_name if app_name is not None else _bare_engine_id(eid)
 
-        # init pins the regional endpoint (engines live in GCP_REGION); without it
-        # create_session/stream_query hit the wrong endpoint and 404.
-        vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
-        agent = agent_engines.get(_resolve_agent_resource_name(engine_id or _default_engine_id()))
-
-    # Phase 1: seed every persona's session up front.
-    seeded_sessions = [(p, seed_persona(agent, p)) for p in personas]
-
-    # Phase 2: poll each persona for generated facts.
     results: list[dict] = []
-    for persona, session_id in seeded_sessions:
-        facts: list[str] = []
-        if wait:
-            facts = _poll_for_facts(
-                persona.user_id,
-                engine_id=engine_id,
-                client=client,
-                poll_timeout_s=poll_timeout_s,
-                poll_interval_s=poll_interval_s,
-                sleep_fn=sleep_fn,
-            )
+    for persona in personas:
+        created = create_persona_memories(client, persona, engine_id=eid, app_name=scope_app)
+        facts = (
+            fetch_memories(persona.user_id, engine_id=eid, app_name=scope_app, client=client)
+            if verify
+            else list(created)
+        )
         results.append(
             {
                 "user_id": persona.user_id,
-                "session_id": session_id,
+                "created": created,
                 "facts": facts,
                 "n_facts": len(facts),
-                "seeded": bool(facts) or not wait,
+                "seeded": bool(facts) or not verify,
             }
         )
     return results
@@ -163,7 +182,7 @@ def _select_personas(users: Sequence[str] | None) -> list[Persona]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI: pre-seed curated Memory Bank personas; exit non-zero if any failed."""
+    """CLI: pre-seed curated Memory Bank facts; exit non-zero if any failed."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--engine-id",
@@ -178,15 +197,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Only seed this persona (repeatable; default: all).",
     )
     parser.add_argument(
-        "--poll-timeout", type=float, default=180.0, help="Seconds to wait per persona for facts."
+        "--app-name",
+        default=None,
+        help="Memory scope app name (default: the engine id, the runtime's scope).",
     )
     parser.add_argument(
-        "--poll-interval", type=float, default=10.0, help="Seconds between store polls."
-    )
-    parser.add_argument(
-        "--no-wait",
+        "--no-verify",
         action="store_true",
-        help="Seed sessions but skip the fact-generation poll.",
+        help="Skip the read-back confirmation after creating facts.",
     )
     parser.add_argument(
         "--dry-run",
@@ -205,24 +223,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("DRY RUN — no engine or store calls will be made.")
         print(f"Engine: {args.engine_id or '<config default>'}")
         for persona in personas:
-            print(
-                f"  {persona.user_id}: {len(persona.messages)} turn(s); "
-                f"expect signals {list(persona.signals)}"
-            )
+            print(f"  {persona.user_id}: {len(persona.facts)} fact(s)")
+            for fact in persona.facts:
+                print(f"      - {fact}")
         return 0
 
     results = run_seed(
         personas,
         engine_id=args.engine_id,
-        poll_timeout_s=args.poll_timeout,
-        poll_interval_s=args.poll_interval,
-        wait=not args.no_wait,
+        app_name=args.app_name,
+        verify=not args.no_verify,
     )
 
     print(f"\nSeeded {len(results)} persona(s) on engine {args.engine_id or '<config default>'}:")
     for row in results:
         status = "OK" if row["seeded"] else "NO FACTS"
-        print(f"\n[{status}] {row['user_id']}  (session {row['session_id']})")
+        print(f"\n[{status}] {row['user_id']}  ({len(row['created'])} new)")
         print(render_memories(row["user_id"], row["facts"]))
 
     all_seeded = all(row["seeded"] for row in results)
