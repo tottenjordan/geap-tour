@@ -135,6 +135,8 @@ def run_policy_compliance_eval(
     project: str | None = None,
     location: str | None = None,
     warm: bool = True,
+    panel: bool = False,
+    judges: Sequence[Callable[[str], str]] | None = None,
 ) -> dict:
     """Score policy_compliance for the deployed coordinator over policy cases.
 
@@ -142,6 +144,11 @@ def run_policy_compliance_eval(
     eval cases, then judges each response directly (bypassing the SDK-broken
     ``client.evals`` custom-metric path). Returns
     ``{"score": 0-1|None, "n_scored", "n_total"}``.
+
+    With ``panel=True`` (or an explicit ``judges`` list) each response is scored
+    by the diverse multi-model :func:`src.eval.judge_panel.build_panel` and
+    aggregated by median, and the result additionally carries a ``reliability``
+    block (inter-rater agreement) — no single autorater decides the verdict.
     """
     from vertexai import types
 
@@ -170,6 +177,12 @@ def run_policy_compliance_eval(
 
     inference_result = client.evals.run_inference(agent=agent_resource_name, src=df)
     pairs = _extract_pairs(inference_result)
+
+    if panel or judges is not None:
+        from src.eval.judge_panel import build_panel, score_pairs_with_panel
+
+        members = judges if judges is not None else build_panel(project=project, location=location)
+        return score_pairs_with_panel(pairs, members, build_policy_prompt, parse_policy_score)
 
     gen = generate_fn or _default_generate_fn(judge_model, project, location)
     return score_pairs(pairs, gen)
