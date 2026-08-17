@@ -128,9 +128,18 @@ alert floors (`quality_alerts.py:112-152`).
 5. **Confidence intervals + sample-size floors.** Bootstrap CI on each aggregate;
    refuse pass/fail (or mark `low_confidence`) when `n < floor`; add a binomial
    significance test to the pairwise win-rate. Surfaces in `verify_monitors`.
-6. **Human-label calibration set.** ~30 gold cases with human labels; track
-   judge-vs-human accuracy over time so autorater drift/bias is measurable, not
-   assumed (G1).
+6. **Human-label calibration set.** ✅ **implemented** (`src/eval/calibration.py`,
+   `src/eval/data/policy_calibration_gold.json`, `tests/test_calibration.py`). A
+   32-case gold set of `(prompt, response, human_score)` policy-compliance triples;
+   `score_judge_vs_gold` / `score_panel_vs_gold` run the single judge or the P1.4
+   panel over the *frozen* responses (so calibration needs **no deployed engine**)
+   and report judge-vs-human `mae`, signed `bias` (lenient/strict), `within_tolerance`,
+   and `pearson` — so autorater drift/bias is measurable, not assumed (G1). The
+   `python -m src.eval.calibration [--panel]` CLI prints the report and exits
+   non-zero below a floor (a drift alarm). **Honest limit:** the seed labels are
+   **author-curated single-annotator**, not independent multi-annotator human
+   annotation — a directional probe, not a validated gold standard (see the file's
+   `provenance` field).
 
 ### P2 — larger / infra
 7. **Expand + version datasets.** Grow adversarial + multi-turn + a long-context
