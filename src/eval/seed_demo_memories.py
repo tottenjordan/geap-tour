@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 from src.eval.verify_cross_session_recall import _drain_stream, _poll_for_facts
 from src.eval.verify_memory import (
     _default_engine_id,
-    _engine_resource_name,
     render_memories,
 )
 
@@ -115,7 +114,12 @@ def run_seed(
     if agent is None:
         from vertexai import agent_engines
 
-        agent = agent_engines.get(_engine_resource_name(engine_id or _default_engine_id()))
+        # agent_engines.get needs the FULL projects/.../reasoningEngines/<id> name;
+        # the bare engine_id also flows to _poll_for_facts → fetch_memories, which
+        # applies the store-API reasoningEngines/<id> form itself.
+        from src.eval.batch_eval import _resolve_agent_resource_name
+
+        agent = agent_engines.get(_resolve_agent_resource_name(engine_id or _default_engine_id()))
 
     # Phase 1: seed every persona's session up front.
     seeded_sessions = [(p, seed_persona(agent, p)) for p in personas]

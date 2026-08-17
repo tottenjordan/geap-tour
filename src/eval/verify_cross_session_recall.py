@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 
 from src.eval.verify_memory import (
     _default_engine_id,
-    _engine_resource_name,
     fetch_memories,
     render_memories,
 )
@@ -131,7 +130,12 @@ def run_cross_session_recall(
     if agent is None:
         from vertexai import agent_engines
 
-        agent = agent_engines.get(_engine_resource_name(engine_id or _default_engine_id()))
+        # agent_engines.get needs the FULL projects/.../reasoningEngines/<id> name;
+        # the bare engine_id still flows to _poll_for_facts → fetch_memories, which
+        # applies the store-API reasoningEngines/<id> form itself.
+        from src.eval.batch_eval import _resolve_agent_resource_name
+
+        agent = agent_engines.get(_resolve_agent_resource_name(engine_id or _default_engine_id()))
 
     # --- Session A: establish preferences (fires save_memories_callback) ---
     sess_a = agent.create_session(user_id=user_id)
