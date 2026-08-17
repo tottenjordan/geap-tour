@@ -62,11 +62,14 @@ git commit -m "fix: scope session/memory services to the engine's own runtime id
 # tests/test_config_labels.py
 import src.config as cfg
 
+
 def test_resource_labels_default():
     assert cfg.RESOURCE_LABELS == {"solution": "geap-tour"}
 
+
 def test_resource_labels_gcloud_format():
     assert cfg.resource_labels_gcloud() == "solution=geap-tour"
+
 
 def test_resource_labels_bq_flags():
     assert cfg.resource_labels_bq_flags() == ["--label", "solution:geap-tour"]
@@ -78,9 +81,11 @@ def test_resource_labels_bq_flags():
 # assets are filterable/attributable. Override the value with SOLUTION_LABEL.
 RESOURCE_LABELS = {"solution": os.environ.get("SOLUTION_LABEL", "geap-tour")}
 
+
 def resource_labels_gcloud() -> str:
     """RESOURCE_LABELS as a gcloud --labels value: comma-joined key=value."""
     return ",".join(f"{k}={v}" for k, v in RESOURCE_LABELS.items())
+
 
 def resource_labels_bq_flags() -> list[str]:
     """RESOURCE_LABELS as repeated `bq` --label key:value flags."""
@@ -145,6 +150,7 @@ Reuse the `_FakeClient`/`_FakeAgentEngines` pattern from `tests/test_memory_wiri
 def test_build_config_sets_resource_labels():
     from src.deploy.deploy_agents import _build_config
     import src.config as cfg
+
     assert _build_config(_fake_agent())["labels"] == cfg.RESOURCE_LABELS
 ```
 **Step 2:** Run → FAIL.
@@ -175,13 +181,16 @@ def test_build_config_sets_resource_labels():
 def test_alert_policy_has_resource_labels():
     from src.eval.quality_alerts import _build_policy
     import src.config as cfg
+
     p = _build_policy("helpfulness", 3.0, [])
     assert dict(p.user_labels) == cfg.RESOURCE_LABELS
+
 
 # dashboard: build_dashboard() is already a pure function.
 def test_dashboard_has_resource_labels():
     from src.observability.dashboard import build_dashboard
     import src.config as cfg
+
     assert dict(build_dashboard().labels) == cfg.RESOURCE_LABELS
 ```
 **Step 2:** Run → FAIL.
@@ -215,11 +224,17 @@ Metric labels are time-series dimensions, not resource labels, but they're a che
 ```python
 # tests/test_labels_wired.py — static guard so future edits keep labels wired.
 import pathlib
+
 FILES = [
-    "src/eval/batch_eval.py", "src/eval/cross_model_experiment.py",
-    "src/eval/simulated_eval.py", "src/eval/multi_agent_batch_eval.py",
-    "src/pipelines/submit.py", "src/pipelines/submit_optimize.py",
+    "src/eval/batch_eval.py",
+    "src/eval/cross_model_experiment.py",
+    "src/eval/simulated_eval.py",
+    "src/eval/multi_agent_batch_eval.py",
+    "src/pipelines/submit.py",
+    "src/pipelines/submit_optimize.py",
 ]
+
+
 def test_label_call_sites_reference_resource_labels():
     for f in FILES:
         assert "RESOURCE_LABELS" in pathlib.Path(f).read_text(), f
@@ -240,6 +255,8 @@ def test_label_call_sites_reference_resource_labels():
 # tests/test_deploy_mcp_labels.py
 from src.deploy.deploy_mcp_servers import _build_deploy_cmd  # extract cmd builder
 import src.config as cfg
+
+
 def test_mcp_cmd_has_labels():
     cmd = _build_deploy_cmd({"name": "search-mcp", "path": "p", "port": 8001})
     assert "--labels" in cmd and cfg.resource_labels_gcloud() in cmd
@@ -273,8 +290,10 @@ def test_mcp_cmd_has_labels():
 ```python
 def test_engine_patch_request_shape():
     from scripts.apply_resource_labels import _engine_patch  # returns (url, body)
-    url, body = _engine_patch("projects/p/locations/us-central1/reasoningEngines/999",
-                              {"solution": "geap-tour"})
+
+    url, body = _engine_patch(
+        "projects/p/locations/us-central1/reasoningEngines/999", {"solution": "geap-tour"}
+    )
     assert url.endswith("reasoningEngines/999?updateMask=labels")
     assert body == {"labels": {"solution": "geap-tour"}}
 ```

@@ -44,7 +44,9 @@ def check_policy(amount: float, category: str) -> dict:
         "limit": limit,
         "amount": amount,
         "category": category_lower,
-        "reason": None if amount <= limit else f"Amount ${amount:.2f} exceeds ${limit:.2f} limit for {category_lower}",
+        "reason": None
+        if amount <= limit
+        else f"Amount ${amount:.2f} exceeds ${limit:.2f} limit for {category_lower}",
     }
 
 

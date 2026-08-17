@@ -45,8 +45,14 @@ def test_parse_simulated_matches_fixture(results):
 
 def test_parse_results_has_all_columns(results):
     row = h.parse_results(results)
-    for col in (*h.BATCH_METRICS, "routing_accuracy", "savings_pct",
-                "routed_cost_usd", "all_opus_cost_usd", "sim_passed"):
+    for col in (
+        *h.BATCH_METRICS,
+        "routing_accuracy",
+        "savings_pct",
+        "routed_cost_usd",
+        "all_opus_cost_usd",
+        "sim_passed",
+    ):
         assert col in row
 
 
@@ -158,9 +164,7 @@ def test_poll_times_out_bounded_when_neither_state_nor_results():
     # Neither a terminal state nor a results artifact: must give up at the
     # wall-clock timeout, not spin forever.
     manifest = {
-        "points": [
-            {"design_point": "dp01", "job_resource": "res/1", "gcs_results": "gs://b/x"}
-        ]
+        "points": [{"design_point": "dp01", "job_resource": "res/1", "gcs_results": "gs://b/x"}]
     }
     calls = {"n": 0}
 

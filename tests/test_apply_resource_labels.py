@@ -1,6 +1,6 @@
 """The retro-label script builds correct PATCH requests (pure, no network)."""
 
-from scripts.apply_resource_labels import _engine_patch, _armor_patch
+from scripts.apply_resource_labels import _armor_patch, _engine_patch
 
 
 def test_engine_patch_request_shape():

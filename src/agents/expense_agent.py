@@ -2,7 +2,7 @@
 
 from google.adk.agents import LlmAgent
 
-from src.config import EXPENSE_MODEL, EXPENSE_MCP_SERVER, PROMPT_VARIANT, resolve_model
+from src.config import EXPENSE_MCP_SERVER, EXPENSE_MODEL, PROMPT_VARIANT, resolve_model
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.60 → optimized 0.90).
@@ -68,4 +68,5 @@ expense_agent = LlmAgent(
 root_agent = expense_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=expense_agent)

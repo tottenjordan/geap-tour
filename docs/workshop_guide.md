@@ -97,6 +97,7 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("search-mcp")
 
+
 @mcp.tool()
 def search_flights(origin: str, destination: str, date: str | None = None) -> list[dict]:
     """Search available flights."""
@@ -129,9 +130,9 @@ from google.adk.tools import McpToolset
 from google.adk.tools.mcp_tool.mcp_toolset import StreamableHTTPConnectionParams
 
 travel_agent = LlmAgent(
-    model='gemini-2.5-flash',
-    name='travel_agent',
-    instruction='You help users search and book flights...',
+    model="gemini-2.5-flash",
+    name="travel_agent",
+    instruction="You help users search and book flights...",
     tools=[
         McpToolset(connection_params=StreamableHTTPConnectionParams(url=SEARCH_URL)),
         McpToolset(connection_params=StreamableHTTPConnectionParams(url=BOOKING_URL)),
@@ -863,13 +864,15 @@ eval_dataset = client.evals.generate_conversation_scenarios(
 
 # 2. Run inference
 eval_with_traces = client.evals.run_inference(
-    agent=agent, src=eval_dataset,
+    agent=agent,
+    src=eval_dataset,
     config={"user_simulator_config": {"max_turn": 5}},
 )
 
 # 3. Evaluate
 eval_result = client.evals.evaluate(
-    src=eval_with_traces, config={"metrics": [helpfulness_metric]},
+    src=eval_with_traces,
+    config={"metrics": [helpfulness_metric]},
 )
 ```
 
@@ -1002,7 +1005,9 @@ async def classify_complexity(prompt: str) -> ComplexityResult:
     )
     data = json.loads(response.text)
     score = max(0.0, min(1.0, float(data["score"])))
-    return ComplexityResult(level=_score_to_level(score), score=score, reason=data.get("reason", ""))
+    return ComplexityResult(
+        level=_score_to_level(score), score=score, reason=data.get("reason", "")
+    )
 ```
 
 #### Router Agent Architecture
@@ -1014,7 +1019,7 @@ The router agent uses a `before_agent_callback` to classify complexity and store
 router_agent = LlmAgent(
     model=_resolve_model(LITE_MODEL),
     name="router_agent",
-    instruction=ROUTER_INSTRUCTION,      # reads complexity_level from state
+    instruction=ROUTER_INSTRUCTION,  # reads complexity_level from state
     tools=[PreloadMemoryTool()],
     sub_agents=[lite_agent, flash_agent, opus_agent],
     before_agent_callback=complexity_router_callback,
@@ -1241,9 +1246,9 @@ Templates are wired into agents via `GenerateContentConfig`:
 from google.genai.types import GenerateContentConfig, ModelArmorConfig
 
 travel_agent = LlmAgent(
-    model='gemini-2.5-flash',
-    name='travel_agent',
-    instruction='...',
+    model="gemini-2.5-flash",
+    name="travel_agent",
+    instruction="...",
     tools=[...],
     generate_content_config=GenerateContentConfig(
         model_armor_config=ModelArmorConfig(

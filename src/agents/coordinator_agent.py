@@ -4,24 +4,26 @@ Integrates Vertex AI Agent Engine Memory Bank so the agent remembers user
 interactions (past bookings, expense submissions, preferences) across sessions.
 """
 
+import contextlib
+
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
+from src.agents.expense_agent import expense_agent
+from src.agents.travel_agent import travel_agent
+from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
 from src.config import (
-    COORDINATOR_MODEL,
-    SEARCH_MCP_SERVER,
     BOOKING_MCP_SERVER,
-    EXPENSE_MCP_SERVER,
+    COORDINATOR_MODEL,
     ENABLE_MEMORY_BANK,
+    EXPENSE_MCP_SERVER,
+    SEARCH_MCP_SERVER,
     resolve_model,
 )
-from src.registry import get_mcp_tools
 from src.observability.tracing import set_span_attributes
-from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
-from src.agents.travel_agent import travel_agent
-from src.agents.expense_agent import expense_agent
+from src.registry import get_mcp_tools
 
 # GEPA-optimized (opt-20260807-v6, candidate 2: valset 0.88 -> 1.0). Ported from
 # the optimizer sandbox (src/agents/coordinator/agent.py). The delegation lines
@@ -81,10 +83,8 @@ async def save_memories_callback(callback_context: CallbackContext):
             "user.id": getattr(callback_context, "user_id", None),
         }
     )
-    try:
+    with contextlib.suppress(Exception):
         await callback_context.add_session_to_memory()
-    except Exception:
-        pass
     return None
 
 
@@ -139,4 +139,5 @@ coordinator_agent = LlmAgent(
 root_agent = coordinator_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=coordinator_agent)

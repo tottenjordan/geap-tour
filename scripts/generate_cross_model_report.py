@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,7 +51,7 @@ METRIC_LABELS = {
 }
 
 
-def load_results(input_path: str = None) -> dict:
+def load_results(input_path: str | None = None) -> dict:
     """Load experiment results from JSON."""
     if input_path:
         with open(input_path) as f:
@@ -83,7 +84,7 @@ def get_avg_score(results: dict, agent: str, tier: str) -> float:
 
 
 def generate_tier_heatmap(results: dict):
-    """5×3 heatmap: models × tiers, colored by avg quality."""
+    """5x3 heatmap: models x tiers, colored by avg quality."""
     data = np.zeros((len(AGENTS), len(TIERS)))
     for i, agent in enumerate(AGENTS):
         for j, tier in enumerate(TIERS):
@@ -102,12 +103,12 @@ def generate_tier_heatmap(results: dict):
             color = "black" if data[i, j] > 0.4 else "white"
             ax.text(j, i, f"{data[i, j]:.2f}", ha="center", va="center", color=color, fontsize=12)
 
-    ax.set_title("Average Quality Score — Models × Complexity Tiers")
+    ax.set_title("Average Quality Score — Models x Complexity Tiers")
     fig.colorbar(im, ax=ax, label="Avg Score")
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "tier_comparison_heatmap.png", dpi=150)
     plt.close()
-    print(f"  Generated: tier_comparison_heatmap.png")
+    print("  Generated: tier_comparison_heatmap.png")
 
 
 def generate_tier_bar_chart(results: dict, tier: str):
@@ -116,7 +117,7 @@ def generate_tier_bar_chart(results: dict, tier: str):
     n_metrics = len(metrics)
     n_agents = len(AGENTS)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    _, ax = plt.subplots(figsize=(12, 6))
     x = np.arange(n_agents)
     width = 0.12
     colors = plt.cm.Set2(np.linspace(0, 1, n_metrics))
@@ -143,13 +144,20 @@ def generate_tier_bar_chart(results: dict, tier: str):
 
 def generate_quality_degradation(results: dict):
     """Line chart: quality by tier for each model."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    _, ax = plt.subplots(figsize=(10, 6))
 
     for agent in AGENTS:
         scores = [get_avg_score(results, agent, tier) for tier in TIERS]
         label = agent.replace("_agent", "").title()
-        ax.plot(TIERS, scores, "o-", linewidth=2, markersize=8,
-                label=f"{label} (${AGENT_COSTS[agent]}/M)", color=AGENT_COLORS[agent])
+        ax.plot(
+            TIERS,
+            scores,
+            "o-",
+            linewidth=2,
+            markersize=8,
+            label=f"{label} (${AGENT_COSTS[agent]}/M)",
+            color=AGENT_COLORS[agent],
+        )
 
     ax.set_xlabel("Complexity Tier")
     ax.set_ylabel("Average Quality Score")
@@ -161,12 +169,12 @@ def generate_quality_degradation(results: dict):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "quality_degradation.png", dpi=150)
     plt.close()
-    print(f"  Generated: quality_degradation.png")
+    print("  Generated: quality_degradation.png")
 
 
 def generate_cost_quality_per_tier(results: dict):
     """Cost vs quality scatter, one series per tier."""
-    fig, ax = plt.subplots(figsize=(10, 7))
+    _, ax = plt.subplots(figsize=(10, 7))
 
     tier_colors = {"low": "#34A853", "medium": "#FBBC04", "high": "#EA4335"}
 
@@ -174,13 +182,26 @@ def generate_cost_quality_per_tier(results: dict):
         for agent in AGENTS:
             cost = AGENT_COSTS[agent]
             quality = get_avg_score(results, agent, tier)
-            ax.scatter(cost, quality, s=150, c=tier_colors[tier], zorder=5,
-                      edgecolors="black", linewidth=0.5)
+            ax.scatter(
+                cost,
+                quality,
+                s=150,
+                c=tier_colors[tier],
+                zorder=5,
+                edgecolors="black",
+                linewidth=0.5,
+            )
             if tier == "low":
-                ax.annotate(agent.replace("_agent", "").title(), (cost, quality),
-                           textcoords="offset points", xytext=(8, 5), fontsize=8)
+                ax.annotate(
+                    agent.replace("_agent", "").title(),
+                    (cost, quality),
+                    textcoords="offset points",
+                    xytext=(8, 5),
+                    fontsize=8,
+                )
 
     from matplotlib.patches import Patch
+
     legend = [Patch(facecolor=c, label=t.title()) for t, c in tier_colors.items()]
     ax.legend(handles=legend, title="Complexity Tier")
 
@@ -193,17 +214,17 @@ def generate_cost_quality_per_tier(results: dict):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "cost_quality_per_tier.png", dpi=150)
     plt.close()
-    print(f"  Generated: cost_quality_per_tier.png")
+    print("  Generated: cost_quality_per_tier.png")
 
 
 def generate_diminishing_returns(results: dict):
     """Quality gain per dollar for each tier."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    _, ax = plt.subplots(figsize=(10, 6))
 
     for tier in TIERS:
         costs = [AGENT_COSTS[a] for a in AGENTS]
         qualities = [get_avg_score(results, a, tier) for a in AGENTS]
-        qpd = [q / c if c > 0 else 0 for q, c in zip(qualities, costs)]
+        qpd = [q / c if c > 0 else 0 for q, c in zip(qualities, costs, strict=False)]
         ax.plot(costs, qpd, "o-", linewidth=2, markersize=8, label=tier.title())
 
     ax.set_xlabel("Output Cost ($/M tokens)")
@@ -217,7 +238,7 @@ def generate_diminishing_returns(results: dict):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "diminishing_returns.png", dpi=150)
     plt.close()
-    print(f"  Generated: diminishing_returns.png")
+    print("  Generated: diminishing_returns.png")
 
 
 def generate_report(results: dict):
@@ -243,11 +264,15 @@ def generate_report(results: dict):
         lines.append(f"## {tier.title()} Complexity Results\n")
         lines.append(f"![{tier.title()} Bar Chart](charts/experiment/tier_{tier}_bar.png)\n")
 
-        lines.append(f"| Model | Quality | Hallucination | Safety | Tool Use | Instruction | Match | Avg |")
-        lines.append(f"|-------|---------|---------------|--------|----------|-------------|-------|-----|")
+        lines.append(
+            "| Model | Quality | Hallucination | Safety | Tool Use | Instruction | Match | Avg |"
+        )
+        lines.append(
+            "|-------|---------|---------------|--------|----------|-------------|-------|-----|"
+        )
         for agent in AGENTS:
             label = agent.replace("_agent", "").title()
-            scores = [get_score(results, agent, tier, m) for m in METRIC_LABELS.keys()]
+            scores = [get_score(results, agent, tier, m) for m in METRIC_LABELS]
             avg = get_avg_score(results, agent, tier)
             row = " | ".join(f"{s:.2f}" for s in scores)
             lines.append(f"| {label} | {row} | {avg:.2f} |")
@@ -274,16 +299,17 @@ def generate_report(results: dict):
 
         cheapest_adequate = None
         for agent in AGENTS:
-            if get_avg_score(results, agent, tier) >= best_score * 0.9:
-                if cheapest_adequate is None or AGENT_COSTS[agent] < AGENT_COSTS[cheapest_adequate]:
-                    cheapest_adequate = agent
+            if get_avg_score(results, agent, tier) >= best_score * 0.9 and (
+                cheapest_adequate is None or AGENT_COSTS[agent] < AGENT_COSTS[cheapest_adequate]
+            ):
+                cheapest_adequate = agent
 
         if cheapest_adequate and cheapest_adequate != best_agent:
             rec = cheapest_adequate.replace("_agent", "").title()
             rec_cost = AGENT_COSTS[cheapest_adequate]
             lines.append(
                 f"| {tier.title()} | **{rec}** (${rec_cost}/M) | "
-                f"Within 90% of best ({best_label}) at {rec_cost/best_cost:.0%} the cost |"
+                f"Within 90% of best ({best_label}) at {rec_cost / best_cost:.0%} the cost |"
             )
         else:
             lines.append(
@@ -300,7 +326,7 @@ def generate_report(results: dict):
     print(f"\nReport saved to: {report_path}")
 
 
-def main(input_path: str = None):
+def main(input_path: str | None = None):
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading experiment results...")

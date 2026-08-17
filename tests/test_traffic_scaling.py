@@ -10,9 +10,8 @@ import pytest
 
 from src.observability.metrics import MetricsWriter
 from src.traffic.generate_traffic import SCALING_STAGES, generate_scaling_profile
-
-from tests.test_traffic_load import FakeAgent, FakeClock
 from tests.test_metrics import FakeMetricClient
+from tests.test_traffic_load import FakeAgent, FakeClock
 
 
 def test_scaling_runs_every_stage_in_order():
@@ -33,7 +32,7 @@ def test_scaling_runs_every_stage_in_order():
         monotonic=clock.monotonic,
     )
     assert len(result["stages"]) == 3
-    for i, (stage, spec) in enumerate(zip(result["stages"], stages)):
+    for i, (stage, spec) in enumerate(zip(result["stages"], stages, strict=False)):
         assert stage["stage"] == i
         assert stage["target_qps"] == spec["qps"]
         # ramp defaults to 0 -> offered ~= qps * duration.
@@ -46,8 +45,12 @@ def test_scaling_totals_and_peak():
     agent = FakeAgent()
     stages = [{"qps": 2, "duration_s": 4.0}, {"qps": 10, "duration_s": 4.0}]
     result = generate_scaling_profile(
-        agent, stages=stages, seed=1, tick_s=0.1,
-        sleep=clock.sleep, monotonic=clock.monotonic,
+        agent,
+        stages=stages,
+        seed=1,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
     )
     assert result["total_offered"] == sum(s["offered"] for s in result["stages"])
     assert result["total_sent"] == sum(s["sent"] for s in result["stages"])
@@ -63,9 +66,14 @@ def test_scaling_emits_per_stage_labeled_metrics():
     writer = MetricsWriter(project_id="proj-x", client=client)
     stages = [{"qps": 3, "duration_s": 3.0}, {"qps": 6, "duration_s": 3.0}]
     generate_scaling_profile(
-        agent, stages=stages, seed=2, tick_s=0.1,
-        sleep=clock.sleep, monotonic=clock.monotonic,
-        emit_metrics=True, metrics_writer=writer,
+        agent,
+        stages=stages,
+        seed=2,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        emit_metrics=True,
+        metrics_writer=writer,
     )
     # 5 traffic gauges per stage.
     series = client.flatten()
@@ -81,8 +89,12 @@ def test_scaling_no_metrics_by_default():
     client = FakeMetricClient()
     writer = MetricsWriter(project_id="proj-x", client=client)
     generate_scaling_profile(
-        agent, stages=[{"qps": 2, "duration_s": 2.0}], seed=3, tick_s=0.1,
-        sleep=clock.sleep, monotonic=clock.monotonic,
+        agent,
+        stages=[{"qps": 2, "duration_s": 2.0}],
+        seed=3,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
         metrics_writer=writer,  # provided, but emit_metrics defaults False
     )
     assert client.calls == []
@@ -94,8 +106,12 @@ def test_scaling_on_stage_hook_called_per_stage():
     seen = []
     stages = [{"qps": 2, "duration_s": 2.0}, {"qps": 4, "duration_s": 2.0}]
     generate_scaling_profile(
-        agent, stages=stages, seed=4, tick_s=0.1,
-        sleep=clock.sleep, monotonic=clock.monotonic,
+        agent,
+        stages=stages,
+        seed=4,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
         on_stage=lambda i, s: seen.append((i, s["target_qps"])),
     )
     assert seen == [(0, 2), (1, 4)]
@@ -116,9 +132,14 @@ def test_scaling_merges_extra_labels_with_stage_labels():
     writer = MetricsWriter(project_id="proj-x", client=client)
     stages = [{"qps": 3, "duration_s": 3.0}, {"qps": 6, "duration_s": 3.0}]
     generate_scaling_profile(
-        agent, stages=stages, seed=2, tick_s=0.1,
-        sleep=clock.sleep, monotonic=clock.monotonic,
-        emit_metrics=True, metrics_writer=writer,
+        agent,
+        stages=stages,
+        seed=2,
+        tick_s=0.1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        emit_metrics=True,
+        metrics_writer=writer,
         extra_labels={"model": "claude-sonnet-5"},
     )
     series = client.flatten()

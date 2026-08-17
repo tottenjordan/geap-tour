@@ -105,9 +105,7 @@ class TestRemoteAgent:
         def _boom():
             raise ImportError("no preview here")
 
-        monkeypatch.setattr(
-            "src.a2a.remote_agent._load_remote_agent_class", _boom
-        )
+        monkeypatch.setattr("src.a2a.remote_agent._load_remote_agent_class", _boom)
         with pytest.raises(A2AUnavailable):
             build_remote_coordinator(url="https://x.example.com")
 
@@ -115,9 +113,7 @@ class TestRemoteAgent:
         def _boom():
             raise ImportError("no preview here")
 
-        monkeypatch.setattr(
-            "src.a2a.remote_agent._load_remote_agent_class", _boom
-        )
+        monkeypatch.setattr("src.a2a.remote_agent._load_remote_agent_class", _boom)
         with caplog.at_level(logging.WARNING):
             result = try_build_remote_coordinator(url="https://x.example.com")
         assert result is None
@@ -127,9 +123,7 @@ class TestRemoteAgent:
         def _bad_cls(**kwargs):
             raise ValueError("incompatible signature")
 
-        monkeypatch.setattr(
-            "src.a2a.remote_agent._load_remote_agent_class", lambda: _bad_cls
-        )
+        monkeypatch.setattr("src.a2a.remote_agent._load_remote_agent_class", lambda: _bad_cls)
         assert try_build_remote_coordinator(url="https://x.example.com") is None
 
 
@@ -162,9 +156,7 @@ class TestRegistry:
         fake_registry._make_request.return_value = {"name": "ok"}
         monkeypatch.setattr(registry, "get_registry", lambda: fake_registry)
 
-        result = registry.register_a2a_agent(
-            {"name": "coordinator_agent", "description": "d"}
-        )
+        result = registry.register_a2a_agent({"name": "coordinator_agent", "description": "d"})
         assert result == {"name": "ok"}
 
     def test_get_a2a_agents_returns_list(self, monkeypatch):
@@ -223,9 +215,7 @@ class TestRegisterCli:
     def test_discover_cli_lists_agents(self, monkeypatch, capsys):
         import src.deploy.register_a2a as cli
 
-        monkeypatch.setattr(
-            cli, "get_a2a_agents", lambda: [{"name": "n1", "displayName": "Coord"}]
-        )
+        monkeypatch.setattr(cli, "get_a2a_agents", lambda: [{"name": "n1", "displayName": "Coord"}])
         rc = cli.main(["--discover"])
         assert rc == 0
         assert "n1" in capsys.readouterr().out

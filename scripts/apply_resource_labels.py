@@ -20,10 +20,10 @@ import os
 import subprocess
 
 from src.config import (
+    BQ_EVAL_DATASET,
     GCP_PROJECT_ID,
     GCP_REGION,
     GCP_STAGING_BUCKET,
-    BQ_EVAL_DATASET,
     RESOURCE_LABELS,
 )
 
@@ -46,6 +46,7 @@ MCP_SERVICES = ["search-mcp", "booking-mcp", "expense-mcp"]
 
 # ── Pure request builders (unit-tested, no network) ──────────────────────────
 
+
 def _region_from_resource(resource_name: str) -> str:
     """Extract the `locations/<region>` segment from a resource name."""
     parts = resource_name.split("/")
@@ -57,24 +58,19 @@ def _region_from_resource(resource_name: str) -> str:
 def _engine_patch(resource_name: str, labels: dict) -> tuple[str, dict]:
     """(url, body) for a reasoningEngine labels PATCH."""
     region = _region_from_resource(resource_name)
-    url = (
-        f"https://{region}-aiplatform.googleapis.com/v1/"
-        f"{resource_name}?updateMask=labels"
-    )
+    url = f"https://{region}-aiplatform.googleapis.com/v1/{resource_name}?updateMask=labels"
     return url, {"labels": dict(labels)}
 
 
 def _armor_patch(resource_name: str, labels: dict) -> tuple[str, dict]:
     """(url, body) for a Model Armor template labels PATCH."""
     region = _region_from_resource(resource_name)
-    url = (
-        f"https://modelarmor.{region}.rep.googleapis.com/v1/"
-        f"{resource_name}?updateMask=labels"
-    )
+    url = f"https://modelarmor.{region}.rep.googleapis.com/v1/{resource_name}?updateMask=labels"
     return url, {"labels": dict(labels)}
 
 
 # ── Live helpers ─────────────────────────────────────────────────────────────
+
 
 def _authed_session():
     import google.auth
@@ -105,6 +101,7 @@ def _rest_patch(session, url: str, body: dict, label: str) -> None:
 
 # ── Section functions (each try-wrapped in main) ─────────────────────────────
 
+
 def label_engines(session) -> None:
     print("Agent engines:")
     for key in ENGINE_ENV_KEYS:
@@ -112,10 +109,7 @@ def label_engines(session) -> None:
         if not engine_id:
             print(f"  - {key} not set, skipping")
             continue
-        resource = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{engine_id}"
-        )
+        resource = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{engine_id}"
         url, body = _engine_patch(resource, RESOURCE_LABELS)
         _rest_patch(session, url, body, f"{key}={engine_id}")
 
@@ -123,9 +117,7 @@ def label_engines(session) -> None:
 def label_armor_templates(session) -> None:
     print("Model Armor templates:")
     for tid in ARMOR_TEMPLATE_IDS:
-        resource = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/templates/{tid}"
-        )
+        resource = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/templates/{tid}"
         url, body = _armor_patch(resource, RESOURCE_LABELS)
         _rest_patch(session, url, body, tid)
 
@@ -207,10 +199,17 @@ def label_cloud_run_services() -> None:
     for name in MCP_SERVICES:
         _gcloud_update_labels(
             [
-                "gcloud", "run", "services", "update", name,
-                "--region", GCP_REGION,
-                "--project", GCP_PROJECT_ID,
-                "--update-labels", resource_labels_gcloud(),
+                "gcloud",
+                "run",
+                "services",
+                "update",
+                name,
+                "--region",
+                GCP_REGION,
+                "--project",
+                GCP_PROJECT_ID,
+                "--update-labels",
+                resource_labels_gcloud(),
                 "--quiet",
             ],
             name,

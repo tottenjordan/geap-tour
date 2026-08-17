@@ -130,7 +130,13 @@ def input_guardrail_callback(callback_context=None, **kwargs):
     user_message = _extract_user_message(callback_context)
     reason = classify_block(user_message)
     if reason == REASON_TOO_LONG:
-        return Content(parts=[Part(text=f"Input too long ({len(user_message)} chars, max {MAX_INPUT_LENGTH}). Please shorten your request.")])
+        return Content(
+            parts=[
+                Part(
+                    text=f"Input too long ({len(user_message)} chars, max {MAX_INPUT_LENGTH}). Please shorten your request."
+                )
+            ]
+        )
     if reason == REASON_BLOCKED_PATTERN:
         return Content(parts=[Part(text=REJECTION_MESSAGE)])
     return None

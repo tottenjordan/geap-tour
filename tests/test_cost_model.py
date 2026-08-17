@@ -130,6 +130,4 @@ class TestAggregateCost:
     def test_aggregate_tolerates_missing_token_fields(self):
         # Usage dicts that don't surface tokens count as zero, not a crash.
         total = cm.aggregate_cost_usd("gemini-3.6-flash", [{}, {"input_tokens": 100}])
-        assert total == pytest.approx(
-            cm.per_request_cost_usd("gemini-3.6-flash", 100, 0)
-        )
+        assert total == pytest.approx(cm.per_request_cost_usd("gemini-3.6-flash", 100, 0))

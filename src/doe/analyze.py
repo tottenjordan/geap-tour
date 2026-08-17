@@ -48,9 +48,7 @@ def main_effects_table(
     df: pd.DataFrame, factors: list[Factor], responses=RESPONSES
 ) -> pd.DataFrame:
     """Rows = factors, columns = responses, values = main effects."""
-    data = {
-        r: [main_effect(df, f, r) for f in factors] for r in responses
-    }
+    data = {r: [main_effect(df, f, r) for f in factors] for r in responses}
     return pd.DataFrame(data, index=[f.name for f in factors])
 
 
@@ -59,7 +57,7 @@ def rank_factors(df: pd.DataFrame, factors: list[Factor], response: str):
     effects = [(f.name, main_effect(df, f, response)) for f in factors]
     return sorted(
         effects,
-        key=lambda kv: (float("-inf") if np.isnan(kv[1]) else abs(kv[1])),
+        key=lambda kv: float("-inf") if np.isnan(kv[1]) else abs(kv[1]),
         reverse=True,
     )
 
@@ -84,10 +82,7 @@ def cost_quality_frontier(df: pd.DataFrame) -> pd.DataFrame:
         dominated = (
             (work["savings_pct"] >= row["savings_pct"])
             & (work["_quality"] >= row["_quality"])
-            & (
-                (work["savings_pct"] > row["savings_pct"])
-                | (work["_quality"] > row["_quality"])
-            )
+            & ((work["savings_pct"] > row["savings_pct"]) | (work["_quality"] > row["_quality"]))
         ).any()
         if not dominated:
             keep.append(i)
@@ -106,9 +101,7 @@ def recommend_config(df: pd.DataFrame, factors: list[Factor]) -> dict[str, str]:
             continue
         means = {
             label: float(
-                np.nanmean(
-                    work.loc[work[f.name] == label, "_quality"].to_numpy(dtype=float)
-                )
+                np.nanmean(work.loc[work[f.name] == label, "_quality"].to_numpy(dtype=float))
             )
             if (work[f.name] == label).any()
             else float("nan")
@@ -116,7 +109,7 @@ def recommend_config(df: pd.DataFrame, factors: list[Factor]) -> dict[str, str]:
         }
         best = max(
             means,
-            key=lambda label: (float("-inf") if np.isnan(means[label]) else means[label]),
+            key=lambda label: float("-inf") if np.isnan(means[label]) else means[label],
         )
         rec[f.name] = best
     return rec
@@ -142,9 +135,7 @@ def build_report(df: pd.DataFrame, factors: list[Factor], experiment_id: str) ->
     sep = "|" + "---|" * (len(eff.columns) + 1)
     lines += [header, sep]
     for fname, row in eff.iterrows():
-        lines.append(
-            f"| {fname} | " + " | ".join(_fmt(row[c]) for c in eff.columns) + " |"
-        )
+        lines.append(f"| {fname} | " + " | ".join(_fmt(row[c]) for c in eff.columns) + " |")
     lines.append("")
 
     lines.append("## Highest-leverage factors for weak metrics")

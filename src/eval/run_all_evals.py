@@ -15,10 +15,10 @@ from datetime import datetime
 from pathlib import Path
 
 from src.config import (
-    GCP_PROJECT_ID,
-    GCP_REGION,
     AGENT_ENGINE_ID,
     EVAL_OUTPUT_DIR,
+    GCP_PROJECT_ID,
+    GCP_REGION,
 )
 from src.eval.publish_offline_eval import _apply_standalone_judges, publish_offline_scores
 from src.eval.publish_router_efficiency import publish_router_efficiency
@@ -63,6 +63,7 @@ def run_all_evals(
     print("[Phase 1/7] SETUP")
     try:
         from src.eval.manage_monitors import list_monitors
+
         list_monitors()
     except Exception as e:
         print(f"  Monitor check: {e}")
@@ -78,6 +79,7 @@ def run_all_evals(
         print("[Phase 2/7] TRAFFIC GENERATION")
         try:
             from src.traffic.generate_traffic import generate_traffic
+
             generate_traffic(agent_resource_name, count=2)
             print("  Waiting 30s for trace ingestion...")
             time.sleep(30)
@@ -93,6 +95,7 @@ def run_all_evals(
     print("[Phase 3/7] BATCH EVALUATIONS")
     try:
         from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
+
         batch_results = run_multi_agent_batch_eval(
             agent_id=agent_id,
             score_threshold=threshold,
@@ -115,6 +118,7 @@ def run_all_evals(
     for agent_name in ["coordinator_agent", "travel_agent"]:
         try:
             from src.eval.simulated_eval import run_simulated_eval
+
             passed = run_simulated_eval(
                 agent_resource_name,
                 agent_name=agent_name,
@@ -135,11 +139,11 @@ def run_all_evals(
     # --- Phase 5: Complexity Evaluation ---
     print("[Phase 5/7] COMPLEXITY EVALUATION")
     try:
+        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
         from src.eval.complexity_metrics import (
             run_complexity_accuracy_eval,
             run_cost_efficiency_eval,
         )
-        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
 
         accuracy_result = asyncio.run(run_complexity_accuracy_eval(ROUTER_EVAL_CASES))
         cost_result = asyncio.run(run_cost_efficiency_eval(ROUTER_EVAL_CASES))
@@ -226,7 +230,8 @@ def _run_monitors_phase(agent_resource_name: str, output_dir: Path, results: dic
     """Run monitor verification phase."""
     print("[Phase 7/7] MONITOR VERIFICATION")
     try:
-        from src.eval.verify_monitors import verify_monitor_results, generate_markdown_report
+        from src.eval.verify_monitors import generate_markdown_report, verify_monitor_results
+
         monitor_data = verify_monitor_results(output_format="json")
         results["monitors"] = monitor_data
 
@@ -260,19 +265,23 @@ def build_report(results: dict) -> str:
     # Batch results
     batch = results.get("batch", {})
     if batch and batch.get("agents"):
-        lines.extend([
-            "## Batch Evaluation Results",
-            "",
-            "| Agent | Status | Test Cases | Metrics |",
-            "|-------|--------|-----------|---------|",
-        ])
+        lines.extend(
+            [
+                "## Batch Evaluation Results",
+                "",
+                "| Agent | Status | Test Cases | Metrics |",
+                "|-------|--------|-----------|---------|",
+            ]
+        )
         for name, r in batch["agents"].items():
             status = r.get("status", "N/A")
             cases = r.get("test_cases", 0)
             metrics = r.get("metrics", {})
-            metric_summary = ", ".join(
-                f"{k}: {v['score']:.2f}" for k, v in metrics.items()
-            ) if metrics else "N/A"
+            metric_summary = (
+                ", ".join(f"{k}: {v['score']:.2f}" for k, v in metrics.items())
+                if metrics
+                else "N/A"
+            )
             lines.append(f"| {name} | {status} | {cases} | {metric_summary} |")
         lines.append("")
 
@@ -290,23 +299,27 @@ def build_report(results: dict) -> str:
     if comp and not comp.get("error"):
         acc = comp.get("accuracy", {})
         cost = comp.get("cost_efficiency", {})
-        lines.extend([
-            "## Complexity Routing Evaluation",
-            "",
-            f"- **Classifier accuracy:** {acc.get('accuracy_pct', 'N/A')}",
-            f"- **Cost savings vs all-Opus:** {cost.get('savings_pct', 'N/A')}%",
-            f"- **Routed cost:** ${cost.get('routed_cost_usd', 0):.6f}",
-            f"- **All-Opus cost:** ${cost.get('all_opus_cost_usd', 0):.6f}",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Complexity Routing Evaluation",
+                "",
+                f"- **Classifier accuracy:** {acc.get('accuracy_pct', 'N/A')}",
+                f"- **Cost savings vs all-Opus:** {cost.get('savings_pct', 'N/A')}%",
+                f"- **Routed cost:** ${cost.get('routed_cost_usd', 0):.6f}",
+                f"- **All-Opus cost:** ${cost.get('all_opus_cost_usd', 0):.6f}",
+                "",
+            ]
+        )
 
         if acc.get("confusion_matrix"):
-            lines.extend([
-                "### Confusion Matrix",
-                "",
-                "| Expected \\ Actual | Low | Medium | High |",
-                "|-------------------|-----|--------|------|",
-            ])
+            lines.extend(
+                [
+                    "### Confusion Matrix",
+                    "",
+                    "| Expected \\ Actual | Low | Medium | High |",
+                    "|-------------------|-----|--------|------|",
+                ]
+            )
             for level in ("low", "medium", "high"):
                 row = acc["confusion_matrix"].get(level, {})
                 lines.append(
@@ -317,21 +330,24 @@ def build_report(results: dict) -> str:
     # Router efficiency (published to agent_router/*, native units)
     router = results.get("published_router_metrics", {})
     if router and not router.get("error"):
-        lines.extend([
-            "## Router Efficiency (agent_router/*)",
-            "",
-            "| Metric | Value | Unit |",
-            "|--------|-------|------|",
-            f"| Routing accuracy | {router.get('routing_accuracy_pct', 'N/A')} | % |",
-            f"| Cost savings vs all-Opus | {router.get('cost_savings_pct', 'N/A')} | % |",
-            f"| Classifier latency | {router.get('classifier_latency_ms', 'N/A')} | ms |",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Router Efficiency (agent_router/*)",
+                "",
+                "| Metric | Value | Unit |",
+                "|--------|-------|------|",
+                f"| Routing accuracy | {router.get('routing_accuracy_pct', 'N/A')} | % |",
+                f"| Cost savings vs all-Opus | {router.get('cost_savings_pct', 'N/A')} | % |",
+                f"| Classifier latency | {router.get('classifier_latency_ms', 'N/A')} | ms |",
+                "",
+            ]
+        )
 
     # Monitor results
     monitors = results.get("monitors", {})
     if monitors and monitors.get("status") == "ok":
         from src.eval.verify_monitors import generate_markdown_report
+
         lines.append(generate_markdown_report(monitors))
         lines.append("")
 

@@ -79,9 +79,7 @@ def eval_pipeline(
     # cleanup is the exit task: it may only reference pipeline params (KFP forbids
     # exit tasks from depending on other tasks), so it takes agent_id +
     # temp_display_name and finds/deletes the fresh engine by display_name.
-    with dsl.ExitHandler(
-        _wire(c.cleanup(agent_id=agent_id, display_name=temp_display_name))
-    ):
+    with dsl.ExitHandler(_wire(c.cleanup(agent_id=agent_id, display_name=temp_display_name))):
         resolve = _wire(
             c.resolve_agent(
                 agent_id=agent_id,

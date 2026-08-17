@@ -1,11 +1,8 @@
 """Per-agent evaluation configs — test cases, AgentInfo builders, and metric selectors."""
 
-import json
-
 from vertexai import types
 
 from src.eval.batch_eval import EVAL_CASES as COORDINATOR_EVAL_CASES
-
 
 # ---------------------------------------------------------------------------
 # Travel agent test cases
@@ -492,13 +489,6 @@ def _build_standalone_info(agent_name: str) -> types.evals.AgentInfo:
 
 
 STANDALONE_EVAL_CASES = TRAVEL_EVAL_CASES + EXPENSE_EVAL_CASES
-
-from src.eval.tier_eval_cases import (
-    LOW_COMPLEXITY_CASES,
-    MEDIUM_COMPLEXITY_CASES,
-    HIGH_COMPLEXITY_CASES,
-    TIER_EVAL_CASES,
-)
 
 
 # ---------------------------------------------------------------------------

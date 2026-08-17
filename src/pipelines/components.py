@@ -27,8 +27,7 @@ def resolve_agent(
             resource = agent_id
         else:
             resource = (
-                f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-                f"/reasoningEngines/{agent_id}"
+                f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
             )
         return (resource, False)
 
@@ -204,9 +203,7 @@ def report(
         else:
             prefix = f"eval-results/{run_id}"
         bucket.blob(f"{prefix}/report.md").upload_from_filename(report_md.path)
-        bucket.blob(f"{prefix}/full_results.json").upload_from_filename(
-            full_results.path
-        )
+        bucket.blob(f"{prefix}/full_results.json").upload_from_filename(full_results.path)
         print(f"uploaded results to gs://{GCP_STAGING_BUCKET}/{prefix}/")
     except Exception as e:
         print(f"result upload skipped: {e}")

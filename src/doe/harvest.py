@@ -109,6 +109,7 @@ def parse_results(results: dict, agent: str = DEFAULT_AGENT) -> dict[str, float]
 
 # --- GCS + polling (injectable for tests) -----------------------------------
 
+
 def fetch_results(gcs_uri: str, *, client=None, timeout: float = 300) -> dict:
     """Download and parse a full_results.json from a gs:// URI (malformed -> {}).
 
@@ -120,7 +121,7 @@ def fetch_results(gcs_uri: str, *, client=None, timeout: float = 300) -> dict:
 
         client = client or storage.Client()
         assert gcs_uri.startswith("gs://")
-        bucket_name, _, blob_path = gcs_uri[len("gs://"):].partition("/")
+        bucket_name, _, blob_path = gcs_uri[len("gs://") :].partition("/")
         blob = client.bucket(bucket_name).blob(blob_path)
         return json.loads(blob.download_as_text(timeout=timeout))
     except Exception as e:
@@ -148,7 +149,7 @@ def _results_exist(gcs_uri: str, *, client=None) -> bool:
 
         client = client or storage.Client()
         assert gcs_uri.startswith("gs://")
-        bucket_name, _, blob_path = gcs_uri[len("gs://"):].partition("/")
+        bucket_name, _, blob_path = gcs_uri[len("gs://") :].partition("/")
         return client.bucket(bucket_name).blob(blob_path).exists()
     except Exception:
         return False
@@ -204,8 +205,7 @@ def poll_jobs(
                 print(f"  {dp}: results present (job state={state})", flush=True)
         if pending:
             print(
-                f"  … {len(pending)} job(s) pending after {waited}s: "
-                f"{', '.join(sorted(pending))}",
+                f"  … {len(pending)} job(s) pending after {waited}s: {', '.join(sorted(pending))}",
                 flush=True,
             )
             sleep(interval_s)
@@ -253,9 +253,7 @@ def harvest(
     """
     if wait:
         poll(manifest, timeout_s=poll_timeout_s, interval_s=poll_interval_s)
-    results_by_point = {
-        e["design_point"]: fetch(e["gcs_results"]) for e in manifest["points"]
-    }
+    results_by_point = {e["design_point"]: fetch(e["gcs_results"]) for e in manifest["points"]}
     df = build_dataframe(manifest, results_by_point, agent)
 
     import os

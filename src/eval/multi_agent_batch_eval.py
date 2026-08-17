@@ -22,20 +22,18 @@ import vertexai
 from vertexai import Client, types
 
 from src.config import (
+    AGENT_ENGINE_ID,
+    EVAL_OUTPUT_DIR,
     GCP_PROJECT_ID,
     GCP_REGION,
     GCP_STAGING_BUCKET,
-    AGENT_ENGINE_ID,
-    EVAL_OUTPUT_DIR,
-    RESOURCE_LABELS,
 )
+from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
 from src.eval.agent_eval_configs import (
     ALL_AGENTS,
-    build_agent_info,
     get_eval_cases,
     get_metrics,
 )
-from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
 from src.eval.eval_experiment import (
     ensure_eval_experiment,
     eval_run_display_name,
@@ -108,7 +106,6 @@ def _run_single_agent_eval(
 ) -> dict:
     """Run batch evaluation for a single agent."""
     cases = _select_cases(agent_name, limit)
-    agent_info = build_agent_info(agent_name)
     metrics = get_metrics(agent_name)
 
     print(f"\n{'─' * 60}")
@@ -128,7 +125,7 @@ def _run_single_agent_eval(
         print(f"  Warmup skipped: {e}")
 
     # Run inference
-    print(f"  Running inference...")
+    print("  Running inference...")
     t0 = time.time()
     inference_result = client.evals.run_inference(
         agent=agent_resource_name,
@@ -138,7 +135,7 @@ def _run_single_agent_eval(
     print(f"  Inference complete in {elapsed:.1f}s")
 
     # Run evaluation
-    print(f"  Running evaluation...")
+    print("  Running evaluation...")
     ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=inference_result,
@@ -150,7 +147,7 @@ def _run_single_agent_eval(
     )
 
     print(f"  Eval run: {evaluation_run.name}")
-    print(f"  Polling", end="", flush=True)
+    print("  Polling", end="", flush=True)
     poll_start = time.time()
     while time.time() - poll_start < MAX_POLL_SECONDS:
         evaluation_run = client.evals.get_evaluation_run(name=evaluation_run.name)
@@ -265,7 +262,7 @@ def run_multi_agent_batch_eval(
     agent_resource_name = _resolve_agent_resource_name(agent_id)
 
     print(f"{'=' * 60}")
-    print(f"MULTI-AGENT BATCH EVALUATION")
+    print("MULTI-AGENT BATCH EVALUATION")
     print(f"{'=' * 60}")
     print(f"  Run ID:    {run_id}")
     print(f"  Agent:     {agent_resource_name}")
@@ -319,7 +316,7 @@ def run_multi_agent_batch_eval(
 
     # Print overall summary
     print(f"\n{'=' * 60}")
-    print(f"OVERALL RESULTS")
+    print("OVERALL RESULTS")
     print(f"{'=' * 60}")
     for name, r in agent_results.items():
         status = r.get("status", "UNKNOWN")

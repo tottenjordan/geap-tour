@@ -508,9 +508,9 @@ The native Vertex [Online Evaluators](https://cloud.google.com/vertex-ai/generat
 ```python
 # Coordinator quality metrics (scaled onto the 1-5 monitored axis, alert < 3.0)
 MONITORED_QUALITY_METRICS = [
-    "helpfulness",         # from final_response_quality_v1
-    "tool_use_accuracy",   # from tool_use_quality_v1
-    "policy_compliance",   # from the standalone policy_judge (custom pointwise LLMMetric is SDK-broken)
+    "helpfulness",  # from final_response_quality_v1
+    "tool_use_accuracy",  # from tool_use_quality_v1
+    "policy_compliance",  # from the standalone policy_judge (custom pointwise LLMMetric is SDK-broken)
 ]
 ```
 
@@ -532,8 +532,8 @@ uv run python -m src.eval.publish_offline_eval --run
 ```python
 # Router efficiency metrics (native units, per-metric alert direction)
 ROUTER_MONITORED_METRICS = [
-    "routing_accuracy_pct",   # %,  alert < 80
-    "cost_savings_pct",       # % vs all-Opus baseline, alert < 40
+    "routing_accuracy_pct",  # %,  alert < 80
+    "cost_savings_pct",  # % vs all-Opus baseline, alert < 40
     "classifier_latency_ms",  # ms, alert > 2000
 ]
 ```

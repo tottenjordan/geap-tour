@@ -3,9 +3,14 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import OPUS_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, resolve_model
+from src.config import (
+    BOOKING_MCP_SERVER,
+    EXPENSE_MCP_SERVER,
+    OPUS_MODEL,
+    SEARCH_MCP_SERVER,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
-
 
 INSTRUCTION = """\
 You are an expert corporate assistant for the most complex, high-stakes \
@@ -54,4 +59,5 @@ opus_agent = LlmAgent(
 root_agent = opus_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=opus_agent)

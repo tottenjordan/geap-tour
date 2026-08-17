@@ -51,9 +51,7 @@ def set_span_attributes(**attrs: Any) -> None:
 
 
 @contextlib.contextmanager
-def traced(
-    span_name: str, tracer_name: str = DEFAULT_TRACER_NAME, **attrs: Any
-) -> Iterator[Span]:
+def traced(span_name: str, tracer_name: str = DEFAULT_TRACER_NAME, **attrs: Any) -> Iterator[Span]:
     """Context manager / decorator that runs a block inside a named span.
 
     Sets the given attributes (skipping ``None``), records and re-raises any

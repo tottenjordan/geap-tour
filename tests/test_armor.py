@@ -5,11 +5,11 @@ from unittest.mock import MagicMock
 from google.genai.types import Content, Part
 
 from src.armor.config import (
-    input_guardrail_callback,
-    get_model_armor_config,
-    get_armored_generate_config,
     MAX_INPUT_LENGTH,
     REJECTION_MESSAGE,
+    get_armored_generate_config,
+    get_model_armor_config,
+    input_guardrail_callback,
 )
 
 
@@ -109,10 +109,12 @@ class TestEntryPointGuardrails:
         # The router's before_agent_callback classifies complexity AND runs the
         # input guardrail (see complexity_router_callback) before delegating.
         from src.router.agents import router_agent
+
         assert router_agent.before_agent_callback is not None
 
     def test_coordinator_entry_wires_guardrail(self):
         from src.agents.coordinator.agent import root_agent as coordinator_agent
+
         # The coordinator package defines its own input_guardrail_callback, so
         # assert by name rather than object identity.
         assert coordinator_agent.before_agent_callback is not None

@@ -3,10 +3,11 @@
 import asyncio
 from pathlib import Path
 
+from src.config import FLASH_MODEL, LITE_MODEL, OPUS_MODEL, PRO_MODEL, SONNET_MODEL
+
 from .complexity import classify_complexity
-from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
 from .cost_tracker import estimate_cost
-from .demo import DEMO_PROMPTS, MODEL_MAP, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS
+from .demo import AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS, DEMO_PROMPTS, MODEL_MAP
 
 CONFIGS = {
     "All Lite": lambda _level: LITE_MODEL,
@@ -65,7 +66,7 @@ async def run_comparison():
     config_costs = {}
     for config_name, model_fn in CONFIGS.items():
         total = 0.0
-        for (prompt, _), result in zip(DEMO_PROMPTS, classifications):
+        for (prompt, _), result in zip(DEMO_PROMPTS, classifications, strict=False):
             model = model_fn(result.level)
             cost = estimate_cost(model, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
             if config_name == "5-Tier Router":
@@ -80,27 +81,31 @@ async def run_comparison():
         savings_str = f"{savings:.1f}%" if config_name != "All Opus" else "baseline"
         lines.append(f"| {config_name} | ${total:.6f} | {savings_str} |")
 
-    lines.extend([
-        "",
-        "## Per-Prompt Routing Decisions (5-Tier Router)",
-        "",
-        "| # | Prompt (truncated) | Score | Level | Model |",
-        "|---|-------------------|-------|-------|-------|",
-    ])
-    for i, ((prompt, _), result) in enumerate(zip(DEMO_PROMPTS, classifications), 1):
+    lines.extend(
+        [
+            "",
+            "## Per-Prompt Routing Decisions (5-Tier Router)",
+            "",
+            "| # | Prompt (truncated) | Score | Level | Model |",
+            "|---|-------------------|-------|-------|-------|",
+        ]
+    )
+    for i, ((prompt, _), result) in enumerate(zip(DEMO_PROMPTS, classifications, strict=False), 1):
         model = MODEL_MAP[result.level]
         lines.append(
             f"| {i} | {prompt[:50]}... | {result.score:.2f} | "
             f"{result.level} | {model.split('/')[-1]} |"
         )
 
-    lines.extend([
-        "",
-        "## At Scale (monthly projections)",
-        "",
-        "| Scenario | Requests/mo | All-Opus | 5-Tier Router | Savings |",
-        "|----------|------------|----------|--------------|---------|",
-    ])
+    lines.extend(
+        [
+            "",
+            "## At Scale (monthly projections)",
+            "",
+            "| Scenario | Requests/mo | All-Opus | 5-Tier Router | Savings |",
+            "|----------|------------|----------|--------------|---------|",
+        ]
+    )
     opus_per_req = estimate_cost(OPUS_MODEL, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
     lite_per_req = estimate_cost(LITE_MODEL, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
     flash_per_req = estimate_cost(FLASH_MODEL, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
@@ -121,9 +126,7 @@ async def run_comparison():
             + high_pct * opus_per_req
         )
         savings = (1 - routed / all_opus) * 100
-        lines.append(
-            f"| {name} | {count:,} | ${all_opus:,.2f} | ${routed:,.2f} | {savings:.0f}% |"
-        )
+        lines.append(f"| {name} | {count:,} | ${all_opus:,.2f} | ${routed:,.2f} | {savings:.0f}% |")
 
     report = "\n".join(lines)
     output_path = Path("docs/multi_model_cost_comparison.md")

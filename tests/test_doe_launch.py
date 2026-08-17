@@ -6,7 +6,6 @@ from src.doe import launch as launch_mod
 from src.doe.design import DesignPoint, build_design
 from src.doe.factors import get_factors as _get_factors
 
-
 # Pin the launcher tests to the stable 4-factor Res-IV screen so registry growth
 # (e.g. adding the opt-in `memory_bank` factor) doesn't change the design under
 # test. Callers that need a specific subset still pass names explicitly.
@@ -22,6 +21,7 @@ def _fake_runner(recorder, *, returncode=0, job="projects/p/locations/l/pipeline
         recorder.append({"cmd": cmd, "env": env})
         stdout = f"https://console...\nSubmitted PipelineJob: {job}\n"
         return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
     return _run
 
 
@@ -37,31 +37,44 @@ def test_build_point_env_merges_env_channels():
         },
     )
     env = launch_mod.build_point_env(point, factors)
-    assert env["COMPLEXITY_LOW"] == "0.44"          # runner_env
+    assert env["COMPLEXITY_LOW"] == "0.44"  # runner_env
     assert env["COORDINATOR_MODEL"] == "gemini-3.1-pro-preview"  # engine_env
-    assert env["PROMPT_VARIANT"] == "gepa"          # engine_env
-    assert "scenario_count" not in env              # param channel excluded
+    assert env["PROMPT_VARIANT"] == "gepa"  # engine_env
+    assert "scenario_count" not in env  # param channel excluded
 
 
 def test_build_point_params_extracts_param_channel():
     factors = get_factors()
-    point = DesignPoint("dp01", {
-        "router_boundaries": "baseline", "model_tier": "baseline",
-        "prompt_variant": "baseline", "eval_fidelity": "thorough",
-    })
+    point = DesignPoint(
+        "dp01",
+        {
+            "router_boundaries": "baseline",
+            "model_tier": "baseline",
+            "prompt_variant": "baseline",
+            "eval_fidelity": "thorough",
+        },
+    )
     params = launch_mod.build_point_params(point, factors)
     assert params == {"scenario_count": 8, "max_turns": 4}
 
 
 def test_submit_point_builds_correct_cmd_and_env(monkeypatch):
     factors = get_factors()
-    point = DesignPoint("dp02", {
-        "router_boundaries": "baseline", "model_tier": "upgraded",
-        "prompt_variant": "gepa", "eval_fidelity": "quick",
-    })
+    point = DesignPoint(
+        "dp02",
+        {
+            "router_boundaries": "baseline",
+            "model_tier": "upgraded",
+            "prompt_variant": "gepa",
+            "eval_fidelity": "quick",
+        },
+    )
     calls: list[dict] = []
     entry = launch_mod.submit_point(
-        point, factors, "exp1", spec_dir="/tmp",
+        point,
+        factors,
+        "exp1",
+        spec_dir="/tmp",
         runner=_fake_runner(calls),
     )
     cmd = calls[0]["cmd"]
@@ -102,7 +115,10 @@ def test_submit_point_reuse_when_no_engine_env(monkeypatch):
     point = DesignPoint("dp01", {"router_boundaries": "baseline", "eval_fidelity": "quick"})
     calls: list[dict] = []
     entry = launch_mod.submit_point(
-        point, factors, "exp2", reuse_agent_id="ENGINE123",
+        point,
+        factors,
+        "exp2",
+        reuse_agent_id="ENGINE123",
         runner=_fake_runner(calls),
     )
     cmd = calls[0]["cmd"]
@@ -116,7 +132,9 @@ def test_submit_point_failure_captured(monkeypatch):
     point = build_design(factors, "screening")[0]
     calls: list[dict] = []
     entry = launch_mod.submit_point(
-        point, factors, "exp3",
+        point,
+        factors,
+        "exp3",
         runner=_fake_runner(calls, returncode=1),
     )
     assert entry["returncode"] == 1
@@ -128,7 +146,11 @@ def test_submit_point_dry_run_does_not_call_runner():
     point = build_design(factors, "screening")[0]
     calls: list[dict] = []
     entry = launch_mod.submit_point(
-        point, factors, "expdry", dry_run=True, runner=_fake_runner(calls),
+        point,
+        factors,
+        "expdry",
+        dry_run=True,
+        runner=_fake_runner(calls),
     )
     assert calls == []  # nothing submitted
     assert entry["job_resource"] is None
@@ -137,6 +159,7 @@ def test_submit_point_dry_run_does_not_call_runner():
 
 def test_write_manifest_skips_gcs_when_disabled(tmp_path, monkeypatch):
     """upload_gcs=False writes locally and never touches google.cloud.storage."""
+
     def _boom(*a, **k):  # pragma: no cover - must not be called
         raise AssertionError("GCS upload attempted during dry run")
 
@@ -150,14 +173,19 @@ def test_write_manifest_skips_gcs_when_disabled(tmp_path, monkeypatch):
 
 def test_launch_dry_run_does_not_upload_manifest(tmp_path, monkeypatch):
     """A dry-run launch keeps the manifest local-only (no GCS side effect)."""
-    monkeypatch.setattr("google.cloud.storage.Client",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no GCS in dry run")),
-                        raising=False)
+    monkeypatch.setattr(
+        "google.cloud.storage.Client",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no GCS in dry run")),
+        raising=False,
+    )
     factors = get_factors()
     design = build_design(factors, "screening")
     manifest = launch_mod.launch(
-        design, factors, "expdry2",
-        spec_dir=str(tmp_path / "spec"), out_dir=str(tmp_path / "out"),
+        design,
+        factors,
+        "expdry2",
+        spec_dir=str(tmp_path / "spec"),
+        out_dir=str(tmp_path / "out"),
         dry_run=True,
     )
     assert manifest["num_points"] == 9
@@ -169,8 +197,11 @@ def test_launch_writes_manifest(tmp_path, monkeypatch):
     design = build_design(factors, "screening")
     calls: list[dict] = []
     manifest = launch_mod.launch(
-        design, factors, "exp42",
-        spec_dir=str(tmp_path), out_dir=str(tmp_path / "out"),
+        design,
+        factors,
+        "exp42",
+        spec_dir=str(tmp_path),
+        out_dir=str(tmp_path / "out"),
         runner=_fake_runner(calls),
     )
     assert manifest["experiment_id"] == "exp42"

@@ -2,8 +2,8 @@
 
 import os
 
-from src.deploy.deploy_mcp_servers import deploy_all_servers
 from src.deploy.deploy_agents import deploy_all_agents
+from src.deploy.deploy_mcp_servers import deploy_all_servers
 
 
 def main():

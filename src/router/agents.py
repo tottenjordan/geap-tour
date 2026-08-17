@@ -3,31 +3,43 @@
 Routes to: Lite → Flash → Pro → Sonnet → Opus based on classifier score.
 """
 
+import contextlib
+
 import litellm
+
 litellm.suppress_debug_info = True
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
-from google.genai.types import Content, Part
+from google.genai.types import Content
 
-from .complexity import classify_complexity, score_to_model_tier, tier_to_model
-
+from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
+from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
+from src.agents.opus_agent import INSTRUCTION as OPUS_INSTRUCTION
+from src.agents.pro_agent import INSTRUCTION as PRO_INSTRUCTION
+from src.agents.sonnet_agent import INSTRUCTION as SONNET_INSTRUCTION
 from src.armor.config import input_guardrail_callback
 from src.config import (
-    SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER,
-    LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL,
+    BOOKING_MCP_SERVER,
+    COMPLEXITY_HIGH,
+    COMPLEXITY_LOW,
+    EXPENSE_MCP_SERVER,
+    FLASH_MODEL,
+    HIGH_SPLIT,
+    LITE_MODEL,
+    MEDIUM_SPLIT,
+    OPUS_MODEL,
+    PRO_MODEL,
     ROUTER_MODEL,
-    COMPLEXITY_LOW, COMPLEXITY_HIGH, MEDIUM_SPLIT, HIGH_SPLIT,
+    SEARCH_MCP_SERVER,
+    SONNET_MODEL,
     resolve_model,
 )
 from src.observability.tracing import set_span_attributes, traced
 from src.registry import get_mcp_tools
-from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
-from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
-from src.agents.pro_agent import INSTRUCTION as PRO_INSTRUCTION
-from src.agents.sonnet_agent import INSTRUCTION as SONNET_INSTRUCTION
-from src.agents.opus_agent import INSTRUCTION as OPUS_INSTRUCTION
+
+from .complexity import classify_complexity, score_to_model_tier, tier_to_model
 
 
 def _mcp_tools():
@@ -128,12 +140,10 @@ async def complexity_router_callback(callback_context=None, **kwargs):
     return None
 
 
-async def save_memories_callback(callback_context: CallbackContext = None, **kwargs):
+async def save_memories_callback(callback_context: CallbackContext | None = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
-    try:
+    with contextlib.suppress(Exception):
         await callback_context.add_session_to_memory()
-    except Exception:
-        pass
     return None
 
 
@@ -178,4 +188,5 @@ router_agent = LlmAgent(
 root_agent = router_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=router_agent)

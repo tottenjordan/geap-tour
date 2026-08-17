@@ -9,10 +9,13 @@ Usage:
 import json
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -187,7 +190,7 @@ def generate_baseline_comparison_chart(before_scores: dict[str, dict[str, float]
     n_metrics = len(METRICS)
     n_agents = len(agents)
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    _, ax = plt.subplots(figsize=(14, 7))
     x = np.arange(n_agents)
     width = 0.12
 
@@ -195,7 +198,7 @@ def generate_baseline_comparison_chart(before_scores: dict[str, dict[str, float]
 
     for i, metric in enumerate(METRICS):
         values = [before_scores[a].get(metric, 0) for a in agents]
-        bars = ax.bar(x + i * width, values, width, label=METRIC_LABELS[metric], color=colors[i])
+        ax.bar(x + i * width, values, width, label=METRIC_LABELS[metric], color=colors[i])
 
     ax.set_xlabel("Agent")
     ax.set_ylabel("Score (0-1)")
@@ -210,7 +213,7 @@ def generate_baseline_comparison_chart(before_scores: dict[str, dict[str, float]
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "baseline_comparison.png", dpi=150)
     plt.close()
-    print(f"  Generated: baseline_comparison.png")
+    print("  Generated: baseline_comparison.png")
 
 
 def generate_before_after_chart(before: dict, after: dict):
@@ -218,7 +221,7 @@ def generate_before_after_chart(before: dict, after: dict):
     agents = list(before.keys())
     n = len(agents)
 
-    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    _, axes = plt.subplots(2, 3, figsize=(16, 10))
     axes = axes.flatten()
 
     for i, metric in enumerate(METRICS):
@@ -227,8 +230,8 @@ def generate_before_after_chart(before: dict, after: dict):
         a_vals = [after[a].get(metric, 0) for a in agents]
         x = np.arange(n)
         width = 0.35
-        ax.bar(x - width/2, b_vals, width, label="Before", color="#4285F4", alpha=0.8)
-        ax.bar(x + width/2, a_vals, width, label="After", color="#34A853", alpha=0.8)
+        ax.bar(x - width / 2, b_vals, width, label="Before", color="#4285F4", alpha=0.8)
+        ax.bar(x + width / 2, a_vals, width, label="After", color="#34A853", alpha=0.8)
         ax.set_title(METRIC_LABELS[metric], fontsize=11)
         ax.set_xticks(x)
         ax.set_xticklabels([a.replace("_agent", "").title() for a in agents], fontsize=8)
@@ -241,7 +244,7 @@ def generate_before_after_chart(before: dict, after: dict):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "before_after_comparison.png", dpi=150)
     plt.close()
-    print(f"  Generated: before_after_comparison.png")
+    print("  Generated: before_after_comparison.png")
 
 
 def generate_improvement_delta_chart(before: dict, after: dict):
@@ -250,7 +253,7 @@ def generate_improvement_delta_chart(before: dict, after: dict):
     n_metrics = len(METRICS)
     n_agents = len(agents)
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    _, ax = plt.subplots(figsize=(14, 7))
     x = np.arange(n_agents)
     width = 0.12
     colors = plt.cm.Set2(np.linspace(0, 1, n_metrics))
@@ -271,12 +274,12 @@ def generate_improvement_delta_chart(before: dict, after: dict):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "improvement_delta.png", dpi=150)
     plt.close()
-    print(f"  Generated: improvement_delta.png")
+    print("  Generated: improvement_delta.png")
 
 
 def generate_cost_quality_chart(scores: dict[str, dict[str, float]]):
     """Generate cost vs quality scatter plot."""
-    fig, ax = plt.subplots(figsize=(10, 7))
+    _, ax = plt.subplots(figsize=(10, 7))
 
     for agent_name, info in AGENTS.items():
         agent_scores = scores.get(agent_name, {})
@@ -293,6 +296,7 @@ def generate_cost_quality_chart(scores: dict[str, dict[str, float]]):
         )
 
     from matplotlib.patches import Patch
+
     legend_elements = [
         Patch(facecolor="#4285F4", label="Google (Gemini)"),
         Patch(facecolor="#FF6B35", label="Anthropic (Claude)"),
@@ -308,11 +312,11 @@ def generate_cost_quality_chart(scores: dict[str, dict[str, float]]):
     plt.tight_layout()
     plt.savefig(CHARTS_DIR / "cost_quality_tradeoff.png", dpi=150)
     plt.close()
-    print(f"  Generated: cost_quality_tradeoff.png")
+    print("  Generated: cost_quality_tradeoff.png")
 
 
 def generate_heatmap(scores: dict[str, dict[str, float]], title: str, filename: str):
-    """Generate heatmap of agents × metrics."""
+    """Generate heatmap of agents x metrics."""
     agents = list(scores.keys())
     data = []
     for agent in agents:
@@ -330,8 +334,15 @@ def generate_heatmap(scores: dict[str, dict[str, float]], title: str, filename: 
 
     for i in range(len(agents)):
         for j in range(len(METRICS)):
-            text = ax.text(j, i, f"{data[i, j]:.2f}", ha="center", va="center",
-                          color="black" if data[i, j] > 0.4 else "white", fontsize=10)
+            ax.text(
+                j,
+                i,
+                f"{data[i, j]:.2f}",
+                ha="center",
+                va="center",
+                color="black" if data[i, j] > 0.4 else "white",
+                fontsize=10,
+            )
 
     ax.set_title(title)
     fig.colorbar(im, ax=ax, label="Score")
@@ -341,14 +352,14 @@ def generate_heatmap(scores: dict[str, dict[str, float]], title: str, filename: 
     print(f"  Generated: {filename}")
 
 
-def generate_radar_chart(agent_name: str, before: dict, after: dict = None):
+def generate_radar_chart(agent_name: str, before: dict, after: dict | None = None):
     """Generate radar/spider chart for a single agent."""
     metrics = list(METRIC_LABELS.values())
     n = len(metrics)
     angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
     angles += angles[:1]
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+    _, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
 
     values = [before.get(m, 0) for m in METRICS]
     values += values[:1]
@@ -373,7 +384,7 @@ def generate_radar_chart(agent_name: str, before: dict, after: dict = None):
     print(f"  Generated: radar_{agent_name}.png")
 
 
-def generate_report(before_scores: dict, after_scores: dict = None):
+def generate_report(before_scores: dict, after_scores: dict | None = None):
     """Generate the markdown report."""
     lines = []
     lines.append("# GEPA Optimization Analysis — Multi-Model Agent Tier\n")
@@ -392,19 +403,23 @@ def generate_report(before_scores: dict, after_scores: dict = None):
     lines.append("|-------|-------|----------|-----------|------|-----------|")
     for name, info in AGENTS.items():
         lines.append(
-            f"| {name.replace('_agent','').title()} | `{info['model']}` | {info['provider']} "
+            f"| {name.replace('_agent', '').title()} | `{info['model']}` | {info['provider']} "
             f"| ${info['output_cost']:.2f} | {info['tier']} | `{info['engine_id']}` |"
         )
     lines.append("")
 
     lines.append("## Baseline Eval Scores\n")
     lines.append("![Baseline Comparison](charts/baseline_comparison.png)\n")
-    lines.append("| Agent | Quality | Hallucination | Safety | Tool Use | Instruction | Response Match |")
-    lines.append("|-------|---------|---------------|--------|----------|-------------|----------------|")
+    lines.append(
+        "| Agent | Quality | Hallucination | Safety | Tool Use | Instruction | Response Match |"
+    )
+    lines.append(
+        "|-------|---------|---------------|--------|----------|-------------|----------------|"
+    )
     for name in AGENTS:
         s = before_scores.get(name, {})
         lines.append(
-            f"| {name.replace('_agent','').title()} "
+            f"| {name.replace('_agent', '').title()} "
             f"| {s.get('final_response_quality_v1', 0):.2f} "
             f"| {s.get('hallucination_v1', 0):.2f} "
             f"| {s.get('safety_v1', 0):.2f} "
@@ -427,7 +442,9 @@ def generate_report(before_scores: dict, after_scores: dict = None):
     lines.append("| Agent | Output $/M | Avg Quality | Quality/$ |")
     lines.append("|-------|-----------|-------------|-----------|")
     for name, cost, avg, qpd in sorted(cost_data, key=lambda x: x[1]):
-        lines.append(f"| {name.replace('_agent','').title()} | ${cost:.2f} | {avg:.2f} | {qpd:.4f} |")
+        lines.append(
+            f"| {name.replace('_agent', '').title()} | ${cost:.2f} | {avg:.2f} | {qpd:.4f} |"
+        )
     lines.append("")
 
     lines.append("## Metric Heatmap (Before)\n")
@@ -451,43 +468,75 @@ def generate_report(before_scores: dict, after_scores: dict = None):
                 b = before_scores.get(name, {}).get(m, 0)
                 a = after_scores.get(name, {}).get(m, 0)
                 delta = a - b
-                pct = f"{delta/b*100:+.0f}%" if b > 0 else "N/A"
+                pct = f"{delta / b * 100:+.0f}%" if b > 0 else "N/A"
                 indicator = "+" if delta > 0 else ""
                 lines.append(
-                    f"| {name.replace('_agent','').title()} | {METRIC_LABELS[m]} "
+                    f"| {name.replace('_agent', '').title()} | {METRIC_LABELS[m]} "
                     f"| {b:.2f} | {a:.2f} | {indicator}{delta:.2f} | {pct} |"
                 )
         lines.append("")
 
     lines.append("## Per-Agent Radar Charts (Before vs After)\n")
     for name in AGENTS:
-        lines.append(f"### {name.replace('_agent','').title()} Agent\n")
+        lines.append(f"### {name.replace('_agent', '').title()} Agent\n")
         lines.append(f"![{name} Radar](charts/radar_{name}.png)\n")
 
     lines.append("## Before/After Instruction Comparison\n")
-    lines.append("Full before/after prompts for each agent are documented in [`docs/prompts/`](prompts/):\n")
+    lines.append(
+        "Full before/after prompts for each agent are documented in [`docs/prompts/`](prompts/):\n"
+    )
     lines.append("| Agent | Before | After | Key Additions |")
     lines.append("|-------|--------|-------|---------------|")
-    lines.append("| [Lite](prompts/lite_agent.md) | 3 lines | 25+ lines | Capabilities/limitations, tool usage guidelines, domain knowledge |")
-    lines.append("| [Flash](prompts/flash_agent.md) | 3 lines | 35+ lines | Expense policy handling logic, booking confirmation format |")
-    lines.append("| [Pro](prompts/pro_agent.md) | 3 lines | 22+ lines | Problem breakdown, parameter validation, PII safety, tool-specific guidance |")
-    lines.append("| [Sonnet](prompts/sonnet_agent.md) | 3 lines | 20+ lines | Multi-domain analysis, scenario planning, actionable recommendations |")
-    lines.append("| [Opus](prompts/opus_agent.md) | 4 lines | 40+ lines | 7-step methodology: deconstruct, gather, calculate, analyze, structure, next steps, scope limits |")
+    lines.append(
+        "| [Lite](prompts/lite_agent.md) | 3 lines | 25+ lines | Capabilities/limitations, tool usage guidelines, domain knowledge |"
+    )
+    lines.append(
+        "| [Flash](prompts/flash_agent.md) | 3 lines | 35+ lines | Expense policy handling logic, booking confirmation format |"
+    )
+    lines.append(
+        "| [Pro](prompts/pro_agent.md) | 3 lines | 22+ lines | Problem breakdown, parameter validation, PII safety, tool-specific guidance |"
+    )
+    lines.append(
+        "| [Sonnet](prompts/sonnet_agent.md) | 3 lines | 20+ lines | Multi-domain analysis, scenario planning, actionable recommendations |"
+    )
+    lines.append(
+        "| [Opus](prompts/opus_agent.md) | 4 lines | 40+ lines | 7-step methodology: deconstruct, gather, calculate, analyze, structure, next steps, scope limits |"
+    )
     lines.append("")
 
     lines.append("## Key Findings\n")
-    lines.append("1. **Sonnet benefited most** — +42% instruction following, +32% response match, +17% hallucination")
-    lines.append("2. **Lite showed strong gains** — +36% instruction following, +45% response match, but regressed on safety (-26%)")
-    lines.append("3. **Flash improved quality** (+15%) but regressed on hallucination (-32%) and instruction following (-60%)")
-    lines.append("4. **Pro was most balanced** — improved safety (+17%), tool use (+18%), modest quality gain (+4%)")
-    lines.append("5. **Opus regressed overall** — quality dropped 25%, suggesting overly prescriptive 7-step methodology\n")
+    lines.append(
+        "1. **Sonnet benefited most** — +42% instruction following, +32% response match, +17% hallucination"
+    )
+    lines.append(
+        "2. **Lite showed strong gains** — +36% instruction following, +45% response match, but regressed on safety (-26%)"
+    )
+    lines.append(
+        "3. **Flash improved quality** (+15%) but regressed on hallucination (-32%) and instruction following (-60%)"
+    )
+    lines.append(
+        "4. **Pro was most balanced** — improved safety (+17%), tool use (+18%), modest quality gain (+4%)"
+    )
+    lines.append(
+        "5. **Opus regressed overall** — quality dropped 25%, suggesting overly prescriptive 7-step methodology\n"
+    )
 
     lines.append("## Recommendations\n")
-    lines.append("- **Deploy Sonnet's optimized instruction** — clear net positive across all metrics")
-    lines.append("- **Deploy Lite's optimized instruction** — strong instruction following gains outweigh safety regression")
-    lines.append("- **Deploy Pro's optimized instruction** — balanced improvement, best safety gain")
-    lines.append("- **Reconsider Flash's instruction** — detailed expense handling hurt generalization")
-    lines.append("- **Reconsider Opus's instruction** — 7-step methodology too rigid for expert-level tasks")
+    lines.append(
+        "- **Deploy Sonnet's optimized instruction** — clear net positive across all metrics"
+    )
+    lines.append(
+        "- **Deploy Lite's optimized instruction** — strong instruction following gains outweigh safety regression"
+    )
+    lines.append(
+        "- **Deploy Pro's optimized instruction** — balanced improvement, best safety gain"
+    )
+    lines.append(
+        "- **Reconsider Flash's instruction** — detailed expense handling hurt generalization"
+    )
+    lines.append(
+        "- **Reconsider Opus's instruction** — 7-step methodology too rigid for expert-level tasks"
+    )
     lines.append("- Re-run optimization after any changes to MCP tool schemas or policy limits\n")
 
     report_path = DOCS_DIR / "gepa_optimization_analysis.md"
@@ -516,7 +565,9 @@ def main():
     print("\nGenerating charts...")
     generate_baseline_comparison_chart(before_scores)
     generate_cost_quality_chart(after_scores)
-    generate_heatmap(before_scores, "Baseline Eval Scores (Before GEPA)", "metric_heatmap_baseline.png")
+    generate_heatmap(
+        before_scores, "Baseline Eval Scores (Before GEPA)", "metric_heatmap_baseline.png"
+    )
     generate_heatmap(after_scores, "Post-GEPA Eval Scores (After)", "metric_heatmap_after.png")
     generate_before_after_chart(before_scores, after_scores)
     generate_improvement_delta_chart(before_scores, after_scores)
@@ -532,5 +583,6 @@ def main():
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
     main()

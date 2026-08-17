@@ -9,8 +9,8 @@ Usage:
     uv run python -m src.eval.router_eval --rounds 5 --update-report
 """
 
-import asyncio
 import argparse
+import asyncio
 import json
 import math
 import random
@@ -24,21 +24,65 @@ from src.router.cost_tracker import estimate_cost
 
 EVAL_CASES = [
     {"prompt": "Find flights from SFO to JFK", "expected": "low", "category": "flight_search"},
-    {"prompt": "What's the expense policy for meals?", "expected": "low", "category": "policy_check"},
-    {"prompt": "Search hotels in Chicago under $200", "expected": "low", "category": "hotel_search"},
-    {"prompt": "Check if a $50 transport expense is within policy", "expected": "low", "category": "policy_check"},
-    {"prompt": "How much can I spend on meals per day while traveling?", "expected": "low", "category": "policy_check"},
+    {
+        "prompt": "What's the expense policy for meals?",
+        "expected": "low",
+        "category": "policy_check",
+    },
+    {
+        "prompt": "Search hotels in Chicago under $200",
+        "expected": "low",
+        "category": "hotel_search",
+    },
+    {
+        "prompt": "Check if a $50 transport expense is within policy",
+        "expected": "low",
+        "category": "policy_check",
+    },
+    {
+        "prompt": "How much can I spend on meals per day while traveling?",
+        "expected": "low",
+        "category": "policy_check",
+    },
     {"prompt": "Show me flights from LAX to ORD", "expected": "low", "category": "flight_search"},
     {"prompt": "What's the lodging limit?", "expected": "low", "category": "policy_check"},
     {"prompt": "Find hotels in Miami", "expected": "low", "category": "hotel_search"},
     {"prompt": "Book flight FL001 for Alice Johnson", "expected": "low", "category": "booking"},
-    {"prompt": "Submit a $45 lunch expense for EMP001", "expected": "low", "category": "expense_submit"},
-    {"prompt": "Find flights to NYC and compare the cheapest options by airline", "expected": "medium", "category": "comparison"},
-    {"prompt": "Search hotels in Boston, then check if the nightly rate fits our lodging policy", "expected": "medium", "category": "multi_step"},
-    {"prompt": "Show my expense history and flag any items that exceeded policy limits", "expected": "medium", "category": "analysis"},
-    {"prompt": "I need to compare hotel options in NYC vs Boston under $300 per night", "expected": "medium", "category": "comparison"},
-    {"prompt": "Can you check my expense history and flag issues?", "expected": "medium", "category": "analysis"},
-    {"prompt": "I need help planning flights and checking if the cost fits our policy", "expected": "medium", "category": "multi_step"},
+    {
+        "prompt": "Submit a $45 lunch expense for EMP001",
+        "expected": "low",
+        "category": "expense_submit",
+    },
+    {
+        "prompt": "Find flights to NYC and compare the cheapest options by airline",
+        "expected": "medium",
+        "category": "comparison",
+    },
+    {
+        "prompt": "Search hotels in Boston, then check if the nightly rate fits our lodging policy",
+        "expected": "medium",
+        "category": "multi_step",
+    },
+    {
+        "prompt": "Show my expense history and flag any items that exceeded policy limits",
+        "expected": "medium",
+        "category": "analysis",
+    },
+    {
+        "prompt": "I need to compare hotel options in NYC vs Boston under $300 per night",
+        "expected": "medium",
+        "category": "comparison",
+    },
+    {
+        "prompt": "Can you check my expense history and flag issues?",
+        "expected": "medium",
+        "category": "analysis",
+    },
+    {
+        "prompt": "I need help planning flights and checking if the cost fits our policy",
+        "expected": "medium",
+        "category": "multi_step",
+    },
     {
         "prompt": "Plan a 5-day trip to Tokyo for a team of 4: find flights, hotels near Shibuya, estimate daily meal expenses, and check what our corporate policy allows for international entertainment expenses.",
         "expected": "high",
@@ -71,7 +115,7 @@ EVAL_CASES = [
     },
 ]
 
-from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
+from src.config import FLASH_MODEL, LITE_MODEL, OPUS_MODEL, PRO_MODEL, SONNET_MODEL
 
 MODEL_MAP = {
     "low": LITE_MODEL,
@@ -95,10 +139,14 @@ def _paired_t_test(diffs: list[float]) -> dict:
     if std_d == 0:
         return {"t_stat": float("inf"), "p_value": 0.0, "significant": True, "n": n}
     t_stat = mean_d / (std_d / math.sqrt(n))
-    df = n - 1
     t_abs = abs(t_stat)
-    p_value = math.erfc(t_abs / math.sqrt(2)) if df > 30 else math.erfc(t_abs / math.sqrt(2))
-    return {"t_stat": round(t_stat, 4), "p_value": round(p_value, 6), "significant": p_value < 0.05, "n": n}
+    p_value = math.erfc(t_abs / math.sqrt(2))
+    return {
+        "t_stat": round(t_stat, 4),
+        "p_value": round(p_value, 6),
+        "significant": p_value < 0.05,
+        "n": n,
+    }
 
 
 def _bootstrap_ci(values: list[float], n_bootstrap: int = 10000, ci: float = 0.95) -> dict:
@@ -135,13 +183,21 @@ async def run_single_round(cases: list[dict]) -> dict:
         total_routed_cost = routed_cost + classifier_cost
         opus_cost = estimate_cost(OPUS_MODEL, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
         confusion[expected][actual] += 1
-        results.append({
-            "prompt": case["prompt"][:80], "expected": expected, "actual": actual,
-            "score": result.score, "reason": result.reason, "match": match,
-            "latency_ms": round(latency_ms, 1), "routed_model": routed_model,
-            "routed_cost": total_routed_cost, "opus_cost": opus_cost,
-            "savings": opus_cost - total_routed_cost,
-        })
+        results.append(
+            {
+                "prompt": case["prompt"][:80],
+                "expected": expected,
+                "actual": actual,
+                "score": result.score,
+                "reason": result.reason,
+                "match": match,
+                "latency_ms": round(latency_ms, 1),
+                "routed_model": routed_model,
+                "routed_cost": total_routed_cost,
+                "opus_cost": opus_cost,
+                "savings": opus_cost - total_routed_cost,
+            }
+        )
 
     total = len(results)
     correct = sum(1 for r in results if r["match"])
@@ -151,9 +207,13 @@ async def run_single_round(cases: list[dict]) -> dict:
     savings_pct = (1 - total_routed / total_opus) * 100 if total_opus else 0
 
     return {
-        "accuracy": round(accuracy, 4), "correct": correct, "total": total,
-        "confusion": confusion, "total_routed_cost": round(total_routed, 8),
-        "total_opus_cost": round(total_opus, 8), "savings_pct": round(savings_pct, 1),
+        "accuracy": round(accuracy, 4),
+        "correct": correct,
+        "total": total,
+        "confusion": confusion,
+        "total_routed_cost": round(total_routed, 8),
+        "total_opus_cost": round(total_opus, 8),
+        "savings_pct": round(savings_pct, 1),
         "avg_latency_ms": round(statistics.mean(r["latency_ms"] for r in results), 1),
         "per_case": results,
     }
@@ -163,12 +223,14 @@ async def run_eval_rounds(n_rounds: int = 3) -> dict:
     print(f"Running {n_rounds} evaluation rounds on {len(EVAL_CASES)} test cases...\n")
     all_rounds, all_savings = [], []
     for i in range(n_rounds):
-        print(f"  Round {i+1}/{n_rounds}...", end=" ", flush=True)
+        print(f"  Round {i + 1}/{n_rounds}...", end=" ", flush=True)
         t0 = time.monotonic()
         result = await run_single_round(EVAL_CASES)
         elapsed = time.monotonic() - t0
         all_rounds.append(result)
-        print(f"accuracy={result['accuracy']:.1%} savings={result['savings_pct']:.1f}% ({elapsed:.1f}s)")
+        print(
+            f"accuracy={result['accuracy']:.1%} savings={result['savings_pct']:.1f}% ({elapsed:.1f}s)"
+        )
         for cr in result["per_case"]:
             all_savings.append(cr["savings"])
 
@@ -192,14 +254,23 @@ async def run_eval_rounds(n_rounds: int = 3) -> dict:
 
     return {
         "timestamp": datetime.now().isoformat(),
-        "n_rounds": n_rounds, "n_cases_per_round": len(EVAL_CASES),
+        "n_rounds": n_rounds,
+        "n_cases_per_round": len(EVAL_CASES),
         "total_classifications": n_rounds * len(EVAL_CASES),
-        "accuracy": {"mean": round(statistics.mean(accuracies), 4),
-                      "std": round(statistics.stdev(accuracies), 4) if len(accuracies) > 1 else 0,
-                      "per_round": accuracies, "bootstrap_ci": accuracy_ci, "per_tier": per_tier},
-        "cost_savings": {"mean_pct": round(statistics.mean(savings_pcts), 1),
-                          "std_pct": round(statistics.stdev(savings_pcts), 1) if len(savings_pcts) > 1 else 0,
-                          "per_round": savings_pcts, "bootstrap_ci": savings_ci, "t_test": t_test},
+        "accuracy": {
+            "mean": round(statistics.mean(accuracies), 4),
+            "std": round(statistics.stdev(accuracies), 4) if len(accuracies) > 1 else 0,
+            "per_round": accuracies,
+            "bootstrap_ci": accuracy_ci,
+            "per_tier": per_tier,
+        },
+        "cost_savings": {
+            "mean_pct": round(statistics.mean(savings_pcts), 1),
+            "std_pct": round(statistics.stdev(savings_pcts), 1) if len(savings_pcts) > 1 else 0,
+            "per_round": savings_pcts,
+            "bootstrap_ci": savings_ci,
+            "t_test": t_test,
+        },
         "confusion_matrix": agg_cm,
         "avg_latency_ms": round(statistics.mean(r["avg_latency_ms"] for r in all_rounds), 1),
         "rounds": all_rounds,
@@ -210,79 +281,142 @@ def generate_report(results: dict) -> str:
     acc, sav, cm = results["accuracy"], results["cost_savings"], results["confusion_matrix"]
     t = sav["t_test"]
     lines = [
-        "# Multi-Model Prompt Router — Cost & Accuracy Report", "",
+        "# Multi-Model Prompt Router — Cost & Accuracy Report",
+        "",
         f"> Generated: {results['timestamp'][:19]}  ",
-        f"> Rounds: {results['n_rounds']} | Cases/round: {results['n_cases_per_round']} | Total: {results['total_classifications']}", "",
-        "## Architecture", "",
-        "```", "User Prompt", "    |", "    v",
-        "[Model Armor] <- safety screening (RAI, PI, jailbreak)", "    |", "    v",
-        "[Flash Lite Classifier] <- complexity score 0-1 (~$0.00002/call)", "    |",
+        f"> Rounds: {results['n_rounds']} | Cases/round: {results['n_cases_per_round']} | Total: {results['total_classifications']}",
+        "",
+        "## Architecture",
+        "",
+        "```",
+        "User Prompt",
+        "    |",
+        "    v",
+        "[Model Armor] <- safety screening (RAI, PI, jailbreak)",
+        "    |",
+        "    v",
+        "[Flash Lite Classifier] <- complexity score 0-1 (~$0.00002/call)",
+        "    |",
         "    +-- low  (<0.35) -> gemini-2.5-flash-lite   ($0.075/M in)",
         "    +-- med  (0.35-0.65) -> gemini-2.5-flash    ($0.15/M in)",
-        "    +-- high (>=0.65) -> claude-opus-4-6        ($15/M in)", "```", "",
-        "## Classification Accuracy", "",
-        f"**Overall: {acc['mean']:.1%}** (95% CI: [{acc['bootstrap_ci']['ci_lower']:.1%}, {acc['bootstrap_ci']['ci_upper']:.1%}])", "",
-        "| Tier | Accuracy | Correct / Total |", "|------|----------|-----------------|",
+        "    +-- high (>=0.65) -> claude-opus-4-6        ($15/M in)",
+        "```",
+        "",
+        "## Classification Accuracy",
+        "",
+        f"**Overall: {acc['mean']:.1%}** (95% CI: [{acc['bootstrap_ci']['ci_lower']:.1%}, {acc['bootstrap_ci']['ci_upper']:.1%}])",
+        "",
+        "| Tier | Accuracy | Correct / Total |",
+        "|------|----------|-----------------|",
     ]
     for tier in ("low", "medium", "high"):
-        row = cm[tier]; total_t = sum(row.values()); correct = row[tier]
+        row = cm[tier]
+        total_t = sum(row.values())
+        correct = row[tier]
         pct = correct / total_t * 100 if total_t else 0
         lines.append(f"| {tier} | {pct:.0f}% | {correct}/{total_t} |")
 
-    lines.extend(["", "### Confusion Matrix", "",
-        "| Expected \\ Actual | Low | Medium | High |", "|-------------------|-----|--------|------|"])
+    lines.extend(
+        [
+            "",
+            "### Confusion Matrix",
+            "",
+            "| Expected \\ Actual | Low | Medium | High |",
+            "|-------------------|-----|--------|------|",
+        ]
+    )
     for e in ("low", "medium", "high"):
-        row = cm[e]; lines.append(f"| {e} | {row['low']} | {row['medium']} | {row['high']} |")
+        row = cm[e]
+        lines.append(f"| {e} | {row['low']} | {row['medium']} | {row['high']} |")
 
-    lines.extend(["", "## Cost Savings", "",
-        f"**Mean savings: {sav['mean_pct']:.1f}%** vs all-Claude-Opus baseline  ",
-        f"95% CI: [{sav['bootstrap_ci']['ci_lower']:.1f}%, {sav['bootstrap_ci']['ci_upper']:.1f}%]", "",
-        "### Statistical Significance", "",
-        f"- Paired t-test: t={t['t_stat']:.2f}, p={t['p_value']:.6f}, n={t['n']}",
-        f"- **{'Statistically significant' if t['significant'] else 'NOT statistically significant'}** at alpha=0.05", "",
-        "### Per-Round Results", "",
-        "| Round | Accuracy | Savings % | Routed Cost | Opus Cost |",
-        "|-------|----------|-----------|-------------|-----------|"])
+    lines.extend(
+        [
+            "",
+            "## Cost Savings",
+            "",
+            f"**Mean savings: {sav['mean_pct']:.1f}%** vs all-Claude-Opus baseline  ",
+            f"95% CI: [{sav['bootstrap_ci']['ci_lower']:.1f}%, {sav['bootstrap_ci']['ci_upper']:.1f}%]",
+            "",
+            "### Statistical Significance",
+            "",
+            f"- Paired t-test: t={t['t_stat']:.2f}, p={t['p_value']:.6f}, n={t['n']}",
+            f"- **{'Statistically significant' if t['significant'] else 'NOT statistically significant'}** at alpha=0.05",
+            "",
+            "### Per-Round Results",
+            "",
+            "| Round | Accuracy | Savings % | Routed Cost | Opus Cost |",
+            "|-------|----------|-----------|-------------|-----------|",
+        ]
+    )
     for i, r in enumerate(results["rounds"], 1):
-        lines.append(f"| {i} | {r['accuracy']:.1%} | {r['savings_pct']:.1f}% | ${r['total_routed_cost']:.6f} | ${r['total_opus_cost']:.6f} |")
+        lines.append(
+            f"| {i} | {r['accuracy']:.1%} | {r['savings_pct']:.1f}% | ${r['total_routed_cost']:.6f} | ${r['total_opus_cost']:.6f} |"
+        )
 
-    lines.extend(["", "## Cost Model", "",
-        "| Model | Input $/M | Output $/M | Tier |",
-        "|-------|-----------|------------|------|",
-        "| gemini-2.5-flash-lite | $0.075 | $0.30 | Low |",
-        "| gemini-2.5-flash | $0.15 | $0.60 | Medium |",
-        "| claude-opus-4-6 | $15.00 | $75.00 | High |", "",
-        f"Classifier overhead: ~$0.00002/call (Flash Lite, {CLASSIFIER_TOKEN_OVERHEAD} input tokens)",
-        f"Assumed per-request: {AVG_INPUT_TOKENS} input + {AVG_OUTPUT_TOKENS} output tokens", "",
-        "## Key Takeaways", ""])
-    if t['significant']:
-        lines.append(f"1. **{sav['mean_pct']:.0f}% cost reduction** with statistically significant savings (p={t['p_value']:.4f})")
+    lines.extend(
+        [
+            "",
+            "## Cost Model",
+            "",
+            "| Model | Input $/M | Output $/M | Tier |",
+            "|-------|-----------|------------|------|",
+            "| gemini-2.5-flash-lite | $0.075 | $0.30 | Low |",
+            "| gemini-2.5-flash | $0.15 | $0.60 | Medium |",
+            "| claude-opus-4-6 | $15.00 | $75.00 | High |",
+            "",
+            f"Classifier overhead: ~$0.00002/call (Flash Lite, {CLASSIFIER_TOKEN_OVERHEAD} input tokens)",
+            f"Assumed per-request: {AVG_INPUT_TOKENS} input + {AVG_OUTPUT_TOKENS} output tokens",
+            "",
+            "## Key Takeaways",
+            "",
+        ]
+    )
+    if t["significant"]:
+        lines.append(
+            f"1. **{sav['mean_pct']:.0f}% cost reduction** with statistically significant savings (p={t['p_value']:.4f})"
+        )
     else:
         lines.append(f"1. **{sav['mean_pct']:.0f}% cost reduction** (significance pending)")
-    lines.extend([
-        f"2. **{acc['mean']:.0%} routing accuracy** — Flash Lite correctly identifies complexity tiers",
-        f"3. Classifier overhead is negligible (~$0.00002/call) vs model cost savings",
-        f"4. Average classification latency: {results['avg_latency_ms']:.0f}ms", "",
-        "## Scaling Projections", "",
-        "| Daily Volume | All-Opus Cost | Smart Router | Monthly Savings |",
-        "|-------------|---------------|--------------|-----------------|"])
+    lines.extend(
+        [
+            f"2. **{acc['mean']:.0%} routing accuracy** — Flash Lite correctly identifies complexity tiers",
+            "3. Classifier overhead is negligible (~$0.00002/call) vs model cost savings",
+            f"4. Average classification latency: {results['avg_latency_ms']:.0f}ms",
+            "",
+            "## Scaling Projections",
+            "",
+            "| Daily Volume | All-Opus Cost | Smart Router | Monthly Savings |",
+            "|-------------|---------------|--------------|-----------------|",
+        ]
+    )
     for vol in (100, 1000, 10000, 100000):
         opus_d = vol * estimate_cost(OPUS_MODEL, AVG_INPUT_TOKENS, AVG_OUTPUT_TOKENS)
         routed_d = opus_d * (1 - sav["mean_pct"] / 100)
-        lines.append(f"| {vol:,} | ${opus_d:.2f}/day | ${routed_d:.2f}/day | ${(opus_d - routed_d) * 30:.0f}/mo |")
+        lines.append(
+            f"| {vol:,} | ${opus_d:.2f}/day | ${routed_d:.2f}/day | ${(opus_d - routed_d) * 30:.0f}/mo |"
+        )
 
-    lines.extend(["", "## Limitations", "",
-        "- Model Armor provides safety-only filters (RAI, PI, jailbreak) — no complexity scoring",
-        "- AI Gateway operates at network level — cannot route by prompt content",
-        "- Vertex AI RoutingConfig only routes between Gemini variants, not cross-provider",
-        "- Cost projections assume uniform token counts; real usage varies", "",
-        "---", "*Report generated by `src/eval/router_eval.py`*"])
+    lines.extend(
+        [
+            "",
+            "## Limitations",
+            "",
+            "- Model Armor provides safety-only filters (RAI, PI, jailbreak) — no complexity scoring",
+            "- AI Gateway operates at network level — cannot route by prompt content",
+            "- Vertex AI RoutingConfig only routes between Gemini variants, not cross-provider",
+            "- Cost projections assume uniform token counts; real usage varies",
+            "",
+            "---",
+            "*Report generated by `src/eval/router_eval.py`*",
+        ]
+    )
     return "\n".join(lines)
 
 
 async def main(n_rounds: int = 3, update_report: bool = True):
     results = await run_eval_rounds(n_rounds)
-    output_dir = Path("eval_results"); output_dir.mkdir(exist_ok=True)
+    output_dir = Path("eval_results")
+    output_dir.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = output_dir / f"router_eval_{ts}.json"
     with open(json_path, "w") as f:
@@ -295,11 +429,15 @@ async def main(n_rounds: int = 3, update_report: bool = True):
         report_path.write_text(report)
         print(f"Report updated: {report_path}")
     acc, sav, t = results["accuracy"], results["cost_savings"], results["cost_savings"]["t_test"]
-    print(f"\n{'='*60}\nSUMMARY\n{'='*60}")
-    print(f"  Accuracy:   {acc['mean']:.1%} (CI: [{acc['bootstrap_ci']['ci_lower']:.1%}, {acc['bootstrap_ci']['ci_upper']:.1%}])")
-    print(f"  Savings:    {sav['mean_pct']:.1f}% (CI: [{sav['bootstrap_ci']['ci_lower']:.1f}%, {sav['bootstrap_ci']['ci_upper']:.1f}%])")
+    print(f"\n{'=' * 60}\nSUMMARY\n{'=' * 60}")
+    print(
+        f"  Accuracy:   {acc['mean']:.1%} (CI: [{acc['bootstrap_ci']['ci_lower']:.1%}, {acc['bootstrap_ci']['ci_upper']:.1%}])"
+    )
+    print(
+        f"  Savings:    {sav['mean_pct']:.1f}% (CI: [{sav['bootstrap_ci']['ci_lower']:.1f}%, {sav['bootstrap_ci']['ci_upper']:.1f}%])"
+    )
     print(f"  t-test:     t={t['t_stat']:.2f}, p={t['p_value']:.6f}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     return results
 
 

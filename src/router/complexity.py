@@ -3,9 +3,9 @@
 Classifies prompts into 3 logical tiers, with score-based model selection
 within the medium and high tiers:
 
-  low    (0.0–0.30)  → LITE_MODEL
-  medium (0.30–0.60) → FLASH_MODEL (0.30–0.45) or SONNET_MODEL (0.45–0.60)
-  high   (0.60–1.0)  → PRO_MODEL (0.60–0.80) or OPUS_MODEL (0.80–1.0)
+  low    (0.0-0.30)  → LITE_MODEL
+  medium (0.30-0.60) → FLASH_MODEL (0.30-0.45) or SONNET_MODEL (0.45-0.60)
+  high   (0.60-1.0)  → PRO_MODEL (0.60-0.80) or OPUS_MODEL (0.80-1.0)
 """
 
 import json
@@ -43,10 +43,10 @@ CLASSIFIER_PROMPT_TEMPLATE = (
     "budget optimization, or strategic synthesis "
     '(e.g. "plan a multi-city trip with budget constraints", "review expenses and submit new ones")\n\n'
     "Scoring guidance:\n"
-    "- Single lookups and simple bookings: 0.0–0.29.\n"
-    "- Any comparison or 2-tool task: 0.30–0.59.\n"
-    "- 3+ distinct tasks or cross-domain analysis: 0.60–0.79.\n"
-    "- Team planning, budget optimization, or multi-city trips: 0.80–1.0.\n\n"
+    "- Single lookups and simple bookings: 0.0-0.29.\n"
+    "- Any comparison or 2-tool task: 0.30-0.59.\n"
+    "- 3+ distinct tasks or cross-domain analysis: 0.60-0.79.\n"
+    "- Team planning, budget optimization, or multi-city trips: 0.80-1.0.\n\n"
     'Return JSON with keys "score" (float) and "reason" (one sentence).\n\n'
     "Prompt: {prompt}"
 )
@@ -70,7 +70,7 @@ LEVELS = ["low", "medium", "high"]
 
 
 def _score_to_level(score: float) -> str:
-    for threshold, level in zip(THRESHOLDS, LEVELS):
+    for threshold, level in zip(THRESHOLDS, LEVELS, strict=False):
         if score < threshold:
             return level
     return LEVELS[-1]

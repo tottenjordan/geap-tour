@@ -4,6 +4,7 @@ Integrates Vertex AI Agent Engine Memory Bank so the agent remembers user
 interactions (past bookings, expense submissions, preferences) across sessions.
 """
 
+import contextlib
 import logging
 import os
 import re
@@ -11,8 +12,8 @@ import re
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.integrations.agent_registry import AgentRegistry
-from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content, Part
 
@@ -155,12 +156,10 @@ If the user asks about travel, direct them to the travel assistant.""",
 )
 
 
-async def save_memories_callback(callback_context: CallbackContext = None, **kwargs):
+async def save_memories_callback(callback_context: CallbackContext | None = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
-    try:
+    with contextlib.suppress(Exception):
         await callback_context.add_session_to_memory()
-    except Exception:
-        pass
     return None
 
 

@@ -3,10 +3,10 @@
 from google.adk.agents import LlmAgent
 
 from src.config import (
-    TRAVEL_MODEL,
-    SEARCH_MCP_SERVER,
     BOOKING_MCP_SERVER,
     PROMPT_VARIANT,
+    SEARCH_MCP_SERVER,
+    TRAVEL_MODEL,
     resolve_model,
 )
 from src.registry import get_mcp_tools
@@ -80,4 +80,5 @@ travel_agent = LlmAgent(
 root_agent = travel_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=travel_agent)
