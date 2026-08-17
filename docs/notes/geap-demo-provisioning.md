@@ -34,12 +34,25 @@ stale placeholders).
    [model-armor-security-dashboard.md](./model-armor-security-dashboard.md) for
    the two caveats (custom-MCP ≠ Google-MCP; native-Gemini backbone for richest
    data).
-2. **BigQuery logging sink / dataset** — `bash scripts/setup_logging_sink.sh`.
-   Dataset `geap_workshop_logs` (`BQ_EVAL_DATASET`). NOTE: continuous eval no
-   longer requires a hand-created `online_eval_results` table — the canonical
-   source is the native monitor's `agent_eval/*` metric series; the BQ table is
-   an **optional** export sink only (`verify_monitors.py --source bigquery`
-   returns `no_table` gracefully when absent).
+2. **Cloud Logging — sink, viewer grant, stdout verification** —
+   `bash scripts/setup_logging_sink.sh`. The managed Agent Runtime auto-routes
+   each engine's stdout/stderr to the `reasoning_engine_stdout` /
+   `reasoning_engine_stderr` log IDs on the
+   `aiplatform.googleapis.com/ReasoningEngine` resource (no in-agent setup — see
+   the [runtime logging doc](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/logging)),
+   so the script's job is the pipeline + access around them. It: creates the
+   BigQuery dataset `geap_workshop_logs` (`BQ_EVAL_DATASET`) and a sink filtered
+   to the ReasoningEngine resource; grants **`roles/logging.viewer`** so operators
+   can actually read the runtime logs in Logs Explorer / the Agent Runtime
+   dashboard (default: the active gcloud account; override with
+   `LOG_VIEWER_MEMBER=group:…`); and prints a `gcloud logging read` verification
+   for `reasoning_engine_stdout` (set `AGENT_ENGINE_ID=<id>` to tail a specific
+   engine). NOTE: continuous eval no longer requires a hand-created
+   `online_eval_results` table — the canonical source is the native monitor's
+   `agent_eval/*` metric series; the BQ table is an **optional** export sink only
+   (`verify_monitors.py --source bigquery` returns `no_table` gracefully when
+   absent). Cloud Logging does **not** cover Agent Runtime child resources
+   (Sessions, Memory Bank, Code Execution, Example Store) — those are not logged.
 3. **Monitoring workspace + alerts + dashboard** (observability) —
    - **Seed the metric descriptors first.** An alert policy cannot reference a
      custom metric type that has never had a TimeSeries written — Cloud
