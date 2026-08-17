@@ -59,6 +59,10 @@ uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --sample-rate 0.
 # CI/CD eval gate — fast coordinator rubric score for a PR (advisory; --limit caps cases)
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent --agent-id <ENGINE_ID> --threshold 3.0 --limit 8
 
+# Judge-vs-human calibration — score the policy judge against the author-curated gold set (no engine; drift alarm)
+uv run python -m src.eval.calibration            # single judge: within-tolerance %, MAE, bias, Pearson r; exits non-zero below floor
+uv run python -m src.eval.calibration --panel    # score with the diverse 3-model judge panel + inter-rater alpha; see roadmap P1.6
+
 # Content logging to BigQuery (opt-in; model-neutral, independent of the stripped OTEL surface)
 ENABLE_AGENT_ANALYTICS=1 uv run --group analytics python -m src.deploy.deploy_agents coordinator --update  # wire BigQueryAgentAnalyticsPlugin (needs analytics group locally); see docs/notes/agent-analytics-bigquery.md
 
