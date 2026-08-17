@@ -84,7 +84,9 @@ class TestEvalCasesPerAgent:
         from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
 
         for case in ROUTER_EVAL_CASES:
-            assert "expected_complexity" in case, f"Missing expected_complexity in: {case.get('prompt', '?')}"
+            assert "expected_complexity" in case, (
+                f"Missing expected_complexity in: {case.get('prompt', '?')}"
+            )
             assert case["expected_complexity"] in ("low", "medium", "high")
 
 
@@ -190,6 +192,26 @@ class TestCaseLimit:
         assert len(_select_cases("coordinator_agent", total + 100)) == total
 
 
+class TestLowConfidence:
+    """Every metric is flagged low_confidence when graded over too few items."""
+
+    def test_flags_when_below_floor(self):
+        from src.eval.multi_agent_batch_eval import _annotate_low_confidence
+        from src.eval.stats import MIN_SAMPLES
+
+        results = {"helpfulness": {"score": 0.8}, "safety": {"score": 0.9}}
+        _annotate_low_confidence(results, MIN_SAMPLES - 1)
+        assert all(d["low_confidence"] for d in results.values())
+
+    def test_not_flagged_at_or_above_floor(self):
+        from src.eval.multi_agent_batch_eval import _annotate_low_confidence
+        from src.eval.stats import MIN_SAMPLES
+
+        results = {"helpfulness": {"score": 0.8}}
+        _annotate_low_confidence(results, MIN_SAMPLES)
+        assert results["helpfulness"]["low_confidence"] is False
+
+
 class TestGetMetrics:
     def test_get_metrics_excludes_custom_policy_metric(self):
         # policy_compliance is NOT scored via client.evals (SDK-broken custom
@@ -278,7 +300,9 @@ class TestEvalsetFilesValidJson:
         with open(path) as f:
             data = json.load(f)
         ids = [c["eval_id"] for c in data["eval_cases"]]
-        assert len(ids) == len(set(ids)), f"Duplicate eval_ids in {filename}: {[x for x in ids if ids.count(x) > 1]}"
+        assert len(ids) == len(set(ids)), (
+            f"Duplicate eval_ids in {filename}: {[x for x in ids if ids.count(x) > 1]}"
+        )
 
 
 class TestEvalConfigFiles:
@@ -346,7 +370,9 @@ class TestRouterEvalsetComplexityLevels:
             complexity = case["conversation"][0]["intermediate_data"].get("expected_complexity")
             if complexity:
                 levels.add(complexity)
-        assert levels == {"low", "medium", "high"}, f"Missing complexity levels: {{'low', 'medium', 'high'}} - {levels}"
+        assert levels == {"low", "medium", "high"}, (
+            f"Missing complexity levels: {{'low', 'medium', 'high'}} - {levels}"
+        )
 
     def test_min_cases_per_level(self):
         path = EVALSETS_DIR / "router_agent.evalset.json"

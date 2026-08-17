@@ -56,6 +56,21 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
+def _annotate_low_confidence(metric_results: dict, n_items: int) -> dict:
+    """Tag every metric ``low_confidence`` when graded over fewer than the floor.
+
+    All metrics in a run share the same item count, so the flag is computed once
+    from ``n_items`` (:data:`src.eval.stats.MIN_SAMPLES`). Mutates and returns
+    ``metric_results`` for convenience.
+    """
+    from src.eval.stats import is_low_confidence
+
+    low = is_low_confidence(n_items)
+    for detail in metric_results.values():
+        detail["low_confidence"] = low
+    return metric_results
+
+
 def _select_cases(agent_name: str, limit: int | None) -> list[dict]:
     """Eval cases for an agent, capped to ``limit`` (None = all).
 
@@ -194,6 +209,9 @@ def _run_single_agent_eval(
                 "threshold": normalized_threshold,
                 "passed": passed,
             }
+    # Flag every metric low-confidence when graded over too few items, so a
+    # pass/fail over a demo-scale run isn't read with full trust.
+    _annotate_low_confidence(metric_results, total_items)
 
     # Per-item details
     items = []
@@ -209,9 +227,15 @@ def _run_single_agent_eval(
     for mname, detail in sorted(metric_results.items()):
         status = "PASS" if detail["passed"] else "FAIL"
         marker = "" if detail["passed"] else "  <<<"
-        print(f"    {mname:50s} {detail['score']:.2f} / {detail['threshold']:.2f}  [{status}]{marker}")
+        conf = "  ⚠ low_confidence" if detail.get("low_confidence") else ""
+        print(
+            f"    {mname:50s} {detail['score']:.2f} / {detail['threshold']:.2f}  "
+            f"[{status}]{marker}{conf}"
+        )
     if not metric_results:
-        print(f"    (no metrics returned — check eval run: {getattr(evaluation_run, 'name', 'N/A')})")
+        print(
+            f"    (no metrics returned — check eval run: {getattr(evaluation_run, 'name', 'N/A')})"
+        )
 
     return {
         "agent": agent_name,

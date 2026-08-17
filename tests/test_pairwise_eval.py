@@ -58,12 +58,33 @@ class TestAggregate:
         assert agg["win_rate_baseline"] == 0.0
         assert agg["tie_rate"] == 0.0
 
+    def test_significance_block_present_and_ties_excluded(self):
+        # 8 candidate, 2 baseline, 3 ties -> decisive denominator is 10
+        choices = [pw.CANDIDATE] * 8 + [pw.BASELINE] * 2 + [pw.TIE] * 3
+        agg = pw.aggregate_choices(choices)
+        sig = agg["significance"]
+        assert sig["decisive"] == 10
+        assert sig["win_rate_decisive"] == pytest.approx(0.8)
+        assert 0.0 <= sig["p_value"] <= 1.0
+
+    def test_decisive_sweep_is_significant(self):
+        agg = pw.aggregate_choices([pw.CANDIDATE] * 10)
+        assert agg["significance"]["significant"] is True
+        assert agg["significance"]["p_value"] < 0.05
+
+    def test_coin_flip_not_significant(self):
+        agg = pw.aggregate_choices([pw.CANDIDATE] * 5 + [pw.BASELINE] * 5)
+        assert agg["significance"]["significant"] is False
+
+    def test_empty_significance_is_safe(self):
+        sig = pw.aggregate_choices([])["significance"]
+        assert sig["decisive"] == 0
+        assert sig["significant"] is False
+
 
 class TestPairedDataset:
     def test_carries_both_response_columns(self):
-        df = pw.build_paired_dataset(
-            ["p1", "p2"], ["b1", "b2"], ["c1", "c2"]
-        )
+        df = pw.build_paired_dataset(["p1", "p2"], ["b1", "b2"], ["c1", "c2"])
         assert list(df.columns) == ["prompt", "baseline_response", "candidate_response"]
         assert df.iloc[0]["baseline_response"] == "b1"
         assert df.iloc[0]["candidate_response"] == "c1"
@@ -146,8 +167,12 @@ class TestRunPairwiseEval:
             return "Choice: A" if "STRONG" in a_text else "Choice: B"
 
         result = pw.run_pairwise_eval(
-            "BASE", "CAND", cases=cases, client=client,
-            generate_fn=judge, warm=False,
+            "BASE",
+            "CAND",
+            cases=cases,
+            client=client,
+            generate_fn=judge,
+            warm=False,
         )
         assert result["win_rate_candidate"] == pytest.approx(1.0)
         assert result["win_rate_baseline"] == 0.0
@@ -157,13 +182,17 @@ class TestRunPairwiseEval:
     def test_skips_error_responses(self):
         cases = [{"prompt": "q1"}, {"prompt": "q2"}]
         mapping = {
-            "BASE": {"q1": "ok", "q2": ""},           # q2 baseline empty -> skip
+            "BASE": {"q1": "ok", "q2": ""},  # q2 baseline empty -> skip
             "CAND": {"q1": "ok", "q2": "ok"},
         }
         client = self._fake_client(mapping)
         result = pw.run_pairwise_eval(
-            "BASE", "CAND", cases=cases, client=client,
-            generate_fn=lambda p: "Choice: TIE", warm=False,
+            "BASE",
+            "CAND",
+            cases=cases,
+            client=client,
+            generate_fn=lambda p: "Choice: TIE",
+            warm=False,
         )
         # Only q1 had both responses -> only one judged case.
         assert result["n_cases"] == 1
@@ -178,8 +207,8 @@ class TestManifest:
             ]
         }
         baseline, candidate = pw.load_engines_from_manifest(manifest)
-        assert baseline == "ENG_GEMINI"    # gemini is baseline (coded -1)
-        assert candidate == "ENG_CLAUDE"   # claude is candidate (coded +1)
+        assert baseline == "ENG_GEMINI"  # gemini is baseline (coded -1)
+        assert candidate == "ENG_CLAUDE"  # claude is candidate (coded +1)
 
     def test_missing_engine_id_raises(self):
         manifest = {"points": [{"assignments": {"model_backend": "gemini"}}]}

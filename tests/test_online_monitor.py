@@ -132,6 +132,20 @@ def test_aggregate_empty():
     assert agg["n_interactions"] == 0
 
 
+def test_aggregate_flags_low_confidence_below_floor():
+    # 3 interactions is below the sample floor -> flagged low_confidence.
+    agg = om.aggregate_scores([{"helpfulness": 0.8}] * 3)
+    assert agg["low_confidence"]["helpfulness"] is True
+
+
+def test_aggregate_reports_ci_bracketing_the_mean():
+    agg = om.aggregate_scores(
+        [{"helpfulness": v} for v in (0.2, 0.4, 0.6, 0.8, 1.0, 0.6, 0.4, 0.8)]
+    )
+    lo, hi = agg["ci"]["helpfulness"]
+    assert lo <= agg["scores"]["helpfulness"] <= hi
+
+
 # --------------------------------------------------------------------------- #
 # publish_online_scores
 # --------------------------------------------------------------------------- #
