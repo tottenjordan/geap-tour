@@ -61,6 +61,13 @@ file; keep this index short (< 200 lines).
   opt-in `BigQueryAgentAnalyticsPlugin` (runner-level, model-neutral) streams full
   prompt/response/tool content to BQ independent of the OTEL surface the managed
   runtime strips; flags, IAM prereqs, and the pending live-capture gate.
+- [Tool-call faithfulness (did it do what it said?)](./tool-call-faithfulness.md) —
+  a grounded judge compares the agent's completion claims against the real executed
+  `stream_query` trajectory to catch **hallucinated actions** (the gap
+  `tool_use_judge` explicitly can't cover — `run_inference` yields text but no
+  trajectory); publishes `agent_eval/tool_faithfulness` (offline) +
+  `agent_online_eval/tool_faithfulness` (online), floor 3.0. Load-bearing Branch-A/B
+  trajectory-visibility fork is spike-gated and **not yet resolved live**.
 - [Coordinator `tool_use_quality` ~0.27: root-cause finding](./coordinator-tool-use-quality.md)
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent

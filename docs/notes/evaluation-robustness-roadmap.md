@@ -92,6 +92,17 @@ alert floors (`quality_alerts.py:112-152`).
 - Scenario/turn counts disagree across call sites (10 vs 5 scenarios, 5 vs 3
   turns: `simulated_eval.py:61-63,238` vs `run_all_evals.py:122-124`).
 
+### G7 — No faithfulness check (claimed action vs executed tool) — ✅ addressed
+- Every quality judge scored only `(prompt, final-response-text)` via
+  `client.evals.run_inference`, which returns text but **no trajectory**, so
+  nothing caught a **hallucinated action** — a reply claiming *"I booked FL001"*
+  when no `book_flight` tool ran. **Addressed** by the grounded
+  `tool_faithfulness` evaluator (see
+  [tool-call-faithfulness.md](./tool-call-faithfulness.md)), which scores the
+  response against the real `stream_query` trajectory. **Open risk:** its
+  coordinator-level accuracy depends on the client stream surfacing nested
+  sub-agent MCP calls (Branch A) — spike-gated and not yet confirmed live.
+
 ## Prioritized interventions
 
 ### P0 — cheap, high-trust (do first) — ✅ implemented
@@ -152,6 +163,13 @@ alert floors (`quality_alerts.py:112-152`).
 9. **Wire multi-turn + a smoke online-monitor into advisory CI** so multi-turn and
    empty-stream regressions are caught per-PR (G5), and **replace the substring
    recall check with a judge** over multiple recall probes.
+10. **Tool-call faithfulness (hallucinated-action detection).** ✅ **implemented**
+    (`src/eval/tool_faithfulness.py`, `tests/test_tool_faithfulness.py`) — a
+    grounded judge compares completion claims against the real `stream_query`
+    trajectory and flags fabricated actions; published on both offline
+    (`agent_eval/tool_faithfulness`) and online (`agent_online_eval/*`) surfaces at
+    the shared 3.0 floor (G7). **Honest limit:** coordinator-level accuracy is
+    gated on the Branch-A/B trajectory-visibility spike, not yet run live.
 
 ## Honest caveats
 - Rubric scoring needs a **deployed engine** (no local inference path — memory
