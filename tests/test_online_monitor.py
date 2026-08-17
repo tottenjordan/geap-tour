@@ -220,3 +220,58 @@ def test_score_and_publish_dry_run_skips_write():
     assert client.calls == []
     # aggregate is still computed for reporting
     assert result["aggregate"]["scores"]["helpfulness"] == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# infra-empty separation (P2.8): empty 200s are an infra signal, not low quality
+# --------------------------------------------------------------------------- #
+def test_is_infra_empty_detects_empty_and_error_shaped():
+    assert om.is_infra_empty("")
+    assert om.is_infra_empty("   \n ")
+    assert om.is_infra_empty('{"error": "Failed to parse agent run response"}')
+    assert not om.is_infra_empty("here are your flights")
+
+
+def test_partition_separates_empty_from_real():
+    pairs = [("p1", "real answer"), ("p2", ""), ("p3", '{"error": "x"}')]
+    real, empty = om.partition_interactions(pairs)
+    assert real == [("p1", "real answer")]
+    assert len(empty) == 2
+
+
+def test_score_and_publish_excludes_infra_empty_from_quality_mean():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    # 1 real (would score 0.8 -> 4.0) + 2 empty. A judge that scored the empties
+    # low would drag the mean; instead they are excluded and counted separately.
+    pairs = [("find flights", "here are flights"), ("p2", ""), ("p3", "   ")]
+    result = om.score_and_publish(pairs, generate_fn=lambda _p: "Score: 4", writer=w)
+    assert result["n_captured"] == 3
+    assert result["n_infra_empty"] == 2
+    assert result["infra_empty_rate"] == 2 / 3
+    # the quality mean reflects ONLY the one real interaction, not the empties
+    assert result["aggregate"]["scores"]["helpfulness"] == 0.8
+    assert result["aggregate"]["counts"]["helpfulness"] == 1
+
+
+def test_score_and_publish_publishes_infra_empty_rate_verbatim():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    pairs = [("p1", "real"), ("p2", "")]
+    result = om.score_and_publish(pairs, generate_fn=lambda _p: "Score: 5", writer=w)
+    by_type = _by_type(client)
+    # infra_empty_rate lands on the online family, written verbatim (0-1), NOT
+    # scaled to the 1-5 quality axis.
+    assert by_type["custom.googleapis.com/agent_online_eval/infra_empty_rate"] == 0.5
+    assert result["infra_published"] == {"infra_empty_rate": 0.5}
+
+
+def test_score_and_publish_all_empty_publishes_no_quality_but_flags_infra():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    result = om.score_and_publish(
+        [("p1", ""), ("p2", '{"error": "x"}')], generate_fn=lambda _p: "Score: 5", writer=w
+    )
+    assert result["published"] == {}  # nothing real to score
+    assert result["infra_empty_rate"] == 1.0
+    assert _by_type(client)["custom.googleapis.com/agent_online_eval/infra_empty_rate"] == 1.0

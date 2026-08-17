@@ -93,7 +93,15 @@ def test_setup_all_alerts_covers_all_families(monkeypatch):
     router_latency = [c for c in calls if c[0] == "classifier_latency_ms"]
     assert router_latency and router_latency[0][2] == "GT"
     assert router_latency[0][3] == "agent_router"
-    # Online quality alerts on the floor (LT) in its own family.
+    # Online family splits by axis: the 1-5 quality rubrics alert on the floor
+    # (LT), while the infra_empty_rate ceiling alerts on a spike (GT) — an
+    # empty-at-200 surge is an infra failure, not a low quality score.
     online = [c for c in calls if c[3] == "agent_online_eval"]
-    assert online and all(c[2] == "LT" for c in online)
-    assert {c[0] for c in online} == {"helpfulness", "tool_use_accuracy", "policy_compliance"}
+    online_quality = [c for c in online if c[2] == "LT"]
+    online_infra = [c for c in online if c[2] == "GT"]
+    assert {c[0] for c in online_quality} == {
+        "helpfulness",
+        "tool_use_accuracy",
+        "policy_compliance",
+    }
+    assert {c[0] for c in online_infra} == {"infra_empty_rate"}

@@ -28,6 +28,11 @@ file; keep this index short (< 200 lines).
   same rubrics as the offline bridge and publishes a third monitored surface
   (`eval_mode=online`, same 1-5/3.0 axis) — sidesteps the platform-blocked native
   Online Evaluators by using client-side response content the trace surface strips.
+- [Infra-empty separation + rolling-baseline alerts](./online-infra-empty-and-baseline-alerts.md)
+  — (P2.8) empty-at-200 / error-shaped responses are partitioned out before judging
+  and tracked as their own `infra_empty_rate` ceiling (GT) so empty streams stop
+  masquerading as low quality; `verify_monitors` adds a rolling-baseline z-score
+  anomaly block that catches drift the static floor misses.
 - [Online-eval INSUFFICIENT_DATA — true root cause & fix](./online-eval-content-capture.md)
   — the native Online Evaluators failed because the managed runtime's `set_up()`
   forces the ADK span-content gate closed unless deployed with

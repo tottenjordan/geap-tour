@@ -151,6 +151,18 @@ ONLINE_MONITORED_METRICS = [
     ("policy_compliance", 3.0),
 ]
 
+# Online *infra* series (``agent_online_eval/*``, same family as the online quality
+# rubrics but a DIFFERENT axis). ``infra_empty_rate`` is a 0-1 rate written
+# verbatim (no 1-5 scaling) and alerts on the CEILING (GT): a rising share of
+# empty-at-200 / error-shaped responses is an infrastructure failure (cold-start /
+# timeout empty streams), NOT a low quality score, so it pages on its own signal
+# instead of dragging the helpfulness mean (see memory
+# ``online-helpfulness-dips-are-empty-streams``). Threshold 0.2 = alert once more
+# than a fifth of sampled live traffic comes back empty.
+ONLINE_INFRA_METRICS = [
+    ("infra_empty_rate", 0.2, "GT"),
+]
+
 
 def setup_all_alerts(notification_channel: str | None = None) -> list:
     """Create alert policies for every monitored metric (both families)."""
@@ -184,6 +196,18 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
                 metric_name=metric_name,
                 threshold=threshold,
                 notification_channel=notification_channel,
+                family="agent_online_eval",
+            )
+            results.append(result)
+        except Exception as e:
+            print(f"  Warning: failed to create alert for {metric_name}: {e}")
+    for metric_name, threshold, comparison in ONLINE_INFRA_METRICS:
+        try:
+            result = create_quality_alert(
+                metric_name=metric_name,
+                threshold=threshold,
+                notification_channel=notification_channel,
+                comparison=comparison,
                 family="agent_online_eval",
             )
             results.append(result)

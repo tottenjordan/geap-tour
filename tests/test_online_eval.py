@@ -177,6 +177,57 @@ def test_verify_reads_router_efficiency_surface_with_directions():
     assert router["metrics"]["classifier_latency_ms"]["direction"] == "GT"
 
 
+def test_verify_surfaces_baseline_zscore_anomaly():
+    # A stable ~4.0 helpfulness series with an anomalous latest DROP. _make_series
+    # puts value[0] at the newest timestamp, so 2.5 is the current point and the
+    # ~4.0 tail is the baseline history.
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness",
+            [2.5, 3.95, 4.05, 4.0, 3.9, 4.1, 4.0],
+        ),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    m = data["coordinator_quality"]["metrics"]["helpfulness"]
+    baseline = m["baseline"]
+    assert baseline["status"] == "ok"
+    assert baseline["is_anomaly"] is True  # a sharp drop vs recent history
+    assert baseline["z"] < 0  # below-baseline for an LT (floor) metric
+    assert m["current_score"] == 2.5
+
+
+def test_verify_baseline_insufficient_history_not_anomalous():
+    # Only 3 points -> below MIN_BASELINE priors -> no baseline verdict, no alarm.
+    series = [
+        _make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0, 5.0, 3.0]),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    baseline = data["coordinator_quality"]["metrics"]["helpfulness"]["baseline"]
+    assert baseline["status"] == "insufficient_history"
+    assert baseline["is_anomaly"] is False
+
+
+def test_verify_reads_online_infra_empty_rate_as_gt_ceiling():
+    # infra_empty_rate rides the agent_online_eval/* family but is a 0-1 ceiling
+    # (GT): the 0.5 point breaches the 0.2 threshold, so it counts out_of_bounds.
+    series = [
+        _make_series("custom.googleapis.com/agent_online_eval/infra_empty_rate", [0.5, 0.05]),
+    ]
+    client = FakeMonitoringClient(series)
+
+    data = vm.verify_monitor_results(output_format="json", client=client)
+
+    infra = data["online_quality"]["metrics"]["infra_empty_rate"]
+    assert infra["direction"] == "GT"
+    assert infra["out_of_bounds"] == 1  # 0.5 > 0.2
+
+
 def test_verify_queries_one_exact_metric_per_request():
     # Regression: list_time_series 400s if the filter matches >1 metric type,
     # so verify must issue an exact-match request per monitored metric rather
@@ -190,10 +241,17 @@ def test_verify_queries_one_exact_metric_per_request():
     data = vm.verify_monitor_results(output_format="json", client=client)
 
     # One request per monitored metric across ALL THREE surfaces, each an exact match.
-    from src.eval.quality_alerts import ONLINE_MONITORED_METRICS, ROUTER_MONITORED_METRICS
+    from src.eval.quality_alerts import (
+        ONLINE_INFRA_METRICS,
+        ONLINE_MONITORED_METRICS,
+        ROUTER_MONITORED_METRICS,
+    )
 
     expected_requests = (
-        len(ALL_MONITORED_METRICS) + len(ONLINE_MONITORED_METRICS) + len(ROUTER_MONITORED_METRICS)
+        len(ALL_MONITORED_METRICS)
+        + len(ONLINE_MONITORED_METRICS)
+        + len(ONLINE_INFRA_METRICS)
+        + len(ROUTER_MONITORED_METRICS)
     )
     assert len(client.requests) == expected_requests
     for req in client.requests:
