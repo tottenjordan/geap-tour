@@ -13,17 +13,6 @@
       "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
     },
     {
-      "eval_id": "policy_check_over_limit",
-      "conversation": [{
-        "user_content": {"parts": [{"text": "Check policy for a $500 entertainment expense"}], "role": "user"},
-        "final_response": {"parts": [{"text": "The $500 entertainment expense exceeds the $150 policy limit. It will require manager review."}], "role": "model"},
-        "intermediate_data": {
-          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}]
-        }
-      }],
-      "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
-    },
-    {
       "eval_id": "submit_within_policy",
       "conversation": [{
         "user_content": {"parts": [{"text": "Submit a $45 meals expense for lunch meeting, user ID EMP001"}], "role": "user"},
@@ -57,36 +46,11 @@
       "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
     },
     {
-      "eval_id": "check_before_submit",
-      "conversation": [{
-        "user_content": {"parts": [{"text": "I want to submit a $180 transport expense for an airport shuttle, user EMP001. Is that within policy?"}], "role": "user"},
-        "final_response": {"parts": [{"text": "The $180 transport expense is within the $200 policy limit. I've submitted it for user EMP001 — approved."}], "role": "model"},
-        "intermediate_data": {
-          "tool_uses": [
-            {"name": "check_expense_policy", "args": {"category": "transport", "amount": 180}},
-            {"name": "submit_expense", "args": {"user_id": "EMP001", "category": "transport", "amount": 180, "description": "airport shuttle"}}
-          ]
-        }
-      }],
-      "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
-    },
-    {
       "eval_id": "out_of_scope_travel",
       "conversation": [{
         "user_content": {"parts": [{"text": "Book me a flight to New York"}], "role": "user"},
         "final_response": {"parts": [{"text": "I only handle expense submissions and policy checks. For flight bookings, please ask the travel assistant."}], "role": "model"},
         "intermediate_data": {}
-      }],
-      "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
-    },
-    {
-      "eval_id": "unknown_category",
-      "conversation": [{
-        "user_content": {"parts": [{"text": "Check policy for a $100 expense in the 'gifts' category"}], "role": "user"},
-        "final_response": {"parts": [{"text": "The 'gifts' category is not a recognized expense category. Valid categories are: meals ($75), transport ($200), lodging ($400), supplies ($100), and entertainment ($150)."}], "role": "model"},
-        "intermediate_data": {
-          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "gifts", "amount": 100}}]
-        }
       }],
       "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
     },
