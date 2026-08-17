@@ -356,6 +356,138 @@ def capture_live_interactions(
     return pairs
 
 
+def capture_live_faithfulness(
+    agent,
+    prompts: Sequence[str],
+    user_id: str = "online-monitor-user",
+    *,
+    include_transfers: bool = False,
+) -> list[dict]:
+    """Like :func:`capture_live_interactions`, but RETAIN the executed trajectory.
+
+    Tool-call faithfulness needs the real ``function_call`` trajectory, which the
+    ``(prompt, response)`` capture discards. This drives each prompt through the
+    deployed engine once and returns ``{"prompt", "response", "actual_trajectory"}``
+    triples (trajectory via :func:`src.eval.trajectory_eval.capture_trajectory`) —
+    the shape :func:`src.eval.tool_faithfulness.score_cases` consumes.
+
+    Load-bearing assumption (same Branch-A/B fork as offline, resolved by
+    :mod:`src.eval.spike_trajectory_visibility`): the coordinator's client stream
+    must surface nested sub-agent MCP calls. If it only surfaces
+    ``transfer_to_agent``, online faithfulness is delegation-level until sub-agent
+    engines or server-side capture are used — set ``include_transfers`` to audit
+    the routing itself.
+    """
+    from src.eval.trajectory_eval import capture_trajectory
+    from src.traffic.generate_traffic import _extract_text
+
+    triples: list[dict] = []
+    for prompt in prompts:
+        session = agent.create_session(user_id=user_id)
+        events = list(agent.stream_query(user_id=user_id, session_id=session["id"], message=prompt))
+        triples.append(
+            {
+                "prompt": prompt,
+                "response": "".join(_extract_text(event) for event in events),
+                "actual_trajectory": capture_trajectory(
+                    events, include_transfers=include_transfers
+                ),
+            }
+        )
+    return triples
+
+
+def score_and_publish_faithfulness(
+    triples: Sequence[dict],
+    *,
+    generate_fn: Callable[[str], str],
+    sample_rate: float = 1.0,
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Sample → drop infra-empty → grounded-judge faithfulness → publish online.
+
+    Reuses :func:`src.eval.tool_faithfulness.score_cases` (same judge + parser as
+    the offline series), then publishes the mean to
+    ``agent_online_eval/tool_faithfulness`` on the shared 1-5 axis via
+    :func:`publish_online_scores` (which scales 0-1 → 1-5 and filters to the
+    monitored names). Empty-at-200 / error-shaped responses have nothing to audit,
+    so they are excluded before judging (counted as ``n_infra_empty``). Returns
+    ``{"result", "published", "n_captured", "n_sampled", "n_infra_empty"}``; a
+    ``dry_run`` still computes the score but writes nothing.
+    """
+    from src.eval.tool_faithfulness import score_cases
+
+    sampled = sample_interactions(triples, sample_rate)
+    real = [t for t in sampled if not is_infra_empty(t.get("response", ""))]
+    n_infra_empty = len(sampled) - len(real)
+    result = score_cases(real, generate_fn)
+
+    published: dict[str, float] = {}
+    score = result.get("score")
+    if not dry_run and score is not None:
+        published = publish_online_scores(
+            {"tool_faithfulness": score}, writer=writer, extra_labels=extra_labels
+        )
+    return {
+        "result": result,
+        "published": published,
+        "n_captured": len(triples),
+        "n_sampled": len(sampled),
+        "n_infra_empty": n_infra_empty,
+    }
+
+
+def run_online_faithfulness(
+    agent_id: str | None = None,
+    *,
+    n_interactions: int | None = None,
+    sample_rate: float = 1.0,
+    prompts: Sequence[str] | None = None,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    include_transfers: bool = False,
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+    dry_run: bool = False,
+    agent=None,
+    generate_fn: Callable[[str], str] | None = None,
+) -> dict:
+    """Drive live traffic, capture trajectories, and publish online faithfulness.
+
+    The faithfulness analogue of :func:`run_online_monitor`: it captures
+    ``(prompt, response, trajectory)`` triples (not just text) so the grounded
+    judge can compare claimed vs executed actions. ``agent``/``generate_fn``/
+    ``writer`` are injectable for testing; the CLI wires the real deployed engine
+    and the google.genai judge.
+    """
+    from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION
+
+    probe = list(prompts) if prompts is not None else list(ONLINE_PROBE_PROMPTS)
+    if n_interactions is not None:
+        probe = probe[:n_interactions]
+
+    if agent is None:
+        import vertexai
+        from vertexai import agent_engines
+
+        from src.eval.batch_eval import _resolve_agent_resource_name
+
+        vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+        agent = agent_engines.get(_resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID))
+
+    triples = capture_live_faithfulness(agent, probe, include_transfers=include_transfers)
+    gen = generate_fn or _default_generate_fn(judge_model, None, None)
+    return score_and_publish_faithfulness(
+        triples,
+        generate_fn=gen,
+        sample_rate=sample_rate,
+        writer=writer,
+        extra_labels=extra_labels,
+        dry_run=dry_run,
+    )
+
+
 def run_online_monitor(
     agent_id: str | None = None,
     *,
@@ -436,7 +568,7 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
         f"  infra-empty (empty-at-200 / error-shaped, excluded from quality): "
         f"{n_empty}/{result['n_sampled']} ({empty_rate:.1%})"
     )
-    for name in ONLINE_MONITORED_METRIC_NAMES:
+    for name in RUBRIC_BUILDERS:  # only the (prompt, response) rubrics this path scores
         mean = agg["scores"].get(name)
         count = agg["counts"].get(name, 0)
         if mean is None:
@@ -449,6 +581,26 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
                 f"  {name}: {mean:.3f} (0-1) → {_to_monitored_scale(mean)} (1-5) "
                 f"over {count}{ci_str}{flag}"
             )
+    prefix = "[dry-run] would publish" if dry_run else "published"
+    print(f"{prefix}: {json.dumps(result['published'], indent=2, sort_keys=True)}")
+
+
+def _print_faithfulness_summary(result: dict, *, dry_run: bool) -> None:
+    inner = result["result"]
+    score = inner.get("score")
+    scaled = f"{_to_monitored_scale(score)} (1-5)" if score is not None else "n/a"
+    print(
+        f"\nOnline tool-call faithfulness: scored {inner.get('n_scored')}/"
+        f"{inner.get('n_total')} of {result['n_sampled']}/{result['n_captured']} "
+        f"captured interactions ({result.get('n_infra_empty', 0)} infra-empty excluded)"
+    )
+    print(f"  tool_faithfulness: {score if score is not None else 'n/a'} (0-1) → {scaled}")
+    flagged = inner.get("flagged") or []
+    if flagged:
+        print(f"  {len(flagged)} response(s) with hallucinated actions:")
+        for item in flagged:
+            prompt = str(item.get("prompt", ""))[:70]
+            print(f"    - [{', '.join(item.get('hallucinated', []))}]  «{prompt}»")
     prefix = "[dry-run] would publish" if dry_run else "published"
     print(f"{prefix}: {json.dumps(result['published'], indent=2, sort_keys=True)}")
 
@@ -482,6 +634,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help="judge model id")
     parser.add_argument(
+        "--faithfulness",
+        action="store_true",
+        help="score TOOL-CALL FAITHFULNESS (claimed vs actually-executed tools) instead of the "
+        "quality rubrics → agent_online_eval/tool_faithfulness (requires --agent-id; the "
+        "trajectory is captured live via stream_query, not available from --from-json pairs)",
+    )
+    parser.add_argument(
         "--label",
         action="append",
         metavar="KEY=VALUE",
@@ -497,6 +656,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     from src.observability.metrics import parse_labels
 
     extra_labels = parse_labels(args.label)
+
+    if args.faithfulness:
+        # Faithfulness needs the live executed trajectory, which pre-captured
+        # (prompt, response) pairs from --from-json don't carry.
+        if args.from_json:
+            parser.error("--faithfulness requires live capture (--agent-id), not --from-json pairs")
+        result = run_online_faithfulness(
+            agent_id=args.agent_id,
+            n_interactions=args.samples,
+            sample_rate=args.sample_rate,
+            judge_model=args.judge_model,
+            extra_labels=extra_labels,
+            dry_run=args.dry_run,
+        )
+        _print_faithfulness_summary(result, dry_run=args.dry_run)
+        return 0
 
     if args.from_json:
         pairs = _load_pairs(args.from_json)
