@@ -238,6 +238,24 @@ def write_online_quality_scores(
         writer.write_gauge(f"agent_online_eval/{name}", value, labels)
 
 
+def write_online_infra_metrics(
+    scores: Mapping[str, float],
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> None:
+    """Emit ``agent_online_eval/<name>`` gauges for online *infra* signals.
+
+    Same online family as :func:`write_online_quality_scores` but for infra-health
+    signals (e.g. ``infra_empty_rate``) written **verbatim** (a 0-1 rate, no
+    1-5 scaling) — an empty-at-200 response is an infrastructure failure, not a
+    low quality score, so it must not blur into the quality rubrics.
+    """
+    writer = writer or MetricsWriter()
+    labels = _default_labels(extra_labels)
+    for name, value in scores.items():
+        writer.write_gauge(f"agent_online_eval/{name}", value, labels)
+
+
 def write_router_metrics(
     scores: Mapping[str, float],
     writer: MetricsWriter | None = None,

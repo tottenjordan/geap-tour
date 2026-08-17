@@ -55,6 +55,7 @@ ENABLE_SPAN_CONTENT_CAPTURE=1 uv run python -m src.deploy.deploy_agents coordina
 uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID>            # score sampled live stream_query traffic → agent_online_eval/* (eval_mode=online, same 1-5/3.0 axis as offline)
 uv run python -m src.eval.online_monitor --from-json <pairs.json>          # score externally-captured [{prompt,response},...] instead of live traffic
 uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --sample-rate 0.5 --dry-run  # sample a fraction; preview without writing; see docs/notes/online-quality-monitor.md
+# Infra-empty separation (P2.8): empty-at-200 / error-shaped responses are partitioned OUT before judging and counted as agent_online_eval/infra_empty_rate (verbatim 0-1, alert GT 0.2) so empty streams no longer masquerade as low quality; verify_monitors adds a rolling-baseline z-score anomaly block per metric (src/eval/baseline.py) alongside the static floor. See docs/notes/online-infra-empty-and-baseline-alerts.md
 
 # CI/CD eval gate — fast coordinator rubric score for a PR (advisory; --limit caps cases)
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent --agent-id <ENGINE_ID> --threshold 3.0 --limit 8

@@ -37,6 +37,7 @@ from typing import NamedTuple
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
 from src.eval.quality_alerts import (
     ALL_MONITORED_METRICS,
+    ONLINE_INFRA_METRICS,
     ONLINE_MONITORED_METRICS,
     ROUTER_MONITORED_METRICS,
 )
@@ -62,7 +63,10 @@ SURFACES = {
     ),
     "online_quality": Surface(
         prefix="custom.googleapis.com/agent_online_eval/",
-        metrics=[(name, threshold, "LT") for name, threshold in ONLINE_MONITORED_METRICS],
+        # 1-5 quality rubrics (LT floor) + the infra_empty_rate ceiling (GT) — same
+        # family, different axes; both read back so an empty-at-200 surge is visible.
+        metrics=[(name, threshold, "LT") for name, threshold in ONLINE_MONITORED_METRICS]
+        + list(ONLINE_INFRA_METRICS),
     ),
     "router_efficiency": Surface(
         prefix="custom.googleapis.com/agent_router/",
@@ -150,7 +154,16 @@ def _summarize(
     scores: list[float], epochs: list[float], threshold: float, comparison: str, now: float
 ) -> dict:
     """Build the per-metric summary dict for one score/epoch bucket."""
+    from src.eval.baseline import detect_regression
     from src.eval.stats import is_low_confidence
+
+    # Rolling-baseline check: the chronologically-latest point is the "current"
+    # value, everything before it the baseline history. This is ADDITIVE to the
+    # static-floor out_of_bounds count — it catches a drift/step-change that is
+    # still inside the absolute floor (see src/eval/baseline.py).
+    ordered = [s for _epoch, s in sorted(zip(epochs, scores, strict=True))]
+    current = ordered[-1]
+    baseline = detect_regression(ordered[:-1], current, direction=comparison)
 
     return {
         "eval_count": len(scores),
@@ -163,6 +176,8 @@ def _summarize(
         "threshold": threshold,
         "direction": comparison,
         "out_of_bounds": _out_of_bounds(scores, threshold, comparison),
+        "current_score": round(current, 3),
+        "baseline": baseline,
         "first_eval": datetime.fromtimestamp(min(epochs), tz=UTC).isoformat(),
         "last_eval": datetime.fromtimestamp(max(epochs), tz=UTC).isoformat(),
         "trend": {
@@ -366,6 +381,14 @@ def _print_metric(m: dict, indent: str = "  ") -> None:
         parts.append(f"6h: {trend['avg_6h']}")
     parts.append(f"24h: {trend.get('avg_24h')}")
     print(f"{indent}  Trend:  {' | '.join(parts)}")
+    baseline = m.get("baseline", {})
+    if baseline.get("status") == "ok":
+        z = baseline["z"]
+        note = "  ⚠ ANOMALY vs baseline" if baseline["is_anomaly"] else ""
+        print(
+            f"{indent}  Base:   z={z:+.2f} vs {baseline['baseline_mean']}"
+            f"±{baseline['baseline_std']} (n={baseline['n_baseline']}){note}"
+        )
     if m["out_of_bounds"]:
         print(f"{indent}  WARNING: {m['out_of_bounds']} scores {op} {m.get('threshold')}")
 

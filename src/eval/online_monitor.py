@@ -132,6 +132,37 @@ def score_interaction(
     return out
 
 
+def is_infra_empty(response: str) -> bool:
+    """True for an empty / error-shaped response — an infra failure, not low quality.
+
+    The managed runtime can return an empty body on an HTTP 200 (cold-start or
+    high-complexity timeout), and the inference harness emits an ``{"error": ...}``
+    shape it couldn't parse. Judging these as helpfulness ≈ low silently drags the
+    online quality mean and trips the quality alert — a *quality* alarm for an
+    *infra* problem (see memory ``online-helpfulness-dips-are-empty-streams``). We
+    detect them up front and account for them on a separate infra signal instead.
+    Mirrors ``policy_judge._is_error_response``.
+    """
+    s = str(response).strip()
+    return (not s) or s.startswith('{"error"')
+
+
+def partition_interactions(
+    pairs: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split ``(prompt, response)`` pairs into ``(real, infra_empty)``.
+
+    Only ``real`` responses go to the quality judges; ``infra_empty`` are counted
+    toward :data:`infra_empty_rate` so an empty-at-200 stream is visible as an
+    infra failure rather than masquerading as a low quality score.
+    """
+    real: list[tuple[str, str]] = []
+    empty: list[tuple[str, str]] = []
+    for prompt, response in pairs:
+        (empty if is_infra_empty(response) else real).append((prompt, response))
+    return real, empty
+
+
 def sample_interactions(interactions: Sequence, sample_rate: float) -> list:
     """Deterministically pick a fraction of interactions to score.
 
@@ -213,6 +244,25 @@ def publish_online_scores(
     return published
 
 
+def publish_infra_empty_rate(
+    rate: float,
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> dict[str, float]:
+    """Publish the ``infra_empty_rate`` (0-1) to ``agent_online_eval/*`` verbatim.
+
+    A separate infra signal from the quality rubrics — alerts on the CEILING
+    (``GT``, see ``quality_alerts.ONLINE_INFRA_METRICS``), so a rising empty-at-200
+    rate pages as an infra problem instead of dragging the quality mean.
+    """
+    from src.observability.metrics import write_online_infra_metrics
+
+    scores = {"infra_empty_rate": round(float(rate), 4)}
+    labels = {"eval_mode": "online", **(extra_labels or {})}
+    write_online_infra_metrics(scores, writer=writer, extra_labels=labels)
+    return scores
+
+
 def score_and_publish(
     pairs: Sequence[tuple[str, str]],
     *,
@@ -222,24 +272,40 @@ def score_and_publish(
     extra_labels: Mapping[str, str] | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Sample → score → aggregate → publish a batch of captured interactions.
+    """Sample → partition → score → aggregate → publish a batch of interactions.
 
     The shared core of both CLI paths (live ``stream_query`` and ``--from-json``).
-    Returns ``{"aggregate", "published", "n_captured", "n_sampled"}``. When
-    ``dry_run`` is set, scores are still computed and returned but nothing is
-    written to Cloud Monitoring.
+    Infra-empty responses (empty-at-200 / error-shaped) are separated *before*
+    judging so they never drag the quality mean; they are counted toward
+    ``infra_empty_rate`` and published as a distinct infra signal. Returns
+    ``{"aggregate", "published", "infra_published", "n_captured", "n_sampled",
+    "n_infra_empty", "infra_empty_rate"}``. When ``dry_run`` is set, scores are
+    still computed and returned but nothing is written to Cloud Monitoring.
     """
     sampled = sample_interactions(pairs, sample_rate)
-    per_interaction = [score_interaction(p, r, generate_fn) for p, r in sampled]
+    real, empty = partition_interactions(sampled)
+    per_interaction = [score_interaction(p, r, generate_fn) for p, r in real]
     agg = aggregate_scores(per_interaction)
+    n_infra_empty = len(empty)
+    infra_empty_rate = (n_infra_empty / len(sampled)) if sampled else 0.0
+    agg["n_infra_empty"] = n_infra_empty
+    agg["infra_empty_rate"] = infra_empty_rate
+
     published: dict[str, float] = {}
+    infra_published: dict[str, float] = {}
     if not dry_run:
         published = publish_online_scores(agg["scores"], writer=writer, extra_labels=extra_labels)
+        infra_published = publish_infra_empty_rate(
+            infra_empty_rate, writer=writer, extra_labels=extra_labels
+        )
     return {
         "aggregate": agg,
         "published": published,
+        "infra_published": infra_published,
         "n_captured": len(pairs),
         "n_sampled": len(sampled),
+        "n_infra_empty": n_infra_empty,
+        "infra_empty_rate": infra_empty_rate,
     }
 
 
@@ -372,9 +438,15 @@ def _load_pairs(path: str) -> list[tuple[str, str]]:
 
 def _print_summary(result: dict, *, dry_run: bool) -> None:
     agg = result["aggregate"]
+    n_empty = result.get("n_infra_empty", 0)
+    empty_rate = result.get("infra_empty_rate", 0.0)
     print(
         f"\nOnline quality monitor: scored {result['n_sampled']}/{result['n_captured']} "
         f"captured interactions ({agg['n_interactions']} judged)"
+    )
+    print(
+        f"  infra-empty (empty-at-200 / error-shaped, excluded from quality): "
+        f"{n_empty}/{result['n_sampled']} ({empty_rate:.1%})"
     )
     for name in ONLINE_MONITORED_METRIC_NAMES:
         mean = agg["scores"].get(name)
