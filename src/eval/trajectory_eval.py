@@ -55,6 +55,47 @@ def extract_trajectory(events, *, include_transfers: bool = False) -> list[dict]
     return trajectory
 
 
+def returned_tool_names(events) -> set[str]:
+    """Bare tool names present in any ``function_response`` part.
+
+    Mirrors :func:`extract_trajectory` but reads the *response* side: each
+    ``function_response`` part carries ``{"name", "response"}``. Returns the set
+    of names for which a result was observed — the "did it actually return?" side
+    used to annotate a captured trajectory. ``[]``/``None`` input yields an empty
+    set.
+    """
+    names: set[str] = set()
+    for event in events or []:
+        parts = ((event or {}).get("content") or {}).get("parts") or []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            fr = part.get("function_response")
+            if not fr:
+                continue
+            name = fr.get("name")
+            if name:
+                names.add(name)
+    return names
+
+
+def capture_trajectory(events, *, include_transfers: bool = False) -> list[dict]:
+    """:func:`extract_trajectory` + a per-call ``returned: bool`` flag.
+
+    Reuses :func:`extract_trajectory` for the ordered call side
+    (``{"tool_name", "tool_input"}``) and annotates each call with whether a
+    matching ``function_response`` was observed in the same stream. This is the
+    ground-truth surface the faithfulness judge compares response claims against
+    (see :mod:`src.eval.tool_faithfulness`). Existing ``extract_trajectory``
+    callers are untouched — only this function adds the ``returned`` key.
+    """
+    returned = returned_tool_names(events)
+    calls = extract_trajectory(events, include_transfers=include_transfers)
+    for call in calls:
+        call["returned"] = call["tool_name"] in returned
+    return calls
+
+
 def _final_text(events) -> str:
     """Last text part across the event stream, or ``""`` (tool-only turn)."""
     found = ""

@@ -275,3 +275,106 @@ def test_score_and_publish_all_empty_publishes_no_quality_but_flags_infra():
     assert result["published"] == {}  # nothing real to score
     assert result["infra_empty_rate"] == 1.0
     assert _by_type(client)["custom.googleapis.com/agent_online_eval/infra_empty_rate"] == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Tool-call faithfulness on the online surface (trajectory-retaining capture +
+# grounded judge → agent_online_eval/tool_faithfulness)
+# --------------------------------------------------------------------------- #
+def _fc_event(name, args=None):
+    return {
+        "author": "model",
+        "content": {"parts": [{"function_call": {"name": name, "args": args or {}}}]},
+    }
+
+
+def _text_event(text):
+    return {"author": "model", "content": {"parts": [{"text": text}]}}
+
+
+class _FakeAgent:
+    """Deployed-engine stand-in: create_session + stream_query(events)."""
+
+    def __init__(self, events_by_prompt):
+        self._events_by_prompt = events_by_prompt
+        self.messages = []
+
+    def create_session(self, *, user_id):
+        return {"id": "sess-1"}
+
+    def stream_query(self, *, user_id, session_id, message):
+        self.messages.append(message)
+        yield from self._events_by_prompt.get(message, [])
+
+
+def test_capture_live_faithfulness_yields_triples():
+    agent = _FakeAgent(
+        {
+            "Book FL001": [
+                _fc_event("book_flight", {"flight_id": "FL001"}),
+                _text_event("Booked."),
+            ],
+        }
+    )
+    triples = om.capture_live_faithfulness(agent, ["Book FL001"])
+    assert len(triples) == 1
+    assert triples[0]["prompt"] == "Book FL001"
+    assert triples[0]["response"] == "Booked."
+    assert [c["tool_name"] for c in triples[0]["actual_trajectory"]] == ["book_flight"]
+
+
+def test_score_and_publish_faithfulness_publishes_online_series():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    # Response claims a booking but the trajectory is empty → hallucinated.
+    triples = [{"prompt": "Book FL001", "response": "I booked FL001.", "actual_trajectory": []}]
+    result = om.score_and_publish_faithfulness(
+        triples, generate_fn=lambda _p: "Hallucinated: book_flight\nScore: 2", writer=w
+    )
+    assert result["published"] == {"tool_faithfulness": 2.0}  # 0.4 * 5
+    vals = _by_type(client)
+    assert vals["custom.googleapis.com/agent_online_eval/tool_faithfulness"] == 2.0
+    for ts in client.flatten():
+        assert ts.metric.labels["eval_mode"] == "online"
+    assert result["result"]["flagged"][0]["hallucinated"] == ["book_flight"]
+
+
+def test_score_and_publish_faithfulness_dry_run_writes_nothing():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    triples = [{"prompt": "p", "response": "I booked it", "actual_trajectory": []}]
+    result = om.score_and_publish_faithfulness(
+        triples, generate_fn=lambda _p: "Score: 2", writer=w, dry_run=True
+    )
+    assert result["published"] == {}
+    assert client.calls == []
+    assert result["result"]["score"] == 0.4  # still computed for reporting
+
+
+def test_score_and_publish_faithfulness_excludes_infra_empty():
+    triples = [
+        {"prompt": "p1", "response": "I booked FL001", "actual_trajectory": []},
+        {"prompt": "p2", "response": "", "actual_trajectory": []},
+    ]
+    result = om.score_and_publish_faithfulness(
+        triples, generate_fn=lambda _p: "Score: 4", dry_run=True
+    )
+    # only the one real response is judged; the empty-at-200 is excluded.
+    assert result["result"]["n_scored"] == 1
+    assert result["n_infra_empty"] == 1
+
+
+def test_run_online_faithfulness_with_fakes():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    agent = _FakeAgent(
+        {"Book FL001": [_fc_event("book_flight", {"flight_id": "FL001"}), _text_event("Booked.")]}
+    )
+    result = om.run_online_faithfulness(
+        agent=agent,
+        prompts=["Book FL001"],
+        generate_fn=lambda _p: "Hallucinated: NONE\nScore: 5",
+        writer=w,
+    )
+    assert result["published"] == {"tool_faithfulness": 5.0}
+    assert result["n_captured"] == 1

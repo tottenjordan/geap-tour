@@ -68,6 +68,15 @@ def test_online_monitored_metrics_shape():
         assert threshold == 3.0
 
 
+def test_all_monitored_includes_tool_faithfulness():
+    from src.eval.quality_alerts import ALL_MONITORED_METRICS, ONLINE_MONITORED_METRICS
+
+    # Faithfulness is a coordinator-quality series on the same 1-5 floor, present
+    # on both the offline (agent_eval) and online (agent_online_eval) surfaces.
+    assert ("tool_faithfulness", 3.0) in ALL_MONITORED_METRICS
+    assert ("tool_faithfulness", 3.0) in ONLINE_MONITORED_METRICS
+
+
 def test_setup_all_alerts_covers_all_families(monkeypatch):
     from src.eval import quality_alerts as qa
 
@@ -110,6 +119,7 @@ def test_setup_all_alerts_covers_all_families(monkeypatch):
         "helpfulness",
         "tool_use_accuracy",
         "policy_compliance",
+        "tool_faithfulness",
     }
     assert {c[0] for c in online_infra} == {"infra_empty_rate"}
     # The managed engine-health alerts are created once (its two policies added
