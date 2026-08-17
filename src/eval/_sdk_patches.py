@@ -36,6 +36,7 @@ Call `patch_evals_sdk()` once before running inference/evaluation. Optionally ca
 `warm_agent_engine()` first to spin the engine up before the batched fan-out.
 """
 
+import contextlib
 import json
 import os
 import time
@@ -86,8 +87,7 @@ def _flip_extra_to_ignore() -> int:
     models = [
         getattr(t, name)
         for name in dir(t)
-        if isinstance(getattr(t, name), type)
-        and issubclass(getattr(t, name), pydantic.BaseModel)
+        if isinstance(getattr(t, name), type) and issubclass(getattr(t, name), pydantic.BaseModel)
     ]
     flipped = 0
     for cls in models:
@@ -96,10 +96,8 @@ def _flip_extra_to_ignore() -> int:
             flipped += 1
         cls.__pydantic_complete__ = False
     for cls in models:
-        try:
+        with contextlib.suppress(Exception):
             cls.model_rebuild(force=True)
-        except Exception:
-            pass
     return flipped
 
 
@@ -168,8 +166,7 @@ def _patch_single_turn_parser() -> None:
             except Exception as e:  # pylint: disable=broad-exception-caught
                 error_payload = {
                     "error": (
-                        f"Failed to parse agent run response {str(resp_item)} to "
-                        f"agent data: {e}"
+                        f"Failed to parse agent run response {resp_item!s} to agent data: {e}"
                     ),
                 }
                 response_row = json.dumps(error_payload)

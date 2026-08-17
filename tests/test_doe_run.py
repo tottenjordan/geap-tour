@@ -13,6 +13,7 @@ def _fake_runner(recorder):
             stdout="Submitted PipelineJob: projects/p/locations/l/pipelineJobs/1\n",
             stderr="",
         )
+
     return _run
 
 

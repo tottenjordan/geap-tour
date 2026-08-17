@@ -220,9 +220,9 @@ class TestMemoryBankToggle:
         import importlib
 
         monkeypatch.setenv("ENABLE_MEMORY_BANK", "0")
+        import src.agents.coordinator_agent as ca
         import src.config as cfg
         import src.registry as reg
-        import src.agents.coordinator_agent as ca
 
         # src.registry must be reloaded between src.config and the agent module:
         # it binds MCP_SERVER_URLS from src.config at import time, and the agent

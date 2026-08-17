@@ -9,6 +9,10 @@ file; keep this index short (< 200 lines).
 - [Dependency management & the internal registry gotcha](./dependency-management.md)
   — why `uv lock` here resolves from PyPI, and the inaccessible Artifact Foundry
   mirror.
+- [Type-checking (ty) baseline](./type-checking-baseline.md) — why a clean
+  `uv run ty check src/` still reports ~69 diagnostics (untyped Vertex/ADK SDK
+  surface, intentional monkeypatches, optional imports), what was safely fixed,
+  and the rule for triaging new ones.
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
   DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas
   (env-injection, import-time config, exit-handler cleanup).

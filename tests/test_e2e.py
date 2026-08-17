@@ -4,21 +4,17 @@ Starts MCP servers, verifies agent configuration, tests tool calls, and validate
 Agent Armor guardrails. Run with: uv run pytest tests/test_e2e.py -v
 """
 
-import asyncio
-import time
-import threading
 from unittest.mock import MagicMock
 
-import pytest
 from google.genai.types import Content, Part
 
+from src.armor.config import input_guardrail_callback
+from src.mcp_servers.booking.mock_db import bookings, create_booking
+from src.mcp_servers.expense.mock_db import check_policy, expenses, submit_expense
 from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
-from src.mcp_servers.booking.mock_db import create_booking, bookings
-from src.mcp_servers.expense.mock_db import submit_expense, check_policy, expenses
-from src.armor.config import input_guardrail_callback, REJECTION_MESSAGE
-
 
 # --- MCP Server Tool Tests (simulated calls) ---
+
 
 class TestSearchToolsE2E:
     def test_search_flights_sfo_jfk(self):
@@ -46,6 +42,7 @@ class TestBookingToolsE2E:
 
     def test_book_and_cancel_flow(self):
         from src.mcp_servers.booking.mock_db import cancel_booking, get_booking
+
         booking = create_booking("flight", "FL001", {"passenger_name": "E2E Test"})
         assert booking["status"] == "confirmed"
 
@@ -77,21 +74,26 @@ class TestExpenseToolsE2E:
 
 # --- Agent Configuration E2E ---
 
+
 class TestAgentConfigE2E:
     def test_all_agents_import(self):
-        from src.agents.travel_agent import travel_agent
-        from src.agents.expense_agent import expense_agent
         from src.agents.coordinator_agent import coordinator_agent
+        from src.agents.expense_agent import expense_agent
+        from src.agents.travel_agent import travel_agent
+
         assert travel_agent.name == "travel_agent"
         assert expense_agent.name == "expense_agent"
         assert coordinator_agent.name == "coordinator_agent"
 
     def test_coordinator_orchestration_structure(self):
-        from src.agents.coordinator_agent import coordinator_agent
         from google.adk.tools.agent_tool import AgentTool
 
+        from src.agents.coordinator_agent import coordinator_agent
+
         # Coordinator delegates via AgentTool-wrapped specialists (not sub_agents).
-        tool_agent_names = [t.agent.name for t in coordinator_agent.tools if isinstance(t, AgentTool)]
+        tool_agent_names = [
+            t.agent.name for t in coordinator_agent.tools if isinstance(t, AgentTool)
+        ]
         assert "travel_agent" in tool_agent_names
         assert "expense_agent" in tool_agent_names
 
@@ -99,13 +101,15 @@ class TestAgentConfigE2E:
         # Model Armor is enforced server-side at deploy time (gateway policy);
         # the in-code guardrail is wired at the entry-point agents (router and
         # coordinator), not on individual sub-agents.
-        from src.router.agents import router_agent
         from src.agents.coordinator.agent import root_agent as coordinator_agent
+        from src.router.agents import router_agent
+
         assert router_agent.before_agent_callback is not None
         assert coordinator_agent.before_agent_callback is not None
 
 
 # --- Agent Armor E2E ---
+
 
 class TestArmorE2E:
     def test_normal_queries_pass(self):
@@ -143,9 +147,11 @@ class TestArmorE2E:
 
 # --- Eval Metric E2E ---
 
+
 class TestEvalMetricsE2E:
     def test_all_metrics_defined(self):
         import json
+
         with open("src/eval/evalsets/eval_config.json") as f:
             config = json.load(f)
         assert "response_match_score" in config["criteria"]
@@ -153,6 +159,7 @@ class TestEvalMetricsE2E:
 
     def test_metrics_have_templates(self):
         import json
+
         with open("src/eval/evalsets/eval_config.json") as f:
             config = json.load(f)
         assert "judge_model_options" in config["criteria"]["final_response_match_v2"]

@@ -15,12 +15,24 @@ from src.eval._sdk_patches import (
 def test_extract_final_text_scans_past_tool_parts():
     """Final text is found even when the last event leads with a function_call."""
     resp = [
-        {"content": {"parts": [{"function_call": {"name": "expense_agent", "id": "x__thought__abc"}}]}},
-        {"content": {"parts": [{"function_response": {"name": "expense_agent", "id": "x__thought__abc"}}]}},
-        {"content": {"parts": [
-            {"function_call": {"name": "check", "id": "y"}},
-            {"text": "The $50 meal is within policy."},
-        ]}},
+        {
+            "content": {
+                "parts": [{"function_call": {"name": "expense_agent", "id": "x__thought__abc"}}]
+            }
+        },
+        {
+            "content": {
+                "parts": [{"function_response": {"name": "expense_agent", "id": "x__thought__abc"}}]
+            }
+        },
+        {
+            "content": {
+                "parts": [
+                    {"function_call": {"name": "check", "id": "y"}},
+                    {"text": "The $50 meal is within policy."},
+                ]
+            }
+        },
     ]
     assert _extract_final_text(resp) == "The $50 meal is within policy."
 
@@ -44,11 +56,19 @@ def test_patched_parser_recovers_text_instead_of_error_stub():
     from vertexai._genai import _evals_common as ec
 
     resp = [
-        {"content": {"parts": [{"function_call": {"name": "search", "id": "a"}}]}, "id": "e0", "author": "model"},
-        {"content": {"parts": [{"function_response": {"name": "search", "id": "a"}}]}, "id": "e1", "author": "model"},
+        {
+            "content": {"parts": [{"function_call": {"name": "search", "id": "a"}}]},
+            "id": "e0",
+            "author": "model",
+        },
+        {
+            "content": {"parts": [{"function_response": {"name": "search", "id": "a"}}]},
+            "id": "e1",
+            "author": "model",
+        },
         {"content": {"parts": [{"text": "Here are your flights."}]}, "id": "e2", "author": "model"},
     ]
-    response_row, intermediate, agent_data = ec._process_single_turn_agent_response(resp, None)
+    response_row, intermediate, _ = ec._process_single_turn_agent_response(resp, None)
     assert response_row == "Here are your flights."
     # No "Failed to parse" error stub.
     assert "Failed to parse" not in json.dumps(response_row)
@@ -126,7 +146,6 @@ def test_patched_agent_run_retries_empty_turn():
     """The wrapped _execute_agent_run_with_retry retries an empty turn."""
     _sdk_patches._PATCHED = False
     patch_evals_sdk()
-    from vertexai._genai import _evals_common as ec
 
     # Replace the (already-wrapped) function's target by re-wrapping a fake orig.
     seq = [[], [{"content": {"parts": [{"text": "recovered"}]}}]]

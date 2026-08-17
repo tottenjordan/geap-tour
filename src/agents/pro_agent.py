@@ -3,9 +3,14 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import PRO_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, resolve_model
+from src.config import (
+    BOOKING_MCP_SERVER,
+    EXPENSE_MCP_SERVER,
+    PRO_MODEL,
+    SEARCH_MCP_SERVER,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
-
 
 INSTRUCTION = """\
 You are a thorough corporate assistant designed to handle moderately complex \
@@ -49,4 +54,5 @@ pro_agent = LlmAgent(
 root_agent = pro_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=pro_agent)

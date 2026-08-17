@@ -1,15 +1,12 @@
 """Complexity routing evaluation metrics — Vertex AI API + ADK custom metric + standalone scorers."""
 
-import asyncio
 import statistics
 import time
-from typing import Optional
 
 from vertexai import types as vtx_types
 
 from src.router.complexity import classify_complexity, score_to_model_tier
 from src.router.cost_tracker import estimate_cost
-
 
 # ---------------------------------------------------------------------------
 # Vertex AI Eval API metric (for batch_eval / router efficiency eval)
@@ -52,7 +49,7 @@ try:
     async def check_complexity_routing(
         eval_metric: EvalMetric,
         actual_invocations: list[Invocation],
-        expected_invocations: Optional[list[Invocation]],
+        expected_invocations: list[Invocation] | None,
         conversation_scenario=None,
     ) -> EvaluationResult:
         """ADK custom metric: score whether router picked the right model tier."""
@@ -63,11 +60,13 @@ try:
                 part.text for part in (actual.user_content.parts or []) if part.text
             )
             if not prompt_text:
-                per_invocation_results.append(PerInvocationResult(
-                    actual_invocation=actual,
-                    score=0.0,
-                    eval_status=EvalStatus.NOT_EVALUATED,
-                ))
+                per_invocation_results.append(
+                    PerInvocationResult(
+                        actual_invocation=actual,
+                        score=0.0,
+                        eval_status=EvalStatus.NOT_EVALUATED,
+                    )
+                )
                 continue
 
             result = await classify_complexity(prompt_text)
@@ -76,23 +75,26 @@ try:
             ).lower()
 
             routed_correctly = False
-            if result.level == "low" and "lite" in response_text:
-                routed_correctly = True
-            elif result.level == "medium" and "flash" in response_text:
-                routed_correctly = True
-            elif result.level == "high" and ("opus" in response_text or "deep" in response_text):
-                routed_correctly = True
-            elif result.level in response_text:
+            if (
+                (result.level == "low" and "lite" in response_text)
+                or (result.level == "medium" and "flash" in response_text)
+                or (result.level == "high" and ("opus" in response_text or "deep" in response_text))
+                or result.level in response_text
+            ):
                 routed_correctly = True
 
             score = 1.0 if routed_correctly else 0.0
-            per_invocation_results.append(PerInvocationResult(
-                actual_invocation=actual,
-                score=score,
-                eval_status=EvalStatus.PASSED if routed_correctly else EvalStatus.FAILED,
-            ))
+            per_invocation_results.append(
+                PerInvocationResult(
+                    actual_invocation=actual,
+                    score=score,
+                    eval_status=EvalStatus.PASSED if routed_correctly else EvalStatus.FAILED,
+                )
+            )
 
-        scores = [r.score for r in per_invocation_results if r.eval_status != EvalStatus.NOT_EVALUATED]
+        scores = [
+            r.score for r in per_invocation_results if r.eval_status != EvalStatus.NOT_EVALUATED
+        ]
         avg = statistics.mean(scores) if scores else 0.0
         threshold = eval_metric.criterion.threshold if eval_metric.criterion else 0.8
         return EvaluationResult(
@@ -113,9 +115,11 @@ async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
     Returns accuracy, confusion matrix, per-case details, and timing stats.
     """
     results = []
-    confusion = {"low": {"low": 0, "medium": 0, "high": 0},
-                 "medium": {"low": 0, "medium": 0, "high": 0},
-                 "high": {"low": 0, "medium": 0, "high": 0}}
+    confusion = {
+        "low": {"low": 0, "medium": 0, "high": 0},
+        "medium": {"low": 0, "medium": 0, "high": 0},
+        "high": {"low": 0, "medium": 0, "high": 0},
+    }
     latencies = []
 
     for case in cases:
@@ -130,15 +134,17 @@ async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
 
         match = result.level == expected
         confusion[expected][result.level] += 1
-        results.append({
-            "prompt": case["prompt"][:80],
-            "expected": expected,
-            "actual": result.level,
-            "score": result.score,
-            "reason": result.reason,
-            "match": match,
-            "latency_ms": round(latency_ms, 1),
-        })
+        results.append(
+            {
+                "prompt": case["prompt"][:80],
+                "expected": expected,
+                "actual": result.level,
+                "score": result.score,
+                "reason": result.reason,
+                "match": match,
+                "latency_ms": round(latency_ms, 1),
+            }
+        )
 
     total = len(results)
     correct = sum(1 for r in results if r["match"])
@@ -158,7 +164,7 @@ async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Cost efficiency scorer
 # ---------------------------------------------------------------------------
-from src.config import LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL
+from src.config import FLASH_MODEL, LITE_MODEL, OPUS_MODEL, PRO_MODEL, SONNET_MODEL
 
 # Maps the router's five model tiers to concrete models. Keyed by the tier names
 # returned by ``score_to_model_tier`` (lite/flash/sonnet/pro/opus) so the cost
@@ -202,14 +208,16 @@ async def run_cost_efficiency_eval(cases: list[dict]) -> dict:
         routed_cost += total_case_cost
         all_opus_cost += opus_cost
 
-        per_case.append({
-            "prompt": case["prompt"][:60],
-            "complexity": result.level,
-            "tier": tier,
-            "model": model,
-            "cost_usd": round(total_case_cost, 8),
-            "opus_cost_usd": round(opus_cost, 8),
-        })
+        per_case.append(
+            {
+                "prompt": case["prompt"][:60],
+                "complexity": result.level,
+                "tier": tier,
+                "model": model,
+                "cost_usd": round(total_case_cost, 8),
+                "opus_cost_usd": round(opus_cost, 8),
+            }
+        )
 
     savings_pct = (1 - routed_cost / all_opus_cost) * 100 if all_opus_cost else 0
 

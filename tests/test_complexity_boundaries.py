@@ -104,6 +104,7 @@ def reloaded_cost_eval(monkeypatch):
 
 def _routed_cost(cm, monkeypatch, scores):
     """Run the cost eval with a stubbed classifier that echoes fixed scores."""
+
     async def _fake_classify(prompt):
         score = float(prompt)
         return src.router.complexity.ComplexityResult(

@@ -1,7 +1,6 @@
 """Tests for the 5-tier multi-model prompt router."""
 
 import json
-from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
@@ -88,34 +87,61 @@ class TestCostTracker:
         assert opus / lite > 100
 
     def test_cost_curve_is_monotonic(self):
-        models = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro", "claude-sonnet-4-6", "claude-opus-4-6"]
+        models = [
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+        ]
         costs = [estimate_cost(m, 1000, 1000) for m in models]
         for i in range(len(costs) - 1):
-            assert costs[i] < costs[i + 1], f"{models[i]} should be cheaper than {models[i+1]}"
+            assert costs[i] < costs[i + 1], f"{models[i]} should be cheaper than {models[i + 1]}"
 
     def test_tracker_total(self, tmp_path):
         tracker = CostTracker(log_path=tmp_path / "test.jsonl")
-        tracker.log_request(RequestLog(
-            prompt="test", complexity_level="low", complexity_score=0.1,
-            model_used="gemini-2.5-flash-lite",
-            input_tokens=200, output_tokens=500, latency_ms=50, cost_usd=0.001,
-        ))
-        tracker.log_request(RequestLog(
-            prompt="test2", complexity_level="high", complexity_score=0.9,
-            model_used="claude-opus-4-6",
-            input_tokens=200, output_tokens=500, latency_ms=2000, cost_usd=0.04,
-        ))
+        tracker.log_request(
+            RequestLog(
+                prompt="test",
+                complexity_level="low",
+                complexity_score=0.1,
+                model_used="gemini-2.5-flash-lite",
+                input_tokens=200,
+                output_tokens=500,
+                latency_ms=50,
+                cost_usd=0.001,
+            )
+        )
+        tracker.log_request(
+            RequestLog(
+                prompt="test2",
+                complexity_level="high",
+                complexity_score=0.9,
+                model_used="claude-opus-4-6",
+                input_tokens=200,
+                output_tokens=500,
+                latency_ms=2000,
+                cost_usd=0.04,
+            )
+        )
         assert tracker.total_cost() == pytest.approx(0.041)
         assert len(tracker.cost_by_model()) == 2
 
     def test_tracker_jsonl_output(self, tmp_path):
         log_file = tmp_path / "test.jsonl"
         tracker = CostTracker(log_path=log_file)
-        tracker.log_request(RequestLog(
-            prompt="test", complexity_level="low", complexity_score=0.1,
-            model_used="gemini-2.5-flash-lite",
-            input_tokens=100, output_tokens=200, latency_ms=30, cost_usd=0.0001,
-        ))
+        tracker.log_request(
+            RequestLog(
+                prompt="test",
+                complexity_level="low",
+                complexity_score=0.1,
+                model_used="gemini-2.5-flash-lite",
+                input_tokens=100,
+                output_tokens=200,
+                latency_ms=30,
+                cost_usd=0.0001,
+            )
+        )
         lines = log_file.read_text().strip().split("\n")
         assert len(lines) == 1
         data = json.loads(lines[0])
@@ -124,11 +150,18 @@ class TestCostTracker:
 
     def test_generate_report(self, tmp_path):
         tracker = CostTracker(log_path=tmp_path / "test.jsonl")
-        tracker.log_request(RequestLog(
-            prompt="test", complexity_level="low", complexity_score=0.1,
-            model_used="gemini-2.5-flash-lite",
-            input_tokens=200, output_tokens=500, latency_ms=50, cost_usd=0.001,
-        ))
+        tracker.log_request(
+            RequestLog(
+                prompt="test",
+                complexity_level="low",
+                complexity_score=0.1,
+                model_used="gemini-2.5-flash-lite",
+                input_tokens=200,
+                output_tokens=500,
+                latency_ms=50,
+                cost_usd=0.001,
+            )
+        )
         report = tracker.generate_report()
         assert "Cost Summary" in report
         assert "gemini-2.5-flash-lite" in report
@@ -137,13 +170,16 @@ class TestCostTracker:
 class TestAgentConfig:
     def test_resolve_model_gemini(self):
         from src.config import resolve_model
+
         assert resolve_model("gemini-2.5-flash") == "gemini-2.5-flash"
         assert resolve_model("gemini-2.5-flash-lite") == "gemini-2.5-flash-lite"
         assert resolve_model("gemini-2.5-pro") == "gemini-2.5-pro"
 
     def test_resolve_model_litellm(self):
-        from src.config import resolve_model
         from google.adk.models.lite_llm import LiteLlm
+
+        from src.config import resolve_model
+
         result = resolve_model("claude-opus-4-6")
         assert isinstance(result, LiteLlm)
         result2 = resolve_model("claude-sonnet-4-6")
@@ -168,11 +204,13 @@ class TestAgentConfig:
     def test_router_has_no_agent_tools(self):
         # Guardrail: no AgentTool sub-agent delegation should sneak back in — it's
         # the exact pattern that stalls on the deployed runtime.
-        from src.router.agents import router_agent
         from google.adk.tools.agent_tool import AgentTool
+
+        from src.router.agents import router_agent
 
         assert not any(isinstance(t, AgentTool) for t in router_agent.tools)
 
     def test_router_has_callback(self):
         from src.router.agents import router_agent
+
         assert router_agent.before_agent_callback is not None

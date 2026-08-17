@@ -21,7 +21,7 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, AGENT_ENGINE_ID
+from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
 from src.eval.eval_experiment import (
     ensure_eval_experiment,
     eval_run_display_name,
@@ -583,11 +583,7 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     """Convert a bare engine ID to the full Vertex AI resource name."""
     if agent_id.startswith("projects/"):
         return agent_id
-    return (
-        f"projects/{GCP_PROJECT_ID}"
-        f"/locations/{GCP_REGION}"
-        f"/reasoningEngines/{agent_id}"
-    )
+    return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
 def _build_agent_info() -> types.evals.AgentInfo:
@@ -683,7 +679,7 @@ def run_batch_eval(
     agent_resource_name = _resolve_agent_resource_name(agent_id)
 
     print(f"{'=' * 60}")
-    print(f"GEAP Batch Evaluation Pipeline")
+    print("GEAP Batch Evaluation Pipeline")
     print(f"{'=' * 60}")
     print(f"  Run ID:      {run_id}")
     print(f"  Agent:       {agent_resource_name}")
@@ -879,7 +875,9 @@ def _print_summary(results: dict) -> None:
     print(f"  Agent:       {results['agent']}")
     print(f"  Test cases:  {results['test_case_count']}")
     print(f"  Inference:   {results['inference_seconds']}s")
-    print(f"  Items OK:    {results['total_items'] - results['failed_items']}/{results['total_items']}")
+    print(
+        f"  Items OK:    {results['total_items'] - results['failed_items']}/{results['total_items']}"
+    )
     print()
 
     if not results["metrics"]:
@@ -908,8 +906,7 @@ def main():
         "--agent-id",
         default=AGENT_ENGINE_ID,
         help=(
-            "Agent Engine reasoning engine ID or full resource name. "
-            f"Default: {AGENT_ENGINE_ID}"
+            f"Agent Engine reasoning engine ID or full resource name. Default: {AGENT_ENGINE_ID}"
         ),
     )
     parser.add_argument(

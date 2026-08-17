@@ -76,9 +76,24 @@ def test_main_effects_table_shape():
 def test_cost_quality_frontier_selects_non_dominated():
     df = pd.DataFrame(
         [
-            {"design_point": "a", "savings_pct": 60.0, "tool_use_quality": 0.4, "final_response_match": 0.4},
-            {"design_point": "b", "savings_pct": 30.0, "tool_use_quality": 0.2, "final_response_match": 0.2},  # dominated by a
-            {"design_point": "c", "savings_pct": 80.0, "tool_use_quality": 0.1, "final_response_match": 0.1},  # high savings, low quality
+            {
+                "design_point": "a",
+                "savings_pct": 60.0,
+                "tool_use_quality": 0.4,
+                "final_response_match": 0.4,
+            },
+            {
+                "design_point": "b",
+                "savings_pct": 30.0,
+                "tool_use_quality": 0.2,
+                "final_response_match": 0.2,
+            },  # dominated by a
+            {
+                "design_point": "c",
+                "savings_pct": 80.0,
+                "tool_use_quality": 0.1,
+                "final_response_match": 0.1,
+            },  # high savings, low quality
         ]
     )
     front = an.cost_quality_frontier(df)

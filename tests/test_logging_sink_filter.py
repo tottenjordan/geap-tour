@@ -14,4 +14,4 @@ def test_sink_filter_uses_reasoning_engine():
 
 def test_sink_filter_does_not_use_stale_agent_engine_type():
     text = SCRIPT.read_text()
-    assert 'aiplatform.googleapis.com/AgentEngine' not in text
+    assert "aiplatform.googleapis.com/AgentEngine" not in text

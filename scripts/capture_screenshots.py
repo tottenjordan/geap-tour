@@ -7,9 +7,7 @@ using Playwright. Run after deploy_all.sh or verify_deployment.sh.
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
-from datetime import datetime
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "hybrid-vertex")
 REGION = os.environ.get("GCP_REGION", "us-central1")
@@ -45,17 +43,30 @@ td { padding: 10px 12px; border-bottom: 1px solid #f1f3f4; color: #202124; }
 
 def run_cmd(cmd: str) -> str:
     try:
-        return subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, timeout=30).decode().strip()
+        return (
+            subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, timeout=30)
+            .decode()
+            .strip()
+        )
     except Exception:
         return ""
 
 
 def get_cloud_run_data() -> list[dict]:
-    raw = run_cmd(f"gcloud run services list --project {PROJECT_ID} --region {REGION} --format json")
+    raw = run_cmd(
+        f"gcloud run services list --project {PROJECT_ID} --region {REGION} --format json"
+    )
     if not raw:
         return []
     services = json.loads(raw)
-    return [s for s in services if any(name in s.get("metadata", {}).get("name", "") for name in ["search-mcp", "booking-mcp", "expense-mcp"])]
+    return [
+        s
+        for s in services
+        if any(
+            name in s.get("metadata", {}).get("name", "")
+            for name in ["search-mcp", "booking-mcp", "expense-mcp"]
+        )
+    ]
 
 
 def get_model_armor_data() -> dict:
@@ -72,18 +83,25 @@ def get_model_armor_data() -> dict:
 
 def get_agent_engines() -> list[dict]:
     raw = run_cmd(
-        f'gcloud ai reasoning-engines list --project {PROJECT_ID} --region {REGION} --format json'
+        f"gcloud ai reasoning-engines list --project {PROJECT_ID} --region {REGION} --format json"
     )
     if not raw:
         return []
     engines = json.loads(raw)
-    return [e for e in engines if any(kw in (e.get("displayName") or "").lower() for kw in ["geap", "travel", "expense", "coordinator"])]
+    return [
+        e
+        for e in engines
+        if any(
+            kw in (e.get("displayName") or "").lower()
+            for kw in ["geap", "travel", "expense", "coordinator"]
+        )
+    ]
 
 
 def get_log_entries() -> list[dict]:
     raw = run_cmd(
         f'gcloud logging read \'resource.type="cloud_run_revision" AND resource.labels.service_name=("search-mcp" OR "booking-mcp" OR "expense-mcp")\' '
-        f'--project {PROJECT_ID} --limit 12 --format json'
+        f"--project {PROJECT_ID} --limit 12 --format json"
     )
     if not raw:
         return []
@@ -134,8 +152,16 @@ def render_model_armor_page(templates: dict) -> str:
     for name, data in templates.items():
         filters = data.get("filterConfig", {})
         rai_count = len(filters.get("raiSettings", {}).get("raiFilters", []))
-        pi = "Yes" if filters.get("piAndJailbreakFilterSettings", {}).get("filterEnforcement") == "ENABLED" else "No"
-        uri = "Yes" if filters.get("maliciousUriFilterSettings", {}).get("filterEnforcement") == "ENABLED" else "No"
+        pi = (
+            "Yes"
+            if filters.get("piAndJailbreakFilterSettings", {}).get("filterEnforcement") == "ENABLED"
+            else "No"
+        )
+        uri = (
+            "Yes"
+            if filters.get("maliciousUriFilterSettings", {}).get("filterEnforcement") == "ENABLED"
+            else "No"
+        )
         created = data.get("createTime", "")[:19]
         ttype = "Input" if "prompt" in name else "Output"
         rows += f"""<tr>
@@ -149,12 +175,12 @@ def render_model_armor_page(templates: dict) -> str:
         </tr>"""
 
     filter_cards = ""
-    for name, data in templates.items():
+    for _name, data in templates.items():
         filters = data.get("filterConfig", {})
         for f in filters.get("raiSettings", {}).get("raiFilters", []):
             filter_cards += f"""<div style="border:2px solid #34a853;border-radius:8px;padding:12px;margin:4px;">
-                <div style="font-size:13px;font-weight:500;"><span style="color:#34a853;">&#10004;</span> {f['filterType'].replace('_', ' ').title()}</div>
-                <div style="font-size:11px;color:#5f6368;">Confidence: {f['confidenceLevel']}</div>
+                <div style="font-size:13px;font-weight:500;"><span style="color:#34a853;">&#10004;</span> {f["filterType"].replace("_", " ").title()}</div>
+                <div style="font-size:11px;color:#5f6368;">Confidence: {f["confidenceLevel"]}</div>
             </div>"""
 
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Model Armor</title>
@@ -186,9 +212,8 @@ def render_logging_page(entries: list[dict]) -> str:
         ts = entry.get("timestamp", "")[:23]
         resource = entry.get("resource", {}).get("labels", {}).get("service_name", "unknown")
         msg = (entry.get("textPayload") or entry.get("jsonPayload", {}).get("message", ""))[:120]
-        sev_class = {"INFO": "severity-info", "WARNING": "severity-warning", "ERROR": "severity-error"}.get(sev, "severity-default")
         rows += f"""<div style="display:flex;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f3f4;font-size:12px;font-family:monospace;gap:12px;line-height:1.5;">
-            <span class="status-badge" style="min-width:60px;text-align:center;{'background:#e8f0fe;color:#1967d2;' if sev=='INFO' else 'background:#fef7e0;color:#ea8600;' if sev=='WARNING' else 'background:#fce8e6;color:#c5221f;' if sev=='ERROR' else 'background:#f1f3f4;color:#5f6368;'}">{sev}</span>
+            <span class="status-badge" style="min-width:60px;text-align:center;{"background:#e8f0fe;color:#1967d2;" if sev == "INFO" else "background:#fef7e0;color:#ea8600;" if sev == "WARNING" else "background:#fce8e6;color:#c5221f;" if sev == "ERROR" else "background:#f1f3f4;color:#5f6368;"}">{sev}</span>
             <span style="color:#5f6368;min-width:180px;font-size:11px;">{ts}</span>
             <span style="color:#1a73e8;min-width:120px;font-size:11px;">{resource}</span>
             <span style="color:#202124;flex:1;word-break:break-word;">{msg}</span>
@@ -220,9 +245,18 @@ def save_and_screenshot(html: str, filename: str):
     with open(html_path, "w") as f:
         f.write(html)
     result = subprocess.run(
-        ["npx", "playwright", "screenshot", "--viewport-size", "1920x1080",
-         f"file://{html_path}", str(png_path)],
-        capture_output=True, text=True, timeout=30
+        [
+            "npx",
+            "playwright",
+            "screenshot",
+            "--viewport-size",
+            "1920x1080",
+            f"file://{html_path}",
+            str(png_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode == 0:
         size = png_path.stat().st_size if png_path.exists() else 0
@@ -231,15 +265,25 @@ def save_and_screenshot(html: str, filename: str):
         print(f"  Using Python http server for {filename}...")
         import http.server
         import threading
+
         port = 8877
         handler = http.server.SimpleHTTPRequestHandler
         with http.server.HTTPServer(("", port), handler) as httpd:
             t = threading.Thread(target=httpd.handle_request)
             t.start()
             subprocess.run(
-                ["npx", "playwright", "screenshot", "--viewport-size", "1920x1080",
-                 f"http://localhost:{port}{html_path}", str(png_path)],
-                capture_output=True, text=True, timeout=30
+                [
+                    "npx",
+                    "playwright",
+                    "screenshot",
+                    "--viewport-size",
+                    "1920x1080",
+                    f"http://localhost:{port}{html_path}",
+                    str(png_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             t.join(timeout=5)
 

@@ -54,7 +54,7 @@ def _parse_job_resource(stdout: str) -> str | None:
     for line in reversed(stdout.splitlines()):
         line = line.strip()
         if line.startswith(_JOB_PREFIX):
-            return line[len(_JOB_PREFIX):].strip()
+            return line[len(_JOB_PREFIX) :].strip()
     return None
 
 
@@ -82,10 +82,15 @@ def submit_point(
     gcs_prefix = f"eval-results/doe/{experiment_id}/{point.design_point}"
 
     cmd = [
-        sys.executable, "-m", "src.pipelines.submit",
-        "--experiment-id", experiment_id,
-        "--design-point", point.design_point,
-        "--spec-path", spec_path,
+        sys.executable,
+        "-m",
+        "src.pipelines.submit",
+        "--experiment-id",
+        experiment_id,
+        "--design-point",
+        point.design_point,
+        "--spec-path",
+        spec_path,
         *_params_to_cli(params),
     ]
     if fresh_deploy:
@@ -190,7 +195,9 @@ def launch(
     os.makedirs(out_dir, exist_ok=True)
     entries = [
         submit_point(
-            p, factors, experiment_id,
+            p,
+            factors,
+            experiment_id,
             agent_module=agent_module,
             reuse_agent_id=reuse_agent_id,
             spec_dir=spec_dir,

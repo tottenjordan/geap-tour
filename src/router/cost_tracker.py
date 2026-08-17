@@ -2,7 +2,7 @@
 
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 # Pricing per 1M tokens. Thinking models (gemini-3.x) charge output
@@ -80,13 +80,15 @@ class CostTracker:
         for model, cost in sorted(self.cost_by_model().items()):
             lines.append(f"| {model} | {model_counts[model]} | ${cost:.6f} |")
 
-        lines.extend([
-            "",
-            "### By Complexity",
-            "",
-            "| Level | Count | Avg Cost |",
-            "|-------|-------|----------|",
-        ])
+        lines.extend(
+            [
+                "",
+                "### By Complexity",
+                "",
+                "| Level | Count | Avg Cost |",
+                "|-------|-------|----------|",
+            ]
+        )
         for level in ("low", "medium", "high"):
             level_entries = [e for e in self.entries if e.complexity_level == level]
             if level_entries:

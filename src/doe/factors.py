@@ -41,18 +41,14 @@ class Factor:
         if self.channel not in CHANNELS:
             raise ValueError(f"{self.name}: channel {self.channel!r} not in {CHANNELS}")
         if len(self.levels) != 2:
-            raise ValueError(
-                f"{self.name}: expected exactly 2 levels, got {list(self.levels)}"
-            )
+            raise ValueError(f"{self.name}: expected exactly 2 levels, got {list(self.levels)}")
         for label, mapping in self.levels.items():
             if not isinstance(mapping, dict) or not mapping:
                 raise ValueError(f"{self.name}:{label}: level must be a non-empty dict")
             if self.channel in ("engine_env", "runner_env"):
                 bad = [k for k, v in mapping.items() if not isinstance(v, str)]
                 if bad:
-                    raise ValueError(
-                        f"{self.name}:{label}: env values must be strings ({bad})"
-                    )
+                    raise ValueError(f"{self.name}:{label}: env values must be strings ({bad})")
 
     @property
     def labels(self) -> list[str]:

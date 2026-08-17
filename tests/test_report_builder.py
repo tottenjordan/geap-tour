@@ -104,7 +104,11 @@ def test_publish_phase_populates_router_metrics(monkeypatch):
     def _fake_router(accuracy_results, cost_results, **kwargs):
         seen["accuracy"] = accuracy_results
         seen["cost"] = cost_results
-        return {"routing_accuracy_pct": 92.0, "cost_savings_pct": 60.0, "classifier_latency_ms": 150.0}
+        return {
+            "routing_accuracy_pct": 92.0,
+            "cost_savings_pct": 60.0,
+            "classifier_latency_ms": 150.0,
+        }
 
     monkeypatch.setattr(rae, "_apply_standalone_judges", lambda *a, **k: None)
     monkeypatch.setattr(rae, "publish_offline_scores", lambda *a, **k: {})

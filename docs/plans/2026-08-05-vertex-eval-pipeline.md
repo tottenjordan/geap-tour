@@ -141,8 +141,17 @@ echo "$IMAGE"
 ```python
 def test_components_are_kfp():
     from src.pipelines import components as c
-    for name in ("resolve_agent","generate_traffic","batch_eval",
-                 "simulated_eval","complexity_eval","monitor_verify","report","cleanup"):
+
+    for name in (
+        "resolve_agent",
+        "generate_traffic",
+        "batch_eval",
+        "simulated_eval",
+        "complexity_eval",
+        "monitor_verify",
+        "report",
+        "cleanup",
+    ):
         comp = getattr(c, name)
         assert hasattr(comp, "component_spec"), f"{name} is not a KFP component"
 ```
@@ -154,29 +163,45 @@ from kfp import dsl
 
 IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v1"
 
+
 @dsl.component(base_image=IMAGE)
-def resolve_agent(agent_id: str, agent_module: str) -> NamedTuple("Out", [("agent_resource", str), ("deployed_fresh", bool)]):
+def resolve_agent(agent_id: str, agent_module: str) -> NamedTuple(
+    "Out", [("agent_resource", str), ("deployed_fresh", bool)]
+):
     from src.config import GCP_PROJECT_ID, GCP_REGION
+
     if agent_id:
-        res = agent_id if agent_id.startswith("projects/") else \
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
+        res = (
+            agent_id
+            if agent_id.startswith("projects/")
+            else f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
+        )
         return (res, False)
     import importlib
     from src.deploy.deploy_agents import deploy_agent
+
     mod = importlib.import_module(f"src.agents.{agent_module}")
     res = deploy_agent(getattr(mod, agent_module))
     return (res, True)
 
+
 @dsl.component(base_image=IMAGE)
-def batch_eval(agent_resource: str, threshold: float,
-               results: dsl.Output[dsl.Artifact], metrics: dsl.Output[dsl.Metrics]) -> bool:
+def batch_eval(
+    agent_resource: str,
+    threshold: float,
+    results: dsl.Output[dsl.Artifact],
+    metrics: dsl.Output[dsl.Metrics],
+) -> bool:
     from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
-    r = run_multi_agent_batch_eval(agent_id=agent_resource, score_threshold=threshold,
-                                   output_path=results.path)
+
+    r = run_multi_agent_batch_eval(
+        agent_id=agent_resource, score_threshold=threshold, output_path=results.path
+    )
     for agent, ar in (r.get("agents") or {}).items():
         for m, mv in (ar.get("metrics") or {}).items():
             metrics.log_metric(f"{agent}.{m}", mv["score"])
     return bool(r.get("all_passed"))
+
 
 @dsl.component(base_image=IMAGE)
 def cleanup(agent_resource: str, deployed_fresh: bool):
@@ -185,6 +210,7 @@ def cleanup(agent_resource: str, deployed_fresh: bool):
     import vertexai
     from vertexai import agent_engines
     from src.config import GCP_PROJECT_ID, GCP_REGION
+
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     try:
         agent_engines.delete(agent_resource, force=True)
@@ -208,6 +234,7 @@ Implement `generate_traffic`, `simulated_eval` (loop coordinator+travel, write `
 def test_pipeline_compiles(tmp_path):
     from kfp import compiler
     from src.pipelines.eval_pipeline import eval_pipeline
+
     out = tmp_path / "pipeline.json"
     compiler.Compiler().compile(eval_pipeline, str(out))
     assert out.exists() and out.stat().st_size > 0
@@ -220,41 +247,74 @@ from src.pipelines import components as c
 
 # Deployment-specific env applied to EVERY task (import-time config gap fix).
 _RUNTIME_ENV = {  # values come from pipeline params → set below
-    "SEARCH_MCP_SERVER": None, "BOOKING_MCP_SERVER": None, "EXPENSE_MCP_SERVER": None,
-    "AGENT_ENGINE_ID": None, "ROUTER_ENGINE_ID": None,
+    "SEARCH_MCP_SERVER": None,
+    "BOOKING_MCP_SERVER": None,
+    "EXPENSE_MCP_SERVER": None,
+    "AGENT_ENGINE_ID": None,
+    "ROUTER_ENGINE_ID": None,
 }
+
 
 def _wire(task, env: dict):
     for k, v in env.items():
         task.set_env_variable(k, v)
     return task
 
+
 @dsl.pipeline(name="geap-eval-pipeline", pipeline_root="gs://geap-tour-staging-v2/pipeline-root")
 def eval_pipeline(
-    agent_id: str = "", agent_module: str = "coordinator_agent",
-    threshold: float = 3.0, skip_traffic: bool = False, traffic_count: int = 2,
-    scenario_count: int = 5, max_turns: int = 3,
-    search_mcp: str = "", booking_mcp: str = "", expense_mcp: str = "",
+    agent_id: str = "",
+    agent_module: str = "coordinator_agent",
+    threshold: float = 3.0,
+    skip_traffic: bool = False,
+    traffic_count: int = 2,
+    scenario_count: int = 5,
+    max_turns: int = 3,
+    search_mcp: str = "",
+    booking_mcp: str = "",
+    expense_mcp: str = "",
     router_engine_id: str = "",
 ):
-    env = {"SEARCH_MCP_SERVER": search_mcp, "BOOKING_MCP_SERVER": booking_mcp,
-           "EXPENSE_MCP_SERVER": expense_mcp, "ROUTER_ENGINE_ID": router_engine_id}
+    env = {
+        "SEARCH_MCP_SERVER": search_mcp,
+        "BOOKING_MCP_SERVER": booking_mcp,
+        "EXPENSE_MCP_SERVER": expense_mcp,
+        "ROUTER_ENGINE_ID": router_engine_id,
+    }
     resolve = _wire(c.resolve_agent(agent_id=agent_id, agent_module=agent_module), env)
-    with dsl.ExitHandler(_wire(c.cleanup(
-            agent_resource=resolve.outputs["agent_resource"],
-            deployed_fresh=resolve.outputs["deployed_fresh"]), env)):
+    with dsl.ExitHandler(
+        _wire(
+            c.cleanup(
+                agent_resource=resolve.outputs["agent_resource"],
+                deployed_fresh=resolve.outputs["deployed_fresh"],
+            ),
+            env,
+        )
+    ):
         agent_res = resolve.outputs["agent_resource"]
         with dsl.If(skip_traffic == False):
             traffic = _wire(c.generate_traffic(agent_resource=agent_res, count=traffic_count), env)
         batch = _wire(c.batch_eval(agent_resource=agent_res, threshold=threshold), env)
-        sim = _wire(c.simulated_eval(agent_resource=agent_res, threshold=threshold,
-                                     scenario_count=scenario_count, max_turns=max_turns), env)
+        sim = _wire(
+            c.simulated_eval(
+                agent_resource=agent_res,
+                threshold=threshold,
+                scenario_count=scenario_count,
+                max_turns=max_turns,
+            ),
+            env,
+        )
         comp = _wire(c.complexity_eval(), env)
         mon = _wire(c.monitor_verify(agent_resource=agent_res), env).after(batch)
-        _wire(c.report(batch_results=batch.outputs["results"],
-                       sim_results=sim.outputs["results"],
-                       complexity_results=comp.outputs["results"],
-                       monitor_results=mon.outputs["results"]), env)
+        _wire(
+            c.report(
+                batch_results=batch.outputs["results"],
+                sim_results=sim.outputs["results"],
+                complexity_results=comp.outputs["results"],
+                monitor_results=mon.outputs["results"],
+            ),
+            env,
+        )
 ```
 > Notes: `dsl.ExitHandler` guarantees `cleanup` runs even on failure; `cleanup` no-ops when `deployed_fresh` is false. `dsl.If` gates traffic. `.after(batch)` reproduces `run_all_evals`'s monitor-after-batch ordering; batch/simulated/complexity otherwise run in parallel.
 **Step 4:** Run compile test → PASS.
@@ -279,36 +339,54 @@ def eval_pipeline(
 **Step 1:** Implement compile-then-submit:
 ```python
 """Compile and submit the eval pipeline. Usage: uv run python -m src.pipelines.submit [--agent-id ID]"""
+
 import argparse
 from kfp import compiler
 from google.cloud import aiplatform
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, \
-    SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, ROUTER_ENGINE_ID
+from src.config import (
+    GCP_PROJECT_ID,
+    GCP_REGION,
+    GCP_STAGING_BUCKET,
+    SEARCH_MCP_SERVER,
+    BOOKING_MCP_SERVER,
+    EXPENSE_MCP_SERVER,
+    ROUTER_ENGINE_ID,
+)
 from src.pipelines.eval_pipeline import eval_pipeline
+
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--agent-id", default="")           # empty → deploy fresh
+    p.add_argument("--agent-id", default="")  # empty → deploy fresh
     p.add_argument("--agent-module", default="coordinator_agent")
     p.add_argument("--threshold", type=float, default=3.0)
     p.add_argument("--skip-traffic", action="store_true")
-    p.add_argument("--service-account",
-                   default="934903580331-compute@developer.gserviceaccount.com")
+    p.add_argument(
+        "--service-account", default="934903580331-compute@developer.gserviceaccount.com"
+    )
     a = p.parse_args()
     compiler.Compiler().compile(eval_pipeline, "eval_pipeline.json")
-    aiplatform.init(project=GCP_PROJECT_ID, location=GCP_REGION,
-                    staging_bucket=f"gs://{GCP_STAGING_BUCKET}")
+    aiplatform.init(
+        project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
+    )
     job = aiplatform.PipelineJob(
-        display_name="geap-eval", template_path="eval_pipeline.json",
+        display_name="geap-eval",
+        template_path="eval_pipeline.json",
         pipeline_root=f"gs://{GCP_STAGING_BUCKET}/pipeline-root",
         parameter_values={
-            "agent_id": a.agent_id, "agent_module": a.agent_module,
-            "threshold": a.threshold, "skip_traffic": a.skip_traffic,
-            "search_mcp": SEARCH_MCP_SERVER, "booking_mcp": BOOKING_MCP_SERVER,
-            "expense_mcp": EXPENSE_MCP_SERVER, "router_engine_id": ROUTER_ENGINE_ID,
-        })
+            "agent_id": a.agent_id,
+            "agent_module": a.agent_module,
+            "threshold": a.threshold,
+            "skip_traffic": a.skip_traffic,
+            "search_mcp": SEARCH_MCP_SERVER,
+            "booking_mcp": BOOKING_MCP_SERVER,
+            "expense_mcp": EXPENSE_MCP_SERVER,
+            "router_engine_id": ROUTER_ENGINE_ID,
+        },
+    )
     job.submit(service_account=a.service_account)  # non-blocking; prints console URL
     print(job._dashboard_uri())
+
 
 if __name__ == "__main__":
     main()

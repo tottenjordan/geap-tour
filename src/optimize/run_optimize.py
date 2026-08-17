@@ -10,6 +10,7 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -29,6 +30,7 @@ def _patch_adk():
     """
     from google.adk.evaluation import eval_case as _ec
     from google.adk.evaluation import eval_set as _es
+
     for _mod in (_ec, _es):
         for _name in dir(_mod):
             _cls = getattr(_mod, _name)
@@ -43,10 +45,8 @@ def _patch_adk():
         for _name in dir(_mod):
             _cls = getattr(_mod, _name)
             if isinstance(_cls, type) and hasattr(_cls, "model_rebuild"):
-                try:
+                with contextlib.suppress(Exception):
                     _cls.model_rebuild(force=True)
-                except Exception:
-                    pass
 
     from google.adk.evaluation import local_eval_service as les
 
@@ -59,6 +59,7 @@ def _patch_adk():
                 inference_result.eval_case_id,
             )
             from google.adk.evaluation.eval_result import EvalCaseResult, EvalStatus
+
             return inference_result, EvalCaseResult(
                 eval_id=inference_result.eval_case_id,
                 eval_set_id=inference_result.eval_set_id,

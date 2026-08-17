@@ -39,7 +39,9 @@ def test_sanitize_label_coerces_invalid_chars_and_case():
 # ensure_eval_experiment — guarded create-or-get
 # --------------------------------------------------------------------------- #
 class _FakeEvals:
-    def __init__(self, existing=None, created_name="projects/p/locations/l/evaluationExperiments/new"):
+    def __init__(
+        self, existing=None, created_name="projects/p/locations/l/evaluationExperiments/new"
+    ):
         self._existing = existing or []
         self._created_name = created_name
         self.create_calls = 0

@@ -1,6 +1,6 @@
 """Cross-model complexity experiment — test all models on all complexity tiers.
 
-Runs 5 models × 3 tiers = 15 eval runs to measure how each model handles
+Runs 5 models x 3 tiers = 15 eval runs to measure how each model handles
 queries above and below its intended complexity level.
 
 Usage:
@@ -21,17 +21,15 @@ import pandas as pd
 import vertexai
 from vertexai import Client, types
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, EVAL_OUTPUT_DIR
+from src.config import EVAL_OUTPUT_DIR, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
+from src.eval.agent_eval_configs import (
+    TIER_EVAL_CASES,
+    get_metrics,
+)
 from src.eval.eval_experiment import (
     ensure_eval_experiment,
     eval_run_display_name,
     eval_run_labels,
-)
-from src.eval.agent_eval_configs import (
-    TIER_EVAL_CASES,
-    STANDALONE_AGENTS,
-    build_agent_info,
-    get_metrics,
 )
 
 GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
@@ -84,7 +82,7 @@ def run_single_eval(
     agent_resource = _resolve_agent_resource(engine_id)
     eval_df = _build_eval_dataset(cases)
 
-    print(f"  [{agent_name} × {tier}] Inference ({len(cases)} cases)...", end="", flush=True)
+    print(f"  [{agent_name} x {tier}] Inference ({len(cases)} cases)...", end="", flush=True)
     t0 = time.time()
     inference_result = client.evals.run_inference(
         agent=agent_resource,
@@ -93,7 +91,7 @@ def run_single_eval(
     elapsed = time.time() - t0
     print(f" {elapsed:.0f}s")
 
-    print(f"  [{agent_name} × {tier}] Evaluating...", end="", flush=True)
+    print(f"  [{agent_name} x {tier}] Evaluating...", end="", flush=True)
     ensure_eval_experiment(client=client)
     evaluation_run = client.evals.create_evaluation_run(
         dataset=inference_result,
@@ -118,7 +116,8 @@ def run_single_eval(
         return {"agent": agent_name, "tier": tier, "status": "FAILED", "metrics": {}}
 
     evaluation_run = client.evals.get_evaluation_run(
-        name=evaluation_run.name, include_evaluation_items=True,
+        name=evaluation_run.name,
+        include_evaluation_items=True,
     )
 
     raw_metrics = {}
@@ -133,7 +132,6 @@ def run_single_eval(
     except Exception as e:
         print(f"    Warning: {e}")
 
-    normalized_threshold = 0.10
     metric_results = {}
     for key, value in raw_metrics.items():
         if "/AVERAGE" in key:
@@ -164,13 +162,15 @@ def run_experiment(
 
     run_id = f"cross_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}")
+    vertexai.init(
+        project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
+    )
     client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
     metrics = get_metrics("lite_agent")
 
     total_runs = len(tiers) * len(agents)
     print(f"{'=' * 60}")
-    print(f"CROSS-MODEL COMPLEXITY EXPERIMENT")
+    print("CROSS-MODEL COMPLEXITY EXPERIMENT")
     print(f"{'=' * 60}")
     print(f"  Run ID:  {run_id}")
     print(f"  Tiers:   {', '.join(tiers)}")
@@ -217,12 +217,15 @@ def run_experiment(
             except Exception as e:
                 print(f"  ERROR: {e}")
                 results["runs"][f"{agent_name}_{tier}"] = {
-                    "agent": agent_name, "tier": tier, "status": "ERROR", "error": str(e),
+                    "agent": agent_name,
+                    "tier": tier,
+                    "status": "ERROR",
+                    "error": str(e),
                 }
 
     # Summary
     print(f"\n{'=' * 60}")
-    print(f"EXPERIMENT SUMMARY")
+    print("EXPERIMENT SUMMARY")
     print(f"{'=' * 60}")
 
     for tier in tiers:
@@ -259,10 +262,13 @@ def run_experiment(
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Cross-model complexity experiment")
-    parser.add_argument("--tier", type=str, default=None, help="Run specific tier (low, medium, high)")
+    parser.add_argument(
+        "--tier", type=str, default=None, help="Run specific tier (low, medium, high)"
+    )
     parser.add_argument("--agent", type=str, default=None, help="Run specific agent only")
     args = parser.parse_args()
 

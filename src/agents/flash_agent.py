@@ -3,9 +3,14 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from src.config import FLASH_MODEL, SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, resolve_model
+from src.config import (
+    BOOKING_MCP_SERVER,
+    EXPENSE_MCP_SERVER,
+    FLASH_MODEL,
+    SEARCH_MCP_SERVER,
+    resolve_model,
+)
 from src.registry import get_mcp_tools
-
 
 INSTRUCTION = """\
 You are a capable corporate assistant for straightforward requests. Your \
@@ -48,4 +53,5 @@ flash_agent = LlmAgent(
 root_agent = flash_agent
 
 import types as _t
+
 agent = _t.SimpleNamespace(root_agent=flash_agent)

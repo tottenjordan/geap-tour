@@ -20,6 +20,7 @@ def reloaded_config(monkeypatch):
     src.config are already bound, so we must reload once more after teardown env
     is clean to reset them for subsequent test modules.
     """
+
     def _reload():
         return importlib.reload(src.config)
 

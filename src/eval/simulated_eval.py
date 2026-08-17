@@ -8,6 +8,7 @@ Usage:
     uv run python -m src.eval.simulated_eval --agent-id 4709107696450666496 --agent-name router_agent --scenario-count 10
 """
 
+
 def _patch_evals_extra_fields():
     """Patch ConversationTurn to accept extra fields from agent engine responses.
 
@@ -67,12 +68,14 @@ def run_simulated_eval(
 
     import vertexai
     from vertexai import Client
+
     from src.config import GCP_PROJECT_ID, GCP_REGION, SIMULATOR_MODEL
     from src.eval.agent_eval_configs import build_agent_info, get_multi_turn_metrics
 
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
     from src.config import disable_pyopenssl
+
     disable_pyopenssl()
 
     # Multi-turn task success + tool-use + trajectory quality
@@ -110,12 +113,14 @@ def run_simulated_eval(
     print("  Inference complete")
 
     import time
+
     from src.config import GCP_STAGING_BUCKET
     from src.eval.eval_experiment import (
         ensure_eval_experiment,
         eval_run_display_name,
         eval_run_labels,
     )
+
     GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
     MAX_POLL_SECONDS = 600
 
@@ -131,7 +136,7 @@ def run_simulated_eval(
     )
 
     print(f"  Eval run: {evaluation_run.name}")
-    print(f"  Polling", end="", flush=True)
+    print("  Polling", end="", flush=True)
     poll_start = time.time()
     while time.time() - poll_start < MAX_POLL_SECONDS:
         evaluation_run = client.evals.get_evaluation_run(name=evaluation_run.name)
@@ -177,7 +182,11 @@ def run_simulated_eval(
                 all_pass = False
             status = "PASS" if passed else "FAIL"
             metric_name = key.rsplit("/AVERAGE", 1)[0]
-            metric_results[metric_name] = {"score": avg, "threshold": normalized_threshold, "passed": passed}
+            metric_results[metric_name] = {
+                "score": avg,
+                "threshold": normalized_threshold,
+                "passed": passed,
+            }
             print(f"  {metric_name:50s} {avg:.2f} / {normalized_threshold:.2f}  [{status}]")
 
     if not raw_metrics:
@@ -187,6 +196,7 @@ def run_simulated_eval(
     import json
     from datetime import datetime
     from pathlib import Path
+
     from src.config import EVAL_OUTPUT_DIR
 
     results = {
@@ -204,7 +214,9 @@ def run_simulated_eval(
 
     output_dir = Path(EVAL_OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"simulated_eval_{agent_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_path = (
+        output_dir / f"simulated_eval_{agent_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
     print(f"\nResults saved to: {output_path}")
@@ -254,6 +266,7 @@ if __name__ == "__main__":
     resource = args.agent_id
     if not resource.startswith("projects/"):
         from src.config import GCP_PROJECT_ID, GCP_REGION
+
         resource = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{resource}"
 
     passed = run_simulated_eval(

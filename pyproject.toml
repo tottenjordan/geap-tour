@@ -38,10 +38,27 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Notebooks are demo/scratch surfaces (incl. author-owned jt_eval_jw.ipynb) and are
+# intentionally kept out of lint/format so their prose+scratch cells stay untouched.
+extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "PIE", "RUF"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# These modules deliberately run code before their imports: agent modules do
+# runtime setup (e.g. litellm.suppress_debug_info) that must precede other
+# imports, the MCP servers install OpenTelemetry before importing FastMCP so the
+# server gets instrumented, and a few late imports break import cycles. E402 is
+# structural here, not an oversight.
+"src/agents/*.py" = ["E402"]
+"src/agents/coordinator/agent.py" = ["E402"]
+"src/router/agents.py" = ["E402"]
+"src/mcp_servers/*/server.py" = ["E402"]
+"src/eval/complexity_metrics.py" = ["E402"]
+"src/eval/router_eval.py" = ["E402"]
+"scripts/generate_optimization_report.py" = ["E402"]
 
 [tool.ty.environment]
 python-version = "3.12"

@@ -5,14 +5,15 @@ remote Cloud Run servers. Patches an ADK bug where timed-out eval cases
 with None inferences crash the evaluator.
 """
 
+import contextlib
 import json
 import logging
 import sys
 
 from google.adk.evaluation import AgentEvaluator
-from google.adk.evaluation.eval_set import EvalSet
-from google.adk.evaluation.eval_config import EvalConfig
 from google.adk.evaluation.base_eval_service import InferenceConfig
+from google.adk.evaluation.eval_config import EvalConfig
+from google.adk.evaluation.eval_set import EvalSet
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ def _patch_eval_service_none_guard():
     # expected_complexity in the router evalset's intermediate_data.
     # Must patch every model in eval_case and eval_set modules because
     # EvalSet.model_validate() triggers validation of deeply nested types.
-    from google.adk.evaluation import eval_case as _ec, eval_set as _es
+    from google.adk.evaluation import eval_case as _ec
+    from google.adk.evaluation import eval_set as _es
+
     for _mod in (_ec, _es):
         for _name in dir(_mod):
             _cls = getattr(_mod, _name)
@@ -76,10 +79,8 @@ def _patch_eval_service_none_guard():
         for _name in dir(_mod):
             _cls = getattr(_mod, _name)
             if isinstance(_cls, type) and hasattr(_cls, "model_rebuild"):
-                try:
+                with contextlib.suppress(Exception):
                     _cls.model_rebuild(force=True)
-                except Exception:
-                    pass
 
     from google.adk.evaluation import local_eval_service as les
 
@@ -92,6 +93,7 @@ def _patch_eval_service_none_guard():
                 inference_result.eval_case_id,
             )
             from google.adk.evaluation.eval_result import EvalCaseResult, EvalStatus
+
             return inference_result, EvalCaseResult(
                 eval_id=inference_result.eval_case_id,
                 eval_set_id=inference_result.eval_set_id,
@@ -154,6 +156,7 @@ async def run_one_time_eval(agent_key: str = "coordinator", num_runs: int = 1):
 
 if __name__ == "__main__":
     import asyncio
+
     agent_key = sys.argv[1] if len(sys.argv) > 1 else "coordinator"
     num_runs = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     asyncio.run(run_one_time_eval(agent_key=agent_key, num_runs=num_runs))

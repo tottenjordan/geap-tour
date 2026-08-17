@@ -123,7 +123,9 @@ def run_experiment(
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--kind", choices=["screening", "full"], default="screening")
     parser.add_argument(
         "--factors",
@@ -151,7 +153,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Max seconds to wait for jobs to finish before giving up (default 7200 = 2h)",
     )
     parser.add_argument("--max-runs", type=int, default=None, help="Cap the number of runs")
-    parser.add_argument("--reuse-agent-id", default="", help="Reuse an engine (runner_env/param-only experiments)")
+    parser.add_argument(
+        "--reuse-agent-id", default="", help="Reuse an engine (runner_env/param-only experiments)"
+    )
     parser.add_argument("--agent-module", default="coordinator_agent")
     parser.add_argument(
         "--spec-dir",

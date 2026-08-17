@@ -286,9 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from src.observability.metrics import parse_labels
 
-    published = publish_offline_scores(
-        batch, writer=writer, extra_labels=parse_labels(args.label)
-    )
+    published = publish_offline_scores(batch, writer=writer, extra_labels=parse_labels(args.label))
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
     return 0

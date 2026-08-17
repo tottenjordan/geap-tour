@@ -10,9 +10,7 @@ def _all_factors():
     # The 4-factor resolution-IV screen these tests are written around. Pinned
     # explicitly so registry growth (e.g. adding `memory_bank`) doesn't change
     # what a "full run" of these design assertions covers.
-    return get_factors(
-        ["router_boundaries", "model_tier", "prompt_variant", "eval_fidelity"]
-    )
+    return get_factors(["router_boundaries", "model_tier", "prompt_variant", "eval_fidelity"])
 
 
 def test_screening_has_eight_plus_baseline():

@@ -60,8 +60,7 @@ _SKILLS: tuple[dict, ...] = (
         "id": "expense_submission",
         "name": "Expense Submission",
         "description": (
-            "Submit an expense for reimbursement, flagging over-limit items for "
-            "manager review."
+            "Submit an expense for reimbursement, flagging over-limit items for manager review."
         ),
         "tags": ["expense", "submission"],
         "examples": ["Submit a $120 taxi expense"],

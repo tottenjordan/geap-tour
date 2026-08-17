@@ -76,10 +76,7 @@ def per_request_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -
             + output_tokens * rate["output_usd_per_token"]
         )
     # GSU burndown -> USD.
-    gsu = (
-        input_tokens * rate["input_gsu_per_token"]
-        + output_tokens * rate["output_gsu_per_token"]
-    )
+    gsu = input_tokens * rate["input_gsu_per_token"] + output_tokens * rate["output_gsu_per_token"]
     return gsu * rate["usd_per_gsu"]
 
 

@@ -73,9 +73,9 @@ def deploy_server(server: dict) -> str:
 
 def deploy_all_servers() -> dict[str, str]:
     """Deploy all MCP servers and return a map of name → URL."""
-    urls = {}
+    urls: dict[str, str] = {}
     for server in SERVERS:
-        urls[server["name"]] = deploy_server(server)
+        urls[str(server["name"])] = deploy_server(server)
     return urls
 
 

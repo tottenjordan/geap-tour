@@ -75,11 +75,27 @@ QUERIES = [
     ("Can you help me with an expense report?", "charlie", "low"),
     # Medium complexity — comparison and multi-step
     ("Find flights to NYC and compare the cheapest options by airline", "alice", "medium"),
-    ("Search hotels in New York, then check if the nightly rate fits our lodging policy", "bob", "medium"),
-    ("Show expense history for EMP001 and flag any items that exceeded policy limits", "charlie", "medium"),
-    ("Find the cheapest flight from SFO to JFK and tell me how much I'd save vs the most expensive", "alice", "medium"),
+    (
+        "Search hotels in New York, then check if the nightly rate fits our lodging policy",
+        "bob",
+        "medium",
+    ),
+    (
+        "Show expense history for EMP001 and flag any items that exceeded policy limits",
+        "charlie",
+        "medium",
+    ),
+    (
+        "Find the cheapest flight from SFO to JFK and tell me how much I'd save vs the most expensive",
+        "alice",
+        "medium",
+    ),
     ("Compare hotels in New York by price and rating — which is the best value?", "bob", "medium"),
-    ("Check if a $100 meal and a $250 entertainment expense are both within policy", "charlie", "medium"),
+    (
+        "Check if a $100 meal and a $250 entertainment expense are both within policy",
+        "charlie",
+        "medium",
+    ),
     # Medium-high complexity — 3+ intents, cross-domain
     (
         "Show expense history for EMP001, check the entertainment policy limit, "
@@ -143,7 +159,10 @@ QUERIES = [
 CONVERSATIONS = [
     # Alice: establish preferences, then recall them
     [
-        ("Hi! I'm Alice and I always prefer window seats and Delta flights when possible.", "alice"),
+        (
+            "Hi! I'm Alice and I always prefer window seats and Delta flights when possible.",
+            "alice",
+        ),
         ("Find me flights from SFO to JFK on June 15th", "alice"),
         ("Remember that I have a corporate rate at Marriott hotels", "alice"),
         ("Search for hotels in New York — do you remember my hotel preference?", "alice"),
@@ -195,8 +214,7 @@ def generate_traffic(
 
     if agent_resource_name is None:
         agent_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{AGENT_ENGINE_ID}"
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
         )
 
     agent = agent_engines.get(agent_resource_name)
@@ -269,7 +287,9 @@ def generate_traffic(
     print(f"  Total queries:  {total_queries}")
     print(f"  Errors:         {errors}")
     print("  Users:          alice, bob, charlie")
-    print(f"  By complexity:  {', '.join(f'{k}={v}' for k, v in sorted(complexity_counts.items()))}")
+    print(
+        f"  By complexity:  {', '.join(f'{k}={v}' for k, v in sorted(complexity_counts.items()))}"
+    )
     print("\n  Check Cloud Trace for spans.")
     print("  Memory Bank events saved for users: alice, bob, charlie")
 
@@ -288,8 +308,7 @@ def generate_router_traffic(
 
     if router_resource_name is None:
         router_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{ROUTER_ENGINE_ID}"
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{ROUTER_ENGINE_ID}"
         )
 
     agent = agent_engines.get(router_resource_name)
@@ -328,7 +347,9 @@ def generate_router_traffic(
 
     print(f"\n  Router queries:  {total_queries}")
     print(f"  Errors:          {errors}")
-    print(f"  By complexity:   {', '.join(f'{k}={v}' for k, v in sorted(complexity_counts.items()))}")
+    print(
+        f"  By complexity:   {', '.join(f'{k}={v}' for k, v in sorted(complexity_counts.items()))}"
+    )
 
 
 def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool:
@@ -370,8 +391,7 @@ def generate_steady_traffic(
 
     if agent_resource_name is None:
         agent_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{AGENT_ENGINE_ID}"
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
         )
 
     agent = agent_engines.get(agent_resource_name)
@@ -398,7 +418,9 @@ def generate_steady_traffic(
         batch = random.sample(QUERIES, min(queries_per_interval, len(QUERIES)))
         remaining = int((end_time - time.time()) / 60)
 
-        print(f"[Interval {interval_num}/{total_intervals}] {time.strftime('%H:%M:%S')} — {remaining}min remaining")
+        print(
+            f"[Interval {interval_num}/{total_intervals}] {time.strftime('%H:%M:%S')} — {remaining}min remaining"
+        )
 
         for query, user_id, complexity in batch:
             total_queries += 1
@@ -519,9 +541,7 @@ def generate_load(
                 offered += 1
                 if on_dispatch is not None:
                     on_dispatch(user, message, injected)
-                futures.append(
-                    executor.submit(_do_send, user, message, complexity, injected)
-                )
+                futures.append(executor.submit(_do_send, user, message, complexity, injected))
             sleep(tick_s)
 
     sent = errors = injected_count = 0
@@ -569,9 +589,7 @@ def generate_load(
         from src.observability.metrics import emit_traffic_metrics
 
         try:
-            emit_traffic_metrics(
-                summary, writer=metrics_writer, extra_labels=extra_labels
-            )
+            emit_traffic_metrics(summary, writer=metrics_writer, extra_labels=extra_labels)
             print("  Metrics:      emitted to custom.googleapis.com/agent_traffic/*")
         except Exception as e:  # demo tooling, never fail the run on metrics
             print(f"  Metrics:      emission failed: {e}")
@@ -621,7 +639,7 @@ def generate_scaling_profile(
     ``workers`` defaults high (64) because achieved QPS is capped by
     ``workers / avg_latency`` — the coordinator's multi-second per-query latency
     means a small pool saturates well below the target, flattening the staircase.
-    Size it to roughly ``peak_qps × avg_latency_s`` for the achieved curve to
+    Size it to roughly ``peak_qps x avg_latency_s`` for the achieved curve to
     track the offered one.
 
     ``agent`` and the injectable ``sleep``/``monotonic``/``seed`` behave exactly
@@ -694,7 +712,9 @@ def generate_scaling_profile(
     print(f"\n{'=' * 60}")
     print("SCALING PROFILE COMPLETE")
     print(f"{'=' * 60}")
-    print(f"  Stages:        {len(stage_summaries)} ({', '.join(str(s['target_qps']) for s in stage_summaries)} QPS)")
+    print(
+        f"  Stages:        {len(stage_summaries)} ({', '.join(str(s['target_qps']) for s in stage_summaries)} QPS)"
+    )
     print(f"  Total offered: {result['total_offered']}")
     print(f"  Total sent:    {result['total_sent']}")
     print(f"  Total errors:  {result['total_errors']}")
@@ -706,20 +726,61 @@ def generate_scaling_profile(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate test traffic for OTel traces")
     parser.add_argument("agent", nargs="?", default=None, help="Agent resource name or engine ID")
-    parser.add_argument("--count", type=int, default=1, help="Repeat query set N times (default: 1)")
-    parser.add_argument("--router", action="store_true", help="Also send traffic to the multi-model router")
-    parser.add_argument("--router-only", action="store_true", help="Only send traffic to the multi-model router")
-    parser.add_argument("--steady", action="store_true", help="Run in steady-state mode (continuous traffic over time)")
-    parser.add_argument("--duration", type=int, default=30, help="Steady-state duration in minutes (default: 30)")
-    parser.add_argument("--interval", type=int, default=60, help="Seconds between batches in steady-state mode (default: 60)")
-    parser.add_argument("--qps", type=int, default=3, help="Queries per interval (steady) / target QPS (load)")
+    parser.add_argument(
+        "--count", type=int, default=1, help="Repeat query set N times (default: 1)"
+    )
+    parser.add_argument(
+        "--router", action="store_true", help="Also send traffic to the multi-model router"
+    )
+    parser.add_argument(
+        "--router-only", action="store_true", help="Only send traffic to the multi-model router"
+    )
+    parser.add_argument(
+        "--steady",
+        action="store_true",
+        help="Run in steady-state mode (continuous traffic over time)",
+    )
+    parser.add_argument(
+        "--duration", type=int, default=30, help="Steady-state duration in minutes (default: 30)"
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between batches in steady-state mode (default: 60)",
+    )
+    parser.add_argument(
+        "--qps", type=int, default=3, help="Queries per interval (steady) / target QPS (load)"
+    )
     parser.add_argument("--load", action="store_true", help="Run in concurrent ramped load mode")
-    parser.add_argument("--scaling", action="store_true", help="Run the multi-stage QPS scaling staircase (illustrates scaling)")
-    parser.add_argument("--ramp", type=int, default=0, help="Ramp-up seconds for --load mode (default: 0)")
-    parser.add_argument("--workers", type=int, default=None, help="Concurrent workers (default: 8 for --load, 64 for --scaling)")
-    parser.add_argument("--error-rate", type=float, default=0.0, help="Injected bad-query probability for --load (default: 0.0)")
-    parser.add_argument("--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)")
-    parser.add_argument("--emit-metrics", action="store_true", help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run")
+    parser.add_argument(
+        "--scaling",
+        action="store_true",
+        help="Run the multi-stage QPS scaling staircase (illustrates scaling)",
+    )
+    parser.add_argument(
+        "--ramp", type=int, default=0, help="Ramp-up seconds for --load mode (default: 0)"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Concurrent workers (default: 8 for --load, 64 for --scaling)",
+    )
+    parser.add_argument(
+        "--error-rate",
+        type=float,
+        default=0.0,
+        help="Injected bad-query probability for --load (default: 0.0)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="RNG seed for --load determinism (default: None)"
+    )
+    parser.add_argument(
+        "--emit-metrics",
+        action="store_true",
+        help="Emit agent_traffic/* Cloud Monitoring metrics after a --load run",
+    )
     parser.add_argument(
         "--label",
         action="append",
@@ -735,8 +796,7 @@ if __name__ == "__main__":
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         disable_pyopenssl()
         resource = args.agent or (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{AGENT_ENGINE_ID}"
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
         )
         scaling_agent = agent_engines.get(resource)
         stage_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}
@@ -752,8 +812,7 @@ if __name__ == "__main__":
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         disable_pyopenssl()
         resource = args.agent or (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
-            f"/reasoningEngines/{AGENT_ENGINE_ID}"
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
         )
         load_agent = agent_engines.get(resource)
         load_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}

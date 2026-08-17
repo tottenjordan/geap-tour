@@ -32,7 +32,9 @@ PIPELINE_SPEC = "build/pipeline_specs/eval_pipeline.yaml"
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent-id", default="", help="Existing engine ID; empty deploys a temp engine")
+    parser.add_argument(
+        "--agent-id", default="", help="Existing engine ID; empty deploys a temp engine"
+    )
     parser.add_argument("--agent-module", default="coordinator_agent")
     parser.add_argument("--threshold", type=float, default=3.0)
     parser.add_argument("--skip-traffic", action="store_true")
