@@ -10,7 +10,9 @@ import pandas as pd
 
 from src.eval.trajectory_eval import (
     CoordinatorRunnable,
+    capture_trajectory,
     extract_trajectory,
+    returned_tool_names,
     run_trajectory_eval,
 )
 
@@ -20,6 +22,14 @@ def _fc_event(name, args=None, author="model"):
     return {
         "author": author,
         "content": {"parts": [{"function_call": {"name": name, "args": args or {}}}]},
+    }
+
+
+def _fr_event(name, response=None, author="model"):
+    """A stream_query event dict carrying a single function_response part."""
+    return {
+        "author": author,
+        "content": {"parts": [{"function_response": {"name": name, "response": response or {}}}]},
     }
 
 
@@ -57,6 +67,61 @@ class TestExtractTrajectory:
         assert extract_trajectory([_text_event("hello")]) == []
         assert extract_trajectory([]) == []
         assert extract_trajectory(None) == []
+
+
+class TestReturnedToolNames:
+    def test_collects_names_from_function_response_parts(self):
+        events = [
+            _fc_event("search_flights", {"origin": "SFO"}),
+            _fr_event("search_flights", {"flights": ["FL001"]}),
+            _fr_event("book_flight", {"status": "confirmed"}),
+        ]
+        assert returned_tool_names(events) == {"search_flights", "book_flight"}
+
+    def test_empty_when_no_responses(self):
+        assert returned_tool_names([_fc_event("search_flights")]) == set()
+        assert returned_tool_names([]) == set()
+        assert returned_tool_names(None) == set()
+
+
+class TestCaptureTrajectory:
+    def test_records_returned_flag_per_call(self):
+        events = [
+            _fc_event("search_flights", {"origin": "SFO"}),
+            _fr_event("search_flights", {"flights": ["FL001"]}),
+            _fc_event("book_flight", {"flight_id": "FL001"}),  # called but no response
+        ]
+        traj = capture_trajectory(events)
+        by_name = {c["tool_name"]: c["returned"] for c in traj}
+        assert by_name == {"search_flights": True, "book_flight": False}
+
+    def test_preserves_call_order_and_args(self):
+        events = [
+            _fc_event("search_flights", {"origin": "SFO", "destination": "JFK"}),
+            _fr_event("search_flights"),
+        ]
+        traj = capture_trajectory(events)
+        assert traj[0]["tool_name"] == "search_flights"
+        assert traj[0]["tool_input"] == {"origin": "SFO", "destination": "JFK"}
+
+    def test_filters_transfer_to_agent_by_default(self):
+        events = [
+            _fc_event("transfer_to_agent", {"agent_name": "travel_agent"}),
+            _fc_event("search_hotels", {"city": "Miami"}),
+        ]
+        assert [c["tool_name"] for c in capture_trajectory(events)] == ["search_hotels"]
+
+    def test_include_transfers_keeps_delegation(self):
+        events = [
+            _fc_event("transfer_to_agent", {"agent_name": "travel_agent"}),
+            _fc_event("search_hotels", {"city": "Miami"}),
+        ]
+        names = [c["tool_name"] for c in capture_trajectory(events, include_transfers=True)]
+        assert names == ["transfer_to_agent", "search_hotels"]
+
+    def test_empty_input(self):
+        assert capture_trajectory([]) == []
+        assert capture_trajectory(None) == []
 
 
 class _FakeEngine:

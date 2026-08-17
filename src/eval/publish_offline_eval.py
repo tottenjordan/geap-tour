@@ -197,13 +197,52 @@ def _inject_tool_use_accuracy(batch: dict, agent_id: str | None = None) -> None:
     print(f"  tool_use_accuracy: {score:.3f} (over {result.get('n_scored')} responses)")
 
 
+def _inject_tool_faithfulness(batch: dict, agent_id: str | None = None) -> None:
+    """Score tool-call faithfulness via the grounded judge and splice it in.
+
+    Unlike the other two injectors, faithfulness is scored from the real
+    ``stream_query`` trajectory (:mod:`src.eval.tool_faithfulness`), NOT the
+    SDK ``client.evals`` path — that path yields no trajectory. Splices
+    ``agent_engine_0/tool_faithfulness → {"score": 0-1}`` into the coordinator
+    metrics so the bridge scales it 0-1→1-5 onto ``agent_eval/tool_faithfulness``.
+    Guarded: a failure just leaves faithfulness absent (the bridge skips it).
+
+    ``agent_id`` selects the engine under test (bare id or full resource name),
+    defaulting to ``AGENT_ENGINE_ID`` only when unset — the same contract as the
+    other injectors so a bake-off scores the right deployment.
+    """
+    from src.config import AGENT_ENGINE_ID
+    from src.eval.batch_eval import _resolve_agent_resource_name
+    from src.eval.tool_faithfulness import run_tool_faithfulness_eval
+
+    arn = _resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID)
+    result = run_tool_faithfulness_eval(agent_id=arn)
+    score = result.get("score")
+    if score is None:
+        print(
+            f"  tool_faithfulness: not scored ({result.get('n_scored')}/{result.get('n_total')} cases)"
+        )
+        return
+    metrics = (
+        batch.setdefault("agents", {})
+        .setdefault(DEFAULT_COORDINATOR_AGENT, {})
+        .setdefault("metrics", {})
+    )
+    metrics["agent_engine_0/tool_faithfulness"] = {"score": score}
+    flagged = result.get("flagged") or []
+    print(
+        f"  tool_faithfulness: {score:.3f} (over {result.get('n_scored')} responses; "
+        f"{len(flagged)} flagged)"
+    )
+
+
 def _apply_standalone_judges(batch: dict, agent_id: str | None = None) -> None:
-    """Splice both standalone-judge metrics (policy + tool_use) into ``batch``.
+    """Splice the standalone-judge metrics (policy + tool_use + faithfulness) into ``batch``.
 
     Each judge is best-effort and independently guarded, so one failing never
-    blocks the other or the surrounding publish. Shared by the ``--run`` CLI and
+    blocks the others or the surrounding publish. Shared by the ``--run`` CLI and
     the ``run_all_evals`` publish phase so both paths report the same corrected
-    ``tool_use_accuracy`` (and ``policy_compliance``).
+    ``tool_use_accuracy`` (and ``policy_compliance``) plus ``tool_faithfulness``.
     """
     try:
         _inject_policy_compliance(batch, agent_id=agent_id)
@@ -213,6 +252,10 @@ def _apply_standalone_judges(batch: dict, agent_id: str | None = None) -> None:
         _inject_tool_use_accuracy(batch, agent_id=agent_id)
     except Exception as e:  # tool_use scoring is best-effort
         print(f"  tool_use_accuracy scoring failed: {e}")
+    try:
+        _inject_tool_faithfulness(batch, agent_id=agent_id)
+    except Exception as e:  # faithfulness scoring is best-effort
+        print(f"  tool_faithfulness scoring failed: {e}")
 
 
 def _run_fresh(agent_id: str | None = None) -> dict:
@@ -286,9 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from src.observability.metrics import parse_labels
 
-    published = publish_offline_scores(
-        batch, writer=writer, extra_labels=parse_labels(args.label)
-    )
+    published = publish_offline_scores(batch, writer=writer, extra_labels=parse_labels(args.label))
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
     return 0

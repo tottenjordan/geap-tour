@@ -113,6 +113,11 @@ ALL_MONITORED_METRICS = [
     ("helpfulness", 3.0),
     ("tool_use_accuracy", 3.0),
     ("policy_compliance", 3.0),
+    # Tool-call faithfulness: does the response truthfully reflect the tools that
+    # actually executed? A hallucinated-action detector on the same 1-5 floor.
+    # Unlike the three above (scored on response text via run_inference), this is
+    # scored from the real stream_query trajectory (see src/eval/tool_faithfulness.py).
+    ("tool_faithfulness", 3.0),
 ]
 
 # Router efficiency series (native units, ``agent_router/*``). Unlike coordinator
@@ -149,6 +154,7 @@ ONLINE_MONITORED_METRICS = [
     ("helpfulness", 3.0),
     ("tool_use_accuracy", 3.0),
     ("policy_compliance", 3.0),
+    ("tool_faithfulness", 3.0),
 ]
 
 # Online *infra* series (``agent_online_eval/*``, same family as the online quality

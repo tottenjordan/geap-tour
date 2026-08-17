@@ -95,6 +95,7 @@ def test_bridge_publishes_only_monitored_metric_names():
             "helpfulness": 4.5,
             "tool_use_accuracy": 4.1,
             "policy_compliance": 3.8,
+            "tool_faithfulness": 4.2,
             "some_unmonitored_metric": 2.0,  # must be dropped
         },
         writer=writer,
