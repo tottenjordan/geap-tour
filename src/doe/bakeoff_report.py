@@ -78,7 +78,10 @@ def build_verdict(
     if cand_wr is not None and base_wr is not None:
         sxs_winner = candidate if cand_wr >= base_wr else baseline
         sxs_wr = max(cand_wr, base_wr)
-        parts.append(f"{sxs_winner} wins SxS at {sxs_wr * 100:.0f}%")
+        # Hedge the head-to-head when the sign test says it's within noise.
+        sig = pairwise.get("significance") or {}
+        hedge = " (not significant)" if sig and sig.get("significant") is False else ""
+        parts.append(f"{sxs_winner} wins SxS at {sxs_wr * 100:.0f}%{hedge}")
 
     # Cost: candidate-vs-baseline multiple.
     ratio = _cost_ratio(cost, baseline=baseline, candidate=candidate)

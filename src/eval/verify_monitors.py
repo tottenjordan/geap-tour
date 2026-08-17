@@ -150,8 +150,11 @@ def _summarize(
     scores: list[float], epochs: list[float], threshold: float, comparison: str, now: float
 ) -> dict:
     """Build the per-metric summary dict for one score/epoch bucket."""
+    from src.eval.stats import is_low_confidence
+
     return {
         "eval_count": len(scores),
+        "low_confidence": is_low_confidence(len(scores)),
         "avg_score": round(sum(scores) / len(scores), 3),
         "min_score": round(min(scores), 3),
         "max_score": round(max(scores), 3),
@@ -351,7 +354,8 @@ _SURFACE_TITLES = {
 
 def _print_metric(m: dict, indent: str = "  ") -> None:
     op = ">" if m.get("direction") == "GT" else "<"
-    print(f"{indent}  Evals:  {m['eval_count']}")
+    conf = "  ⚠ low_confidence" if m.get("low_confidence") else ""
+    print(f"{indent}  Evals:  {m['eval_count']}{conf}")
     print(f"{indent}  Avg:    {m['avg_score']}  (min: {m['min_score']}, max: {m['max_score']})")
     print(f"{indent}  P50:    {m['p50_score']}  P90: {m['p90_score']}")
     trend = m["trend"]

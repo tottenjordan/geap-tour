@@ -148,6 +148,8 @@ def test_verify_reads_coordinator_quality_surface():
     assert quality["status"] == "ok"
     assert quality["total_evals"] == 5
     assert quality["metrics"]["helpfulness"]["eval_count"] == 3
+    # Only 3 points in the window -> below the sample floor -> flagged.
+    assert quality["metrics"]["helpfulness"]["low_confidence"] is True
     assert quality["metrics"]["helpfulness"]["avg_score"] == 4.0
     # policy_compliance alerts LT 3.0 -> the 2.0 point is out of bounds.
     assert quality["metrics"]["policy_compliance"]["out_of_bounds"] == 1

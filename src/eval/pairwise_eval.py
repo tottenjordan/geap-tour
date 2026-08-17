@@ -119,23 +119,34 @@ def judge_case(
 
 
 def aggregate_choices(choices: Sequence[str]) -> dict:
-    """Aggregate per-case winners into win/tie rates."""
+    """Aggregate per-case winners into win/tie rates + a sign-test significance block.
+
+    ``significance`` (from :func:`src.eval.stats.win_rate_significance`) reports the
+    candidate's win-rate among *decisive* cases (ties excluded), an exact two-sided
+    binomial p-value against a 50/50 null, and a Wilson CI — so a majority over a
+    handful of cases is not mistaken for a real difference.
+    """
+    from src.eval.stats import win_rate_significance
+
     n = len(choices)
+    cand = sum(1 for c in choices if c == CANDIDATE)
+    base = sum(1 for c in choices if c == BASELINE)
+    ties = sum(1 for c in choices if c == TIE)
+    significance = win_rate_significance(cand, base)
     if n == 0:
         return {
             "n_cases": 0,
             "win_rate_candidate": 0.0,
             "win_rate_baseline": 0.0,
             "tie_rate": 0.0,
+            "significance": significance,
         }
-    cand = sum(1 for c in choices if c == CANDIDATE)
-    base = sum(1 for c in choices if c == BASELINE)
-    ties = sum(1 for c in choices if c == TIE)
     return {
         "n_cases": n,
         "win_rate_candidate": cand / n,
         "win_rate_baseline": base / n,
         "tie_rate": ties / n,
+        "significance": significance,
     }
 
 

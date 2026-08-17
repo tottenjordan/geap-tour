@@ -150,22 +150,31 @@ def sample_interactions(interactions: Sequence, sample_rate: float) -> list:
 
 
 def aggregate_scores(interaction_scores: Sequence[Mapping[str, float]]) -> dict:
-    """Mean each metric over the interactions that produced it.
+    """Mean each metric over the interactions that produced it, with uncertainty.
 
     Returns ``{"scores": {name: mean 0-1}, "counts": {name: n},
-    "n_interactions": N}``. A metric no interaction scored is absent from
-    ``scores`` (so downstream publish emits nothing spurious for it).
+    "ci": {name: (lo, hi)}, "low_confidence": {name: bool},
+    "n_interactions": N}``. ``ci`` is a percentile-bootstrap CI on each mean and
+    ``low_confidence`` flags metrics scored over fewer than the sample floor
+    (:data:`src.eval.stats.MIN_SAMPLES`) — so a mean over 3 interactions is not
+    read with the same trust as one over 300. A metric no interaction scored is
+    absent from ``scores`` (so downstream publish emits nothing spurious for it).
     """
-    sums: dict[str, float] = {}
-    counts: dict[str, int] = {}
+    from src.eval import stats
+
+    values: dict[str, list[float]] = {}
     for scores in interaction_scores:
         for name, value in scores.items():
-            sums[name] = sums.get(name, 0.0) + value
-            counts[name] = counts.get(name, 0) + 1
-    means = {name: sums[name] / counts[name] for name in sums}
+            values.setdefault(name, []).append(value)
+    means = {name: sum(v) / len(v) for name, v in values.items()}
+    counts = {name: len(v) for name, v in values.items()}
+    ci = {name: stats.bootstrap_mean_ci(v) for name, v in values.items()}
+    low_confidence = {name: stats.is_low_confidence(n) for name, n in counts.items()}
     return {
         "scores": means,
         "counts": counts,
+        "ci": ci,
+        "low_confidence": low_confidence,
         "n_interactions": len(interaction_scores),
     }
 
@@ -361,7 +370,13 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
         if mean is None:
             print(f"  {name}: n/a (0 scored)")
         else:
-            print(f"  {name}: {mean:.3f} (0-1) → {_to_monitored_scale(mean)} (1-5) over {count}")
+            ci = agg.get("ci", {}).get(name)
+            ci_str = f"  95% CI [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
+            flag = "  ⚠ low_confidence" if agg.get("low_confidence", {}).get(name) else ""
+            print(
+                f"  {name}: {mean:.3f} (0-1) → {_to_monitored_scale(mean)} (1-5) "
+                f"over {count}{ci_str}{flag}"
+            )
     prefix = "[dry-run] would publish" if dry_run else "published"
     print(f"{prefix}: {json.dumps(result['published'], indent=2, sort_keys=True)}")
 

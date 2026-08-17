@@ -76,6 +76,22 @@ class TestVerdict:
         )
         assert BASELINE in verdict
 
+    def test_sxs_hedges_when_not_significant(self):
+        pw = _pairwise()
+        pw["significance"] = {"significant": False, "p_value": 0.4, "decisive": 9}
+        verdict = br.build_verdict(
+            _quality(), pw, _online(), _cost(), baseline=BASELINE, candidate=CANDIDATE
+        )
+        assert "not significant" in verdict
+
+    def test_sxs_no_hedge_when_significant(self):
+        pw = _pairwise()
+        pw["significance"] = {"significant": True, "p_value": 0.001, "decisive": 20}
+        verdict = br.build_verdict(
+            _quality(), pw, _online(), _cost(), baseline=BASELINE, candidate=CANDIDATE
+        )
+        assert "not significant" not in verdict
+
 
 class TestReport:
     def test_report_has_all_sections(self):
