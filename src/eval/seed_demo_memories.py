@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.config import GCP_PROJECT_ID, GCP_REGION
 from src.eval.verify_cross_session_recall import _drain_stream, _poll_for_facts
 from src.eval.verify_memory import (
     _default_engine_id,
@@ -112,6 +113,7 @@ def run_seed(
     is ``True`` when facts were found (or when ``wait`` is ``False``).
     """
     if agent is None:
+        import vertexai
         from vertexai import agent_engines
 
         # agent_engines.get needs the FULL projects/.../reasoningEngines/<id> name;
@@ -119,6 +121,9 @@ def run_seed(
         # applies the store-API reasoningEngines/<id> form itself.
         from src.eval.batch_eval import _resolve_agent_resource_name
 
+        # init pins the regional endpoint (engines live in GCP_REGION); without it
+        # create_session/stream_query hit the wrong endpoint and 404.
+        vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         agent = agent_engines.get(_resolve_agent_resource_name(engine_id or _default_engine_id()))
 
     # Phase 1: seed every persona's session up front.
