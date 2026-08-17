@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Setup Cloud Logging for the Agent Runtime: a BigQuery sink for agent traces
-# plus the Logs Viewer grant that lets operators actually read the runtime's
-# stdout/stderr logs. The managed runtime auto-routes stdout/stderr to the
-# reasoning_engine_stdout / reasoning_engine_stderr log IDs on the
-# aiplatform.googleapis.com/ReasoningEngine resource (no in-agent setup needed);
-# viewing them in Logs Explorer / the Agent Runtime dashboard requires
-# roles/logging.viewer. See
+# Setup Cloud Logging + Monitoring access for the Agent Runtime: a BigQuery sink
+# for agent traces plus the Viewer grants that let operators actually read the
+# runtime's stdout/stderr logs AND the managed engine metrics. The managed
+# runtime auto-routes stdout/stderr to the reasoning_engine_stdout /
+# reasoning_engine_stderr log IDs and auto-emits request_count / request_latencies
+# / cpu+memory allocation metrics on the aiplatform.googleapis.com/ReasoningEngine
+# resource (no in-agent setup needed); viewing the logs in Logs Explorer / the
+# Agent Runtime dashboard requires roles/logging.viewer, and viewing the metrics
+# + auto "Agent Runtime Overview" dashboard requires roles/monitoring.viewer. See
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/logging
+# https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/monitoring
 set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
 DATASET_NAME="${BQ_DATASET:-geap_workshop_logs}"
 SINK_NAME="${SINK_NAME:-geap-agent-traces}"
-# Principal to grant Logs Viewer. Defaults to the active gcloud account (as a
-# user:); override to grant a group/service account, e.g.
-# LOG_VIEWER_MEMBER="group:demo-team@example.com".
+# Principal to grant the observability Viewer roles (logging + monitoring).
+# Defaults to the active gcloud account (as a user:); override to grant a
+# group/service account, e.g. LOG_VIEWER_MEMBER="group:demo-team@example.com".
 LOG_VIEWER_MEMBER="${LOG_VIEWER_MEMBER:-}"
 # Optional: a ReasoningEngine id to tail for the post-setup log verification.
 AGENT_ENGINE_ID="${AGENT_ENGINE_ID:-}"
@@ -27,6 +30,7 @@ echo "Dataset: $DATASET_NAME"
 echo "[1/4] Enabling APIs..."
 gcloud services enable \
     logging.googleapis.com \
+    monitoring.googleapis.com \
     bigquery.googleapis.com \
     --project="$PROJECT_ID"
 
@@ -61,9 +65,11 @@ if [[ -n "$WRITER_IDENTITY" ]]; then
         2>/dev/null || true
 fi
 
-# Grant Logs Viewer so operators can read the runtime's stdout/stderr logs in
-# Logs Explorer / the Agent Runtime dashboard (the doc's required viewing step).
-echo "[4/4] Granting roles/logging.viewer..."
+# Grant the observability Viewer roles so operators can read the runtime's
+# stdout/stderr logs (Logs Explorer) AND its managed engine metrics + auto "Agent
+# Runtime Overview" dashboard (Metrics Explorer) — the docs' required viewing
+# steps for logging and monitoring.
+echo "[4/4] Granting roles/logging.viewer + roles/monitoring.viewer..."
 if [[ -z "$LOG_VIEWER_MEMBER" ]]; then
     ACTIVE_ACCOUNT=$(gcloud config get-value account 2>/dev/null || true)
     if [[ -n "$ACTIVE_ACCOUNT" && "$ACTIVE_ACCOUNT" != "(unset)" ]]; then
@@ -71,17 +77,20 @@ if [[ -z "$LOG_VIEWER_MEMBER" ]]; then
     fi
 fi
 if [[ -n "$LOG_VIEWER_MEMBER" ]]; then
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="$LOG_VIEWER_MEMBER" \
-        --role="roles/logging.viewer" \
-        --condition=None \
-        --quiet >/dev/null 2>&1 \
-        && echo "  Granted roles/logging.viewer to ${LOG_VIEWER_MEMBER}" \
-        || echo "  Could not grant roles/logging.viewer to ${LOG_VIEWER_MEMBER} (need resourcemanager.projects.setIamPolicy?)"
+    for VIEWER_ROLE in roles/logging.viewer roles/monitoring.viewer; do
+        gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="$LOG_VIEWER_MEMBER" \
+            --role="$VIEWER_ROLE" \
+            --condition=None \
+            --quiet >/dev/null 2>&1 \
+            && echo "  Granted ${VIEWER_ROLE} to ${LOG_VIEWER_MEMBER}" \
+            || echo "  Could not grant ${VIEWER_ROLE} to ${LOG_VIEWER_MEMBER} (need resourcemanager.projects.setIamPolicy?)"
+    done
 else
     echo "  No LOG_VIEWER_MEMBER set and no active gcloud account — skipping."
     echo "  Grant manually: gcloud projects add-iam-policy-binding $PROJECT_ID \\"
     echo "    --member='user:YOU@example.com' --role='roles/logging.viewer'"
+    echo "    (repeat with --role='roles/monitoring.viewer')"
 fi
 
 echo ""

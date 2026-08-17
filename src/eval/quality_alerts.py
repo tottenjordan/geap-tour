@@ -164,6 +164,155 @@ ONLINE_INFRA_METRICS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Managed engine-health alerts — the platform's OWN Reasoning Engine metrics
+# ---------------------------------------------------------------------------
+# Everything above alerts on our custom.googleapis.com/* gauges (self-reported,
+# resource.type="global", and only present while our traffic generator / eval
+# publishers run). These two policies instead alert on the AUTHORITATIVE
+# server-side metrics the Agent Runtime emits automatically on
+# resource.type="aiplatform.googleapis.com/ReasoningEngine": engine request
+# latency and 5xx error rate. They page on genuine engine degradation even with
+# no client-side instrumentation running, and are grouped by reasoning_engine_id
+# so each deployed engine (probe / pinned / bake-off) is evaluated on its own
+# series. This mirrors the runtime monitoring doc's alerting example (p99
+# request latency > 5s). See docs/notes/runtime-monitoring.md.
+ENGINE_RESOURCE_TYPE = "aiplatform.googleapis.com/ReasoningEngine"
+ENGINE_LATENCY_METRIC = "aiplatform.googleapis.com/reasoning_engine/request_latencies"
+ENGINE_REQUEST_COUNT_METRIC = "aiplatform.googleapis.com/reasoning_engine/request_count"
+ENGINE_LATENCY_P99_MS = 5000.0  # request_latencies is milliseconds (doc: "5000ms" = 5s)
+ENGINE_ERROR_RATE = 0.05  # alert when >5% of requests return a 5xx over the window
+
+
+def _engine_scope(engine_id: str | None) -> str:
+    """Resource filter for the managed engine metrics, optionally one engine.
+
+    ``engine_id`` may be a bare id or a full ``.../reasoningEngines/<id>`` name;
+    only the bare id is used in the ``reasoning_engine_id`` resource label.
+    """
+    scope = f'resource.type="{ENGINE_RESOURCE_TYPE}"'
+    if engine_id:
+        bare = engine_id.rsplit("/", 1)[-1]
+        scope += f' AND resource.labels.reasoning_engine_id="{bare}"'
+    return scope
+
+
+def _engine_aggregation() -> monitoring_v3.Aggregation:
+    """5-min ALIGN_RATE, summed per engine — shared by the error-rate ratio."""
+    return monitoring_v3.Aggregation(
+        alignment_period=duration_pb2.Duration(seconds=300),
+        per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_RATE,
+        cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+        group_by_fields=["resource.label.reasoning_engine_id"],
+    )
+
+
+def _build_engine_latency_policy(
+    threshold_ms: float, channels: list[str], *, engine_id: str | None = None
+) -> monitoring_v3.AlertPolicy:
+    """Alert when the engine's p99 request latency exceeds ``threshold_ms``."""
+    condition = monitoring_v3.AlertPolicy.Condition(
+        display_name=f"Engine p99 request latency above {threshold_ms}ms",
+        condition_threshold=monitoring_v3.AlertPolicy.Condition.MetricThreshold(
+            filter=f'metric.type="{ENGINE_LATENCY_METRIC}" AND {_engine_scope(engine_id)}',
+            comparison=_COMPARISONS["GT"],
+            threshold_value=threshold_ms,
+            duration=duration_pb2.Duration(seconds=300),
+            aggregations=[
+                monitoring_v3.Aggregation(
+                    alignment_period=duration_pb2.Duration(seconds=300),
+                    per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_PERCENTILE_99,
+                    cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_MEAN,
+                    group_by_fields=["resource.label.reasoning_engine_id"],
+                )
+            ],
+        ),
+    )
+    return monitoring_v3.AlertPolicy(
+        display_name="GEAP Workshop: engine request latency (p99) alert",
+        documentation=monitoring_v3.AlertPolicy.Documentation(
+            content=(
+                f"Reasoning Engine p99 request latency exceeded {threshold_ms}ms over 5 min. "
+                "This is the platform's server-side latency (not client-measured) — check "
+                "engine health, cold starts, and model-backend latency."
+            ),
+            mime_type="text/markdown",
+        ),
+        conditions=[condition],
+        combiner=monitoring_v3.AlertPolicy.ConditionCombinerType.OR,
+        notification_channels=channels,
+        enabled=True,
+        user_labels=dict(RESOURCE_LABELS),
+    )
+
+
+def _build_engine_error_rate_policy(
+    threshold: float, channels: list[str], *, engine_id: str | None = None
+) -> monitoring_v3.AlertPolicy:
+    """Alert when the 5xx share of requests exceeds ``threshold`` (a ratio).
+
+    Uses a numerator/denominator MetricThreshold: 5xx request_count rate over
+    total request_count rate, so it fires on the *proportion* of failures, not
+    an absolute count (robust to traffic volume).
+    """
+    scope = _engine_scope(engine_id)
+    condition = monitoring_v3.AlertPolicy.Condition(
+        display_name=f"Engine 5xx error rate above {threshold}",
+        condition_threshold=monitoring_v3.AlertPolicy.Condition.MetricThreshold(
+            filter=(
+                f'metric.type="{ENGINE_REQUEST_COUNT_METRIC}" '
+                f'AND metric.labels.response_code_class="5xx" AND {scope}'
+            ),
+            denominator_filter=f'metric.type="{ENGINE_REQUEST_COUNT_METRIC}" AND {scope}',
+            aggregations=[_engine_aggregation()],
+            denominator_aggregations=[_engine_aggregation()],
+            comparison=_COMPARISONS["GT"],
+            threshold_value=threshold,
+            duration=duration_pb2.Duration(seconds=300),
+        ),
+    )
+    return monitoring_v3.AlertPolicy(
+        display_name="GEAP Workshop: engine 5xx error rate alert",
+        documentation=monitoring_v3.AlertPolicy.Documentation(
+            content=(
+                f"Reasoning Engine 5xx responses exceeded {threshold:.0%} of requests over "
+                "5 min (server-side request_count ratio). Check engine logs "
+                "(reasoning_engine_stderr) and recent deploys."
+            ),
+            mime_type="text/markdown",
+        ),
+        conditions=[condition],
+        combiner=monitoring_v3.AlertPolicy.ConditionCombinerType.OR,
+        notification_channels=channels,
+        enabled=True,
+        user_labels=dict(RESOURCE_LABELS),
+    )
+
+
+def create_engine_health_alerts(
+    notification_channel: str | None = None, *, engine_id: str | None = None
+) -> list:
+    """Create alert policies on the platform's managed Reasoning Engine metrics.
+
+    Two policies — p99 request-latency ceiling and 5xx error-rate ceiling — both
+    on ``resource.type="aiplatform.googleapis.com/ReasoningEngine"`` and grouped
+    per engine id. Unlike the custom-metric alerts these fire on the authoritative
+    server-side signal, independent of the client-side traffic generator.
+    """
+    client = monitoring_v3.AlertPolicyServiceClient()
+    project_name = f"projects/{GCP_PROJECT_ID}"
+    channels = [notification_channel] if notification_channel else []
+    results = []
+    for policy in (
+        _build_engine_latency_policy(ENGINE_LATENCY_P99_MS, channels, engine_id=engine_id),
+        _build_engine_error_rate_policy(ENGINE_ERROR_RATE, channels, engine_id=engine_id),
+    ):
+        result = client.create_alert_policy(name=project_name, alert_policy=policy)
+        print(f"✓ Alert policy created: {result.name}")
+        results.append(result)
+    return results
+
+
 def setup_all_alerts(notification_channel: str | None = None) -> list:
     """Create alert policies for every monitored metric (both families)."""
     results = []
@@ -213,6 +362,11 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
             results.append(result)
         except Exception as e:
             print(f"  Warning: failed to create alert for {metric_name}: {e}")
+    # Managed engine-health alerts on the platform's own reasoning_engine metrics.
+    try:
+        results.extend(create_engine_health_alerts(notification_channel))
+    except Exception as e:
+        print(f"  Warning: failed to create engine-health alerts: {e}")
     print(f"\n  {len(results)} alert policies created")
     return results
 

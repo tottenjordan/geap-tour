@@ -84,8 +84,15 @@ def test_setup_all_alerts_covers_all_families(monkeypatch):
         )
         return object()
 
+    engine_health_calls = []
+
+    def _fake_engine_health(notification_channel=None, **kwargs):
+        engine_health_calls.append(notification_channel)
+        return [object(), object()]
+
     monkeypatch.setattr(qa, "create_quality_alert", _fake_create)
-    qa.setup_all_alerts()
+    monkeypatch.setattr(qa, "create_engine_health_alerts", _fake_engine_health)
+    results = qa.setup_all_alerts()
 
     families = {c[3] for c in calls}
     assert families == {"agent_eval", "agent_router", "agent_online_eval"}
@@ -105,3 +112,65 @@ def test_setup_all_alerts_covers_all_families(monkeypatch):
         "policy_compliance",
     }
     assert {c[0] for c in online_infra} == {"infra_empty_rate"}
+    # The managed engine-health alerts are created once (its two policies added
+    # to the result set), on the platform's own metrics — not via the custom
+    # create_quality_alert path.
+    assert engine_health_calls == [None]
+    assert len(results) == len(calls) + 2
+
+
+def test_engine_latency_policy_targets_managed_percentile_metric():
+    from google.cloud import monitoring_v3
+
+    from src.eval.quality_alerts import ENGINE_LATENCY_P99_MS, _build_engine_latency_policy
+
+    p = _build_engine_latency_policy(ENGINE_LATENCY_P99_MS, [])
+    cond = p.conditions[0].condition_threshold
+    # Managed resource + metric — NOT the custom resource.type="global" gauges.
+    assert 'resource.type="aiplatform.googleapis.com/ReasoningEngine"' in cond.filter
+    assert "reasoning_engine/request_latencies" in cond.filter
+    assert 'resource.type="global"' not in cond.filter
+    # p99 latency ceiling (GT) in milliseconds.
+    assert cond.comparison == monitoring_v3.ComparisonType.COMPARISON_GT
+    assert cond.threshold_value == ENGINE_LATENCY_P99_MS
+    assert (
+        cond.aggregations[0].per_series_aligner
+        == monitoring_v3.Aggregation.Aligner.ALIGN_PERCENTILE_99
+    )
+    # Grouped per engine so each deployment is evaluated on its own series.
+    assert "resource.label.reasoning_engine_id" in cond.aggregations[0].group_by_fields
+    assert dict(p.user_labels)
+
+
+def test_engine_error_rate_policy_is_a_ratio_on_5xx():
+    from google.cloud import monitoring_v3
+
+    from src.eval.quality_alerts import ENGINE_ERROR_RATE, _build_engine_error_rate_policy
+
+    p = _build_engine_error_rate_policy(ENGINE_ERROR_RATE, [])
+    cond = p.conditions[0].condition_threshold
+    # Numerator filters to 5xx; denominator is all requests → a proportion.
+    assert 'metric.labels.response_code_class="5xx"' in cond.filter
+    assert "reasoning_engine/request_count" in cond.filter
+    assert cond.denominator_filter
+    assert "reasoning_engine/request_count" in cond.denominator_filter
+    assert 'response_code_class="5xx"' not in cond.denominator_filter
+    # Rate aligners on both numerator and denominator; GT on the ratio ceiling.
+    assert cond.aggregations[0].per_series_aligner == monitoring_v3.Aggregation.Aligner.ALIGN_RATE
+    assert (
+        cond.denominator_aggregations[0].per_series_aligner
+        == monitoring_v3.Aggregation.Aligner.ALIGN_RATE
+    )
+    assert cond.comparison == monitoring_v3.ComparisonType.COMPARISON_GT
+    assert cond.threshold_value == ENGINE_ERROR_RATE
+
+
+def test_engine_policies_can_scope_to_one_engine():
+    from src.eval.quality_alerts import _build_engine_latency_policy
+
+    # A full resource name is accepted; only the bare id lands in the filter.
+    p = _build_engine_latency_policy(
+        5000.0, [], engine_id="projects/p/locations/us-central1/reasoningEngines/12345"
+    )
+    cond = p.conditions[0].condition_threshold
+    assert 'resource.labels.reasoning_engine_id="12345"' in cond.filter

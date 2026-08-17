@@ -34,17 +34,20 @@ stale placeholders).
    [model-armor-security-dashboard.md](./model-armor-security-dashboard.md) for
    the two caveats (custom-MCP ≠ Google-MCP; native-Gemini backbone for richest
    data).
-2. **Cloud Logging — sink, viewer grant, stdout verification** —
+2. **Cloud Logging + Monitoring access — sink, viewer grants, stdout verification** —
    `bash scripts/setup_logging_sink.sh`. The managed Agent Runtime auto-routes
    each engine's stdout/stderr to the `reasoning_engine_stdout` /
-   `reasoning_engine_stderr` log IDs on the
+   `reasoning_engine_stderr` log IDs **and** auto-emits `request_count` /
+   `request_latencies` / cpu+memory allocation metrics on the
    `aiplatform.googleapis.com/ReasoningEngine` resource (no in-agent setup — see
-   the [runtime logging doc](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/logging)),
-   so the script's job is the pipeline + access around them. It: creates the
+   the [runtime logging](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/logging)
+   and [runtime monitoring](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/monitoring)
+   docs), so the script's job is the pipeline + access around them. It: creates the
    BigQuery dataset `geap_workshop_logs` (`BQ_EVAL_DATASET`) and a sink filtered
-   to the ReasoningEngine resource; grants **`roles/logging.viewer`** so operators
-   can actually read the runtime logs in Logs Explorer / the Agent Runtime
-   dashboard (default: the active gcloud account; override with
+   to the ReasoningEngine resource; grants **both `roles/logging.viewer` and
+   `roles/monitoring.viewer`** so operators can actually read the runtime logs in
+   Logs Explorer AND the managed engine metrics + auto "Agent Runtime Overview"
+   dashboard in Metrics Explorer (default: the active gcloud account; override with
    `LOG_VIEWER_MEMBER=group:…`); and prints a `gcloud logging read` verification
    for `reasoning_engine_stdout` (set `AGENT_ENGINE_ID=<id>` to tail a specific
    engine). NOTE: continuous eval no longer requires a hand-created
@@ -66,11 +69,19 @@ stale placeholders).
      (New descriptors can take up to ~10 min to become queryable; in practice
      the alert create below usually succeeds within seconds.)
    - alert policies: `uv run python -m src.eval.quality_alerts all` — the `all`
-     subcommand creates a policy for every metric across all three families:
-     coordinator quality (`agent_eval/*`), online quality (`agent_online_eval/*`,
-     the continuous client-side series), and router efficiency (`agent_router/*`).
-     NOTE: bare `quality_alerts` with no arg only creates the single
-     `helpfulness` policy.
+     subcommand creates a policy for every metric across all three custom families
+     (coordinator quality `agent_eval/*`, online quality `agent_online_eval/*` —
+     the continuous client-side series, and router efficiency `agent_router/*`)
+     **plus two managed engine-health policies** on the platform's own
+     `aiplatform.googleapis.com/reasoning_engine/*` metrics: p99 `request_latencies`
+     > 5000ms and a 5xx `request_count` error-rate ratio > 5% (grouped per
+     `reasoning_engine_id`, so each deployed engine is evaluated on its own series).
+     Unlike the custom-metric alerts these fire on the authoritative server-side
+     signal even with no client-side traffic generator running — matching the
+     runtime monitoring doc's alerting example. NOTE: the managed metrics need
+     no descriptor seeding (the runtime emits them); the custom `agent_eval/*` /
+     `agent_online_eval/*` descriptors still do (the placeholder-write step above).
+     Bare `quality_alerts` with no arg only creates the single `helpfulness` policy.
    - dashboard-as-code: `uv run python -m src.observability.dashboard`
      (idempotent create/update; prints the console deep-link).
 4. **Governance backups (preview-optional, skip if unavailable):**
@@ -176,7 +187,8 @@ uv run python -m src.eval.verify_monitors --format json    # read all three surf
 - `gcloud model-armor templates list --location=us-central1` → geap-workshop-*
 - `bq ls hybrid-vertex:geap_workshop_logs` → dataset exists
 - `gcloud monitoring dashboards list` → the code-defined dashboard present
-- `gcloud alpha monitoring policies list` → `agent_eval/*` alert policies present
+- `gcloud alpha monitoring policies list` → `agent_eval/*` alert policies **and**
+  the two "GEAP Workshop: engine …" managed engine-health policies present
 - deployed engines reachable via `agent_engines.get(<ENGINE_ID>)`
 
 See also [Vertex eval pipeline](./vertex-eval-pipeline.md) and
