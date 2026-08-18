@@ -83,6 +83,33 @@ uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent \
 If quality holds, bake the chosen `COORDINATOR_THINKING_BUDGET` into the deploy;
 if it dips, dial the budget back up.
 
+### A/B result (2026-08-18, `COORDINATOR_THINKING_BUDGET=512`)
+
+Ran the A/B live on the probe engine (in-place `--update` revision, model split
+pinned). **Latency — clear win**, most visible on the multi-tool booking case's
+`llm` bucket (where thinking lands) and warm totals:
+
+| multi-tool booking | baseline | thinking=512 |
+|---|---|---|
+| `llm` bucket | 3.6s / **23.2s** | 9.5s / 8.8s / **5.7s** |
+| warm total | **36.0s** | **13.2s** |
+
+The ~23s uncapped-thinking tail is eliminated; the `llm` bucket is bounded to
+5.7–9.5s and the warm multi-tool total dropped ~2.7×. (Startup still varies with
+cold-start; the cap targets generation, not startup.)
+
+**Quality — holds.** `multi_agent_batch_eval` on the capped engine (49 cases):
+`final_response_quality` 0.79, `hallucination` 0.73, `instruction_following` 0.64,
+`safety` 0.98, `final_response_match` 0.70 — all PASS (floor 0.60). The lone FAIL,
+`tool_use_quality_v1` 0.38, is the **delegation-blind SDK rubric** documented in
+[coordinator-tool-use-quality.md](./coordinator-tool-use-quality.md) (it penalizes
+`transfer_to_agent` routing; the *published* series uses `geap_tool_use` instead),
+i.e. a pre-existing measurement artifact, not a thinking-cap regression.
+
+**Decision:** the probe engine is left on `COORDINATOR_THINKING_BUDGET=512`. Note
+this is now a **baked env var** — a bare `--update` without it silently reverts to
+uncapped thinking (same class as the model-revert trap).
+
 ## Follow-up (not yet done): memory-preload per-invocation cache
 
 The Memory Bank retrieve is the other 3–5s controllable slice, but it is
