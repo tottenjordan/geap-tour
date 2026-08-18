@@ -12,6 +12,7 @@ uv run python -m src.traffic.generate_traffic 8296365537139621888 --steady --dur
 
 import argparse
 import random
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -360,8 +361,57 @@ def generate_router_traffic(
     )
 
 
-def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool:
-    """Send a single query to an agent in a new session. Returns True on success.
+class SessionPool:
+    """Reuse one session per user across many queries.
+
+    ``create_session`` is the throughput ceiling (see docs/plans/2026-08-18-
+    traffic-session-reuse.md): calling it once per query caps sustainable QPS at
+    the session-creation rate. This caches one session id per ``user_id`` so N
+    queries for a user cost 1 ``create_session``. Thread-safe because
+    ``generate_load`` dispatches on a ThreadPoolExecutor.
+    """
+
+    def __init__(self, agent):
+        self._agent = agent
+        self._sessions: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get(self, user_id: str) -> str:
+        with self._lock:
+            sid = self._sessions.get(user_id)
+            if sid is None:
+                sid = self._agent.create_session(user_id=user_id)["id"]
+                self._sessions[user_id] = sid
+            return sid
+
+    def invalidate(self, user_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(user_id, None)
+
+
+_STALE_SESSION_MARKERS = (
+    "session not found",
+    "session terminated",
+    "no session",
+    "404",
+)
+
+
+def _is_stale_session(exc: Exception) -> bool:
+    """True if the exception looks like a dropped/terminated reused session."""
+    msg = str(exc).lower()
+    return any(m in msg for m in _STALE_SESSION_MARKERS)
+
+
+def _send_single_query(
+    agent, query: str, user_id: str, complexity: str, *, session_pool=None
+) -> bool:
+    """Send a single query to an agent. Returns True on success.
+
+    When ``session_pool`` is provided, the user's cached session is reused (one
+    ``create_session`` per user instead of per query — the throughput ceiling);
+    a session that has gone stale is invalidated and the query retried once on a
+    fresh one. With no pool, behavior is unchanged (a new session per call).
 
     Falls back to the client-only raw-SSE reader when the SDK's array-only REST
     parser can't read a recycled engine's NDJSON stream (:mod:`src.eval.raw_stream`)
@@ -369,10 +419,13 @@ def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool
     keeps flowing (and keeps producing server-side spans/metrics) on such an engine.
     """
     try:
-        session = agent.create_session(user_id=user_id)
+        if session_pool is not None:
+            session_id = session_pool.get(user_id)
+        else:
+            session_id = agent.create_session(user_id=user_id)["id"]
         response = agent.stream_query(
             user_id=user_id,
-            session_id=session["id"],
+            session_id=session_id,
             message=query,
         )
         for _chunk in response:
@@ -392,6 +445,22 @@ def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool
             print(f"  x Error (raw fallback): {raw_e}")
             return False
     except Exception as e:
+        # A reused session may have gone stale — drop it and retry once fresh.
+        if session_pool is not None and _is_stale_session(e):
+            session_pool.invalidate(user_id)
+            try:
+                session_id = session_pool.get(user_id)
+                response = agent.stream_query(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=query,
+                )
+                for _chunk in response:
+                    pass
+                return True
+            except Exception as e2:
+                print(f"  x Error (after session refresh): {e2}")
+                return False
         print(f"  x Error: {e}")
         return False
 
@@ -401,6 +470,7 @@ def generate_steady_traffic(
     duration_minutes: int = 30,
     interval_seconds: int = 60,
     queries_per_interval: int = 3,
+    reuse_sessions: bool = True,
 ):
     """Send queries at a steady rate over an extended period.
 
@@ -413,12 +483,14 @@ def generate_steady_traffic(
         duration_minutes: How long to generate traffic (default: 30 min).
         interval_seconds: Seconds between each batch (default: 60s).
         queries_per_interval: Number of queries per interval (default: 3).
+        reuse_sessions: Reuse one session per user across queries (default: True).
     """
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
 
     agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
     agent = agent_engines.get(agent_resource_name)
+    pool = SessionPool(agent) if reuse_sessions else None
     total_queries = 0
     total_errors = 0
     end_time = time.time() + (duration_minutes * 60)
@@ -449,7 +521,7 @@ def generate_steady_traffic(
         for query, user_id, complexity in batch:
             total_queries += 1
             print(f"  ({complexity}) {query[:60]}")
-            if not _send_single_query(agent, query, user_id, complexity):
+            if not _send_single_query(agent, query, user_id, complexity, session_pool=pool):
                 total_errors += 1
 
         if time.time() < end_time:
@@ -494,6 +566,8 @@ def generate_load(
     emit_metrics: bool = False,
     metrics_writer=None,
     extra_labels=None,
+    session_pool=None,
+    reuse_sessions: bool = True,
 ) -> dict:
     """Generate concurrent, ramped synthetic load against a deployed agent.
 
@@ -524,15 +598,24 @@ def generate_load(
     achieved_qps, p50_latency, p95_latency, duration_s.
     """
     rng = random.Random(seed)
-    pool = list(user_pool) if user_pool else ["alice", "bob", "charlie"]
+    users = list(user_pool) if user_pool else ["alice", "bob", "charlie"]
     corpus = queries if queries is not None else QUERIES
+
+    # Reuse one session per user across queries (create_session is the throughput
+    # ceiling) unless a caller opts out. A pool passed in (e.g. by
+    # generate_scaling_profile) is shared so sessions persist across stages.
+    session_pool = (
+        session_pool
+        if session_pool is not None
+        else (SessionPool(agent) if reuse_sessions else None)
+    )
 
     offered = 0
     futures = []
 
     def _do_send(user, message, complexity, injected):
         t0 = monotonic()
-        ok = _send_single_query(agent, message, user, complexity)
+        ok = _send_single_query(agent, message, user, complexity, session_pool=session_pool)
         t1 = monotonic()
         return ok, injected, max(0.0, t1 - t0)
 
@@ -555,7 +638,7 @@ def generate_load(
             credits -= n
             for _ in range(n):
                 injected = rng.random() < error_injection
-                user = rng.choice(pool)
+                user = rng.choice(users)
                 if injected:
                     message = rng.choice(INJECTED_QUERIES)
                     complexity = "injected"
@@ -648,6 +731,7 @@ def generate_scaling_profile(
     metrics_writer=None,
     extra_labels=None,
     on_stage=None,
+    reuse_sessions: bool = True,
 ) -> dict:
     """Run a staircase of QPS stages back-to-back to illustrate scaling.
 
@@ -679,6 +763,10 @@ def generate_scaling_profile(
     """
     stages = stages if stages is not None else SCALING_STAGES
 
+    # One pool shared across every stage so a user's session is created once for
+    # the whole staircase, not recreated per stage (create_session is the ceiling).
+    pool = SessionPool(agent) if reuse_sessions else None
+
     stage_summaries = []
     for i, spec in enumerate(stages):
         target_qps = spec["qps"]
@@ -700,6 +788,7 @@ def generate_scaling_profile(
             sleep=sleep,
             monotonic=monotonic,
             emit_metrics=False,  # emit per-stage below with scaling labels
+            session_pool=pool,
         )
         summary = {**summary, "stage": i, "target_qps": target_qps}
         stage_summaries.append(summary)
@@ -747,7 +836,7 @@ def generate_scaling_profile(
     return result
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate test traffic for OTel traces")
     parser.add_argument("agent", nargs="?", default=None, help="Agent resource name or engine ID")
     parser.add_argument(
@@ -813,7 +902,15 @@ if __name__ == "__main__":
         "(repeatable; e.g. --label model=gemini-3.6-flash keeps two deployments "
         "as separate monitoring series)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--no-reuse-sessions",
+        dest="reuse_sessions",
+        action="store_false",
+        help="Create a fresh session per query instead of reusing one per user "
+        "(reuse is on by default; opt out to restore per-query sessions)",
+    )
+    parser.set_defaults(reuse_sessions=True)
+    args = parser.parse_args(argv)
     extra_labels = parse_labels(args.label)
 
     if args.scaling:
@@ -829,6 +926,7 @@ if __name__ == "__main__":
             seed=args.seed,
             emit_metrics=args.emit_metrics,
             extra_labels=stage_labels,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.load:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
@@ -846,6 +944,7 @@ if __name__ == "__main__":
             seed=args.seed,
             emit_metrics=args.emit_metrics,
             extra_labels=load_labels,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.steady:
         generate_steady_traffic(
@@ -853,6 +952,7 @@ if __name__ == "__main__":
             duration_minutes=args.duration,
             interval_seconds=args.interval,
             queries_per_interval=args.qps,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.router_only:
         generate_router_traffic(count=args.count)
@@ -860,3 +960,7 @@ if __name__ == "__main__":
         generate_traffic(args.agent, count=args.count)
         if args.router:
             generate_router_traffic(count=args.count)
+
+
+if __name__ == "__main__":
+    main()
