@@ -12,6 +12,7 @@ uv run python -m src.traffic.generate_traffic 8296365537139621888 --steady --dur
 
 import argparse
 import random
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -358,6 +359,34 @@ def generate_router_traffic(
     print(
         f"  By complexity:   {', '.join(f'{k}={v}' for k, v in sorted(complexity_counts.items()))}"
     )
+
+
+class SessionPool:
+    """Reuse one session per user across many queries.
+
+    ``create_session`` is the throughput ceiling (see docs/plans/2026-08-18-
+    traffic-session-reuse.md): calling it once per query caps sustainable QPS at
+    the session-creation rate. This caches one session id per ``user_id`` so N
+    queries for a user cost 1 ``create_session``. Thread-safe because
+    ``generate_load`` dispatches on a ThreadPoolExecutor.
+    """
+
+    def __init__(self, agent):
+        self._agent = agent
+        self._sessions: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get(self, user_id: str) -> str:
+        with self._lock:
+            sid = self._sessions.get(user_id)
+            if sid is None:
+                sid = self._agent.create_session(user_id=user_id)["id"]
+                self._sessions[user_id] = sid
+            return sid
+
+    def invalidate(self, user_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(user_id, None)
 
 
 def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool:
