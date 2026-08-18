@@ -15,9 +15,10 @@ def test_main_prints_resource_marker(capsys):
     resource = "projects/p/locations/global/reasoningEngines/123"
     calls = {}
 
-    def fake_deploy(agent, display_name=None):
+    def fake_deploy(agent, display_name=None, *, min_instances=None):
         calls["agent"] = agent
         calls["display_name"] = display_name
+        calls["min_instances"] = min_instances
         return resource
 
     rc = dc.main(
@@ -44,13 +45,14 @@ def test_main_update_flag_calls_update_agent(capsys):
     resource = "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
     calls = {}
 
-    def fake_update(agent, engine_id, display_name=None):
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None):
         calls["agent"] = agent
         calls["engine_id"] = engine_id
         calls["display_name"] = display_name
+        calls["min_instances"] = min_instances
         return resource
 
-    def fake_deploy(agent, display_name=None):
+    def fake_deploy(agent, display_name=None, *, min_instances=None):
         calls["deploy_called"] = True
         return "should-not-be-used"
 
@@ -65,9 +67,32 @@ def test_main_update_flag_calls_update_agent(capsys):
     assert "deploy_called" not in calls  # create path not taken
     assert calls["engine_id"] == "4380288848559603712"
     assert calls["display_name"] == "coordinator-native-gemini37-probe"
+    assert calls["min_instances"] is None  # no floor unless --min-instances given
     out = capsys.readouterr().out
     marker_lines = [ln for ln in out.splitlines() if ln.startswith(dc.RESOURCE_MARKER)]
     assert marker_lines[-1] == f"{dc.RESOURCE_MARKER}{resource}"
+
+
+def test_main_update_threads_min_instances(capsys):
+    # --min-instances N sets a keep-warm floor so the probe engine never scales
+    # to zero (the idle-wedge that returns error-shaped streams). It flows
+    # through update_agent into the deploy config.
+    calls = {}
+
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None):
+        calls["engine_id"] = engine_id
+        calls["min_instances"] = min_instances
+        return "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
+
+    rc = dc.main(
+        ["--update", "4380288848559603712", "--min-instances", "1"],
+        update_fn=fake_update,
+        agent=object(),
+    )
+
+    assert rc == 0
+    assert calls["engine_id"] == "4380288848559603712"
+    assert calls["min_instances"] == 1
 
 
 def test_parse_resource_from_output_reads_last_marker():
