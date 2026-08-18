@@ -364,6 +364,76 @@ def test_score_and_publish_faithfulness_excludes_infra_empty():
     assert result["n_infra_empty"] == 1
 
 
+class _SkewAgent:
+    """Deployed-engine stand-in whose SDK stream raises the array-parse skew.
+
+    Mirrors the live symptom: google-api-core's array-only REST parser raises
+    ``ValueError: Can only parse array of JSON objects`` on an engine that streams
+    NDJSON via ``:streamQuery?alt=sse``. Carries a ``resource_name`` so the raw
+    fallback can address the engine directly.
+    """
+
+    def __init__(self, resource_name="projects/p/locations/us-central1/reasoningEngines/123"):
+        self.resource_name = resource_name
+
+    def create_session(self, *, user_id):
+        return {"id": "sess-1"}
+
+    def stream_query(self, *, user_id, session_id, message):
+        raise ValueError("Can only parse array of JSON objects, instead got {")
+        yield  # pragma: no cover - unreachable, marks this a generator
+
+
+def test_capture_live_interactions_falls_back_to_raw_on_sse_skew(monkeypatch):
+    agent = _SkewAgent()
+    seen = {}
+
+    def fake_capture_pairs(resource_name, prompts, user_id="online-monitor-user", **kw):
+        seen["resource_name"] = resource_name
+        seen["prompts"] = list(prompts)
+        return [(p, "raw text") for p in prompts]
+
+    monkeypatch.setattr(om.raw_stream, "capture_pairs", fake_capture_pairs)
+    pairs = om.capture_live_interactions(agent, ["hi"])
+    assert pairs == [("hi", "raw text")]
+    assert seen["resource_name"] == "projects/p/locations/us-central1/reasoningEngines/123"
+
+
+def test_capture_live_faithfulness_falls_back_to_raw_on_sse_skew(monkeypatch):
+    agent = _SkewAgent()
+
+    def fake_capture_triples(resource_name, prompts, user_id="online-monitor-user", **kw):
+        return [
+            {"prompt": p, "response": "raw", "actual_trajectory": [{"tool_name": "book_flight"}]}
+            for p in prompts
+        ]
+
+    monkeypatch.setattr(om.raw_stream, "capture_triples", fake_capture_triples)
+    triples = om.capture_live_faithfulness(agent, ["Book FL001"])
+    assert triples[0]["response"] == "raw"
+    assert triples[0]["actual_trajectory"][0]["tool_name"] == "book_flight"
+
+
+def test_capture_live_interactions_reraises_unrelated_valueerror(monkeypatch):
+    class _BoomAgent(_SkewAgent):
+        def stream_query(self, *, user_id, session_id, message):
+            raise ValueError("something else entirely")
+            yield  # pragma: no cover
+
+    called = {"raw": False}
+
+    def fake_capture_pairs(*a, **k):
+        called["raw"] = True
+        return []
+
+    monkeypatch.setattr(om.raw_stream, "capture_pairs", fake_capture_pairs)
+    import pytest
+
+    with pytest.raises(ValueError, match="something else entirely"):
+        om.capture_live_interactions(_BoomAgent(), ["hi"])
+    assert called["raw"] is False  # unrelated errors are NOT masked by the fallback
+
+
 def test_run_online_faithfulness_with_fakes():
     client = FakeMetricClient()
     w = MetricsWriter(project_id="proj-x", client=client)

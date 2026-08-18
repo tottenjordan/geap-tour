@@ -110,9 +110,20 @@ def capture_interaction(
     is :func:`capture_trajectory` (ordered tool calls, each with a ``returned``
     flag). No new stream parsing — both surfaces come from the single event list.
     """
+    from src.eval import raw_stream
     from src.traffic.generate_traffic import _extract_text
 
-    events = list(engine.stream_query(user_id=user_id, message=prompt))
+    try:
+        events = list(engine.stream_query(user_id=user_id, message=prompt))
+    except ValueError as exc:
+        # A recycled engine streams NDJSON the SDK's array-only parser can't read;
+        # fall back to the client-only raw-SSE reader (identical event dicts).
+        resource = raw_stream.agent_resource_name(engine)
+        if not raw_stream.is_sse_parse_skew(exc) or not resource:
+            raise
+        return raw_stream.capture_triples(
+            resource, [prompt], user_id=user_id, include_transfers=include_transfers
+        )[0]
     return {
         "prompt": prompt,
         "response": "".join(_extract_text(event) for event in events),

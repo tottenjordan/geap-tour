@@ -100,6 +100,13 @@ file; keep this index short (< 200 lines).
   `setup_governance_policies.sh`). The fallback is now loud, the MCP servers are
   stateless (kills "Session terminated"), and `verify_mcp_tools` detects tool-less
   toolsets.
+- [Agent Engine `stream_query` SSE-parse skew + raw-SSE fallback](./agent-engine-sse-stream-parse.md)
+  — a recycled engine streams NDJSON via `:streamQuery?alt=sse`, but the installed
+  (latest) `google-api-core` ships an **array-only** REST parser, so `stream_query`
+  raises `Can only parse array of JSON objects` on a **healthy** engine. Fix:
+  `src/eval/raw_stream.py`, a client-only raw-SSE reader yielding the same event
+  dicts; the online monitor, faithfulness capture, `demo_readiness`, and steady
+  traffic fall back to it on the skew. No redeploy; engine untouched.
 - [Gemini-3 native model resolution + family-aware Model Armor](./gemini3-native-model-resolution.md)
   — why `resolve_model()` now returns native ADK `Gemini` for Gemini-3 (LiteLlm mangles
   thought signatures) and attaches server-side Model Armor only for Gemini-2.x; the
