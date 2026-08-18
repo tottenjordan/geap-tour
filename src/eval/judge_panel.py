@@ -8,8 +8,8 @@ is the eval, unchecked. Raising the judge temperature to sample it repeatedly
 does not help — the judges are pinned to ``temperature=0`` for reproducibility
 (see :mod:`src.eval.judge_client`), so self-consistency sampling is degenerate.
 
-This module scores each item with a **panel of diverse models** (spanning
-Gemini-2, Gemini-3 and Claude families, so no single family's blind spot decides
+This module scores each item with a **panel of diverse models** (spanning the
+Gemini-2 and Gemini-3 generations, so no single model version's blind spot decides
 the outcome), aggregates per item with the **median** (robust to one contrarian
 judge), and reports **inter-rater reliability** so a low-agreement panel is
 visible rather than silently averaged away:
@@ -39,20 +39,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-# Three diverse judge backbones: a Gemini-2 tier, a Gemini-3 tier, and a Claude
-# tier. Cross-family so a single model family's systematic bias cannot decide the
-# verdict. All run at temperature=0 via judge_client (deterministic).
+# Two diverse Gemini judge backbones spanning generations: a Gemini-2 tier and a
+# Gemini-3 tier. Cross-generation so one model version's systematic bias cannot
+# decide the verdict on its own. Gemini-only because the genai generateContent path
+# the judge client uses only reaches Google-published models (Claude/partner models
+# 404 under publishers/google — see judge_client.resolve_judge_location). All run at
+# temperature=0 via judge_client (deterministic).
 DEFAULT_PANEL_MODELS: tuple[str, ...] = (
     "gemini-2.5-flash",
     "gemini-3.5-flash",
-    "claude-sonnet-4-6",
 )
 
 
 def median_score(scores: Sequence[float | None]) -> float | None:
     """Median of the valid (non-``None``) scores, or ``None`` if none are valid.
 
-    The median is deliberately robust: one contrarian judge in a panel of three
+    The median is deliberately robust: one contrarian judge in a multi-judge panel
     cannot swing the aggregate the way a mean would.
     """
     valid = [float(s) for s in scores if s is not None]

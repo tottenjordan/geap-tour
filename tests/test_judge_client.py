@@ -6,7 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.eval.judge_client import build_judge_generate_fn, generate_with_retry
+from src.eval.judge_client import (
+    build_judge_generate_fn,
+    generate_with_retry,
+    resolve_judge_location,
+)
 
 
 class _Resp:
@@ -117,6 +121,46 @@ def test_build_judge_generate_fn_retries_via_client() -> None:
     )
     assert gen("x") == "Score: 4"
     assert attempts["n"] == 2
+
+
+def test_resolve_judge_location_forces_global_for_gemini_3() -> None:
+    # Gemini-3.x is only served on the global endpoint (regional 404s), so the
+    # requested location is overridden — mirrors src.config.resolve_model.
+    assert resolve_judge_location("gemini-3.5-flash") == "global"
+    assert resolve_judge_location("gemini-3.5-flash", "us-central1") == "global"
+
+
+def test_resolve_judge_location_honors_region_for_gemini_2() -> None:
+    from src.config import GCP_REGION
+
+    assert resolve_judge_location("gemini-2.5-flash") == GCP_REGION
+    assert resolve_judge_location("gemini-2.5-flash", "us-west1") == "us-west1"
+    assert resolve_judge_location("models/gemini-2.0-flash") == GCP_REGION
+
+
+def test_build_judge_generate_fn_targets_global_for_gemini_3() -> None:
+    seen: dict = {}
+
+    class _Models:
+        def generate_content(self, *, model, contents, config):
+            return _Resp("Score: 4")
+
+    def fake_genai_client(*, vertexai, project, location):
+        seen["location"] = location
+        return SimpleNamespace(models=_Models())
+
+    import src.eval.judge_client as jc
+
+    with pytest.MonkeyPatch.context() as mp:
+        # Patch the lazily-imported genai.Client so no real client is built.
+        import google.genai as genai
+
+        mp.setattr(genai, "Client", fake_genai_client)
+        gen = build_judge_generate_fn("gemini-3.5-flash")
+        assert gen("rate this") == "Score: 4"
+
+    assert seen["location"] == "global"
+    assert jc  # module imported for coverage of the real build path
 
 
 if __name__ == "__main__":

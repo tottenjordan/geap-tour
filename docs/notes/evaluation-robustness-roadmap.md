@@ -126,16 +126,28 @@ alert floors (`quality_alerts.py:112-152`).
 ### P1 — medium effort, big robustness
 4. **Judge panel / self-consistency + report agreement.** ✅ **implemented**
    (`src/eval/judge_panel.py`, `tests/test_judge_panel.py`). Shipped as option
-   (a) — a 3-model cross-family panel (`gemini-2.5-flash` + `gemini-3.5-flash` +
-   `claude-sonnet-4-6`, `DEFAULT_PANEL_MODELS`), each pinned to `temperature=0`
-   via the P0 `judge_client` (self-consistency of one temp=0 judge would be
-   degenerate, so the panel spans *models*, not samples). Per item the verdict is
+   (a) — a cross-generation Gemini panel (`gemini-2.5-flash` + `gemini-3.5-flash`,
+   `DEFAULT_PANEL_MODELS`), each pinned to `temperature=0` via the P0 `judge_client`
+   (self-consistency of one temp=0 judge would be degenerate, so the panel spans
+   *models*, not samples). **Gemini-only by necessity:** the genai `generateContent`
+   path `judge_client` uses only reaches Google-published models — a Claude/partner
+   judge resolves to `publishers/google` and 404s (verified live 2026-08-18), so
+   diversity spans Gemini *generations*, not vendors. Gemini-3.5 is judged on the
+   *global* endpoint (`judge_client.resolve_judge_location`, mirroring
+   `config.resolve_model`'s family split; a regional client 404s). Per item the verdict is
    the **median** (robust to one contrarian judge); the batch reports **inter-rater
    reliability** as **Krippendorff's alpha (interval)** plus mean per-item spread.
    Wired as an opt-in path into `policy_judge.run_policy_compliance_eval`
    (`panel=True` / injectable `judges=`); the aggregation core is pure and
    unit-tested with fakes (no GCP). Generic `score_pairs_with_panel` is reusable by
-   the other pointwise judges.
+   the other pointwise judges. **Now also wired into the online monitor**
+   (`online_monitor.score_interaction_panel` + `score_and_publish(judges=…)`,
+   `run_online_monitor(panel=True)`, CLI `--panel`): live `agent_online_eval/*`
+   rubric scores can be the panel **median** instead of the single autorater, and
+   the summary prints per-rubric Krippendorff alpha + mean spread so a
+   low-agreement online panel is visible. This closes the "single managed
+   autorater … online_monitor.py" gap flagged in P0; faithfulness stays
+   single-judge for now (grounded-trajectory judge; panel is future work).
 5. **Confidence intervals + sample-size floors.** Bootstrap CI on each aggregate;
    refuse pass/fail (or mark `low_confidence`) when `n < floor`; add a binomial
    significance test to the pairwise win-rate. Surfaces in `verify_monitors`.
