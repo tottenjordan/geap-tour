@@ -323,6 +323,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not baseline or not candidate:
         parser.error("provide --baseline and --candidate, or --from-manifest")
 
+    # The CLI advertises "engine id or resource name" for both flags (and manifest
+    # ids are bare), but run_inference needs the full resource name. Resolve here at
+    # the boundary (idempotent — a full projects/... name is returned unchanged).
+    from src.eval.batch_eval import _resolve_agent_resource_name
+
+    baseline = _resolve_agent_resource_name(baseline)
+    candidate = _resolve_agent_resource_name(candidate)
+
     config = PairwiseConfig(
         sampling_count=args.sampling_count,
         flip_enabled=not args.no_flip,

@@ -214,3 +214,24 @@ class TestManifest:
         manifest = {"points": [{"assignments": {"model_backend": "gemini"}}]}
         with pytest.raises(ValueError):
             pw.load_engines_from_manifest(manifest)
+
+
+class TestCliEngineResolution:
+    def test_dry_run_resolves_bare_ids_to_full_resource_names(self, capsys):
+        rc = pw.main(["--baseline", "12345", "--candidate", "67890", "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Bare CLI ids must be resolved to the full resource name run_inference needs.
+        assert "reasoningEngines/12345" in out
+        assert "reasoningEngines/67890" in out
+        assert "baseline (gemini):  projects/" in out
+        assert "candidate (claude): projects/" in out
+
+    def test_dry_run_keeps_full_resource_names_unchanged(self, capsys):
+        full = "projects/p/locations/us-central1/reasoningEngines/abc"
+        rc = pw.main(["--baseline", full, "--candidate", full, "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Idempotent: an already-full name is passed through verbatim (no double-wrap).
+        assert "reasoningEngines/reasoningEngines" not in out
+        assert out.count(full) == 2
