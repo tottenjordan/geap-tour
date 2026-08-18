@@ -203,3 +203,27 @@ def test_scaling_shares_one_pool_across_stages():
     )
     # Two stages but sessions persist across them -> still <= distinct users:
     assert len(agent.create_calls) <= 3
+
+
+def test_cli_steady_no_reuse_flag_forwards_false(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(gt, "generate_steady_traffic", lambda **kw: seen.update(kw))
+    gt.main(["ENG", "--steady", "--no-reuse-sessions", "--duration", "1"])
+    assert seen["reuse_sessions"] is False
+
+
+def test_cli_steady_reuse_defaults_true(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(gt, "generate_steady_traffic", lambda **kw: seen.update(kw))
+    gt.main(["ENG", "--steady", "--duration", "1"])
+    assert seen["reuse_sessions"] is True
+
+
+def test_cli_load_no_reuse_flag_forwards_false(monkeypatch):
+    agent = PoolAgent()
+    _patch_engine(monkeypatch, agent)
+    monkeypatch.setattr(gt, "disable_pyopenssl", lambda: None)
+    seen = {}
+    monkeypatch.setattr(gt, "generate_load", lambda *a, **kw: seen.update(kw))
+    gt.main(["ENG", "--load", "--no-reuse-sessions", "--duration", "1"])
+    assert seen["reuse_sessions"] is False

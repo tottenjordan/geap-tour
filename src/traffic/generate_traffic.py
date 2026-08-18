@@ -836,7 +836,7 @@ def generate_scaling_profile(
     return result
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate test traffic for OTel traces")
     parser.add_argument("agent", nargs="?", default=None, help="Agent resource name or engine ID")
     parser.add_argument(
@@ -902,7 +902,15 @@ if __name__ == "__main__":
         "(repeatable; e.g. --label model=gemini-3.6-flash keeps two deployments "
         "as separate monitoring series)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--no-reuse-sessions",
+        dest="reuse_sessions",
+        action="store_false",
+        help="Create a fresh session per query instead of reusing one per user "
+        "(reuse is on by default; opt out to restore per-query sessions)",
+    )
+    parser.set_defaults(reuse_sessions=True)
+    args = parser.parse_args(argv)
     extra_labels = parse_labels(args.label)
 
     if args.scaling:
@@ -918,6 +926,7 @@ if __name__ == "__main__":
             seed=args.seed,
             emit_metrics=args.emit_metrics,
             extra_labels=stage_labels,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.load:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
@@ -935,6 +944,7 @@ if __name__ == "__main__":
             seed=args.seed,
             emit_metrics=args.emit_metrics,
             extra_labels=load_labels,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.steady:
         generate_steady_traffic(
@@ -942,6 +952,7 @@ if __name__ == "__main__":
             duration_minutes=args.duration,
             interval_seconds=args.interval,
             queries_per_interval=args.qps,
+            reuse_sessions=args.reuse_sessions,
         )
     elif args.router_only:
         generate_router_traffic(count=args.count)
@@ -949,3 +960,7 @@ if __name__ == "__main__":
         generate_traffic(args.agent, count=args.count)
         if args.router:
             generate_router_traffic(count=args.count)
+
+
+if __name__ == "__main__":
+    main()
