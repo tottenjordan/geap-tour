@@ -71,7 +71,7 @@ the literal goal. **Executed-but-unreported** tools are the inverse and are left
 out: agents legitimately don't narrate internal calls, so scoring silence as a
 defect is noisy and low-severity. Revisit only if a demo needs it.
 
-## The load-bearing assumption — Branch A vs B (spike-gated, **not yet resolved live**)
+## The load-bearing assumption — Branch A vs B (**RESOLVED LIVE 2026-08-18: Branch A**)
 
 Everything above assumes the *deployed coordinator's* client-side `stream_query`
 surfaces the **nested sub-agent MCP calls** (`search_flights`, `book_flight`, …) —
@@ -95,11 +95,20 @@ coordinator run:
 uv run python -m src.eval.spike_trajectory_visibility --agent-id 4380288848559603712
 ```
 
-**Status:** the spike is committed but **has not been run live** (billable; needs
-GCP). The design is deliberately **Branch-A-first with injectable `engine` /
-`cases` / `include_transfers`**, so the Branch-B fallback is a config change, not a
-rewrite. Run the spike before quoting coordinator-level faithfulness numbers, and
-record the outcome here.
+**Status: RESOLVED LIVE — Branch A.** Ran the spike against the demo probe engine
+`4380288848559603712` (gemini-2.5-flash coordinator) on 2026-08-18 with the
+multi-step prompt *"Book flight FL001 for Alice Johnson, then find a hotel in New
+York under $350"*. The client-side `stream_query` surfaced the **real nested domain
+MCP calls** — `booking_mcp_book_flight(flight_id=FL001, passenger_name=Alice
+Johnson)` and `search_mcp_search_hotels(max_price=350, city=New York)` — each with a
+matching `function_response`, all under `author=coordinator_agent`, plus the final
+text. **No opaque `transfer_to_agent`-only handoff.** So coordinator-level
+faithfulness runs over the real domain trajectory as designed (`extract_trajectory`
+strips any transfer; `capture_trajectory` adds the `returned` flag), and the
+Branch-B fallback (sub-agent engines / `include_transfers=True`) is not needed. The
+design keeps `engine` / `cases` / `include_transfers` injectable regardless, so if a
+future backbone or ADK version stops surfacing nested calls, the fallback is a config
+change, not a rewrite.
 
 ## Caveats
 
@@ -107,9 +116,10 @@ record the outcome here.
   shared `judge_client`); unparseable verdicts are dropped, not zeroed.
 - **Live + billable** — the runner drives real `stream_query` sessions against a
   deployed engine. `--from-json` scores pre-captured IO with no cloud.
-- **Client-side trajectory visibility is the assumption** — see Branch A/B above;
-  it gates whether coordinator-level faithfulness is action-level or
-  delegation-level.
+- **Client-side trajectory visibility** — confirmed **Branch A** live (2026-08-18):
+  the coordinator surfaces nested domain MCP calls client-side, so coordinator-level
+  faithfulness is **action-level** (not merely delegation-level). Re-run the spike if
+  the coordinator backbone or ADK version changes.
 
 Related: [coordinator-tool-use-quality.md](./coordinator-tool-use-quality.md),
 [online-quality-monitor.md](./online-quality-monitor.md),
