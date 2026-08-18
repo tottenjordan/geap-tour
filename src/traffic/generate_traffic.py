@@ -389,8 +389,29 @@ class SessionPool:
             self._sessions.pop(user_id, None)
 
 
-def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool:
-    """Send a single query to an agent in a new session. Returns True on success.
+_STALE_SESSION_MARKERS = (
+    "session not found",
+    "session terminated",
+    "no session",
+    "404",
+)
+
+
+def _is_stale_session(exc: Exception) -> bool:
+    """True if the exception looks like a dropped/terminated reused session."""
+    msg = str(exc).lower()
+    return any(m in msg for m in _STALE_SESSION_MARKERS)
+
+
+def _send_single_query(
+    agent, query: str, user_id: str, complexity: str, *, session_pool=None
+) -> bool:
+    """Send a single query to an agent. Returns True on success.
+
+    When ``session_pool`` is provided, the user's cached session is reused (one
+    ``create_session`` per user instead of per query — the throughput ceiling);
+    a session that has gone stale is invalidated and the query retried once on a
+    fresh one. With no pool, behavior is unchanged (a new session per call).
 
     Falls back to the client-only raw-SSE reader when the SDK's array-only REST
     parser can't read a recycled engine's NDJSON stream (:mod:`src.eval.raw_stream`)
@@ -398,10 +419,13 @@ def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool
     keeps flowing (and keeps producing server-side spans/metrics) on such an engine.
     """
     try:
-        session = agent.create_session(user_id=user_id)
+        if session_pool is not None:
+            session_id = session_pool.get(user_id)
+        else:
+            session_id = agent.create_session(user_id=user_id)["id"]
         response = agent.stream_query(
             user_id=user_id,
-            session_id=session["id"],
+            session_id=session_id,
             message=query,
         )
         for _chunk in response:
@@ -421,6 +445,22 @@ def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool
             print(f"  x Error (raw fallback): {raw_e}")
             return False
     except Exception as e:
+        # A reused session may have gone stale — drop it and retry once fresh.
+        if session_pool is not None and _is_stale_session(e):
+            session_pool.invalidate(user_id)
+            try:
+                session_id = session_pool.get(user_id)
+                response = agent.stream_query(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=query,
+                )
+                for _chunk in response:
+                    pass
+                return True
+            except Exception as e2:
+                print(f"  x Error (after session refresh): {e2}")
+                return False
         print(f"  x Error: {e}")
         return False
 

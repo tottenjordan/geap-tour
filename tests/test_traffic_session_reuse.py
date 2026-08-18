@@ -1,6 +1,6 @@
 import threading
 
-from src.traffic.generate_traffic import SessionPool
+from src.traffic.generate_traffic import SessionPool, _send_single_query
 
 
 class CountingAgent:
@@ -59,3 +59,60 @@ def test_pool_thread_safe_single_create_under_concurrency():
     for t in threads:
         t.join()
     assert agent.create_calls == ["alice"]  # lock => created exactly once
+
+
+class PoolAgent(CountingAgent):
+    """create_session (counted) + a stream_query that records the session used."""
+
+    def __init__(self):
+        super().__init__()
+        self.streamed = []  # (session_id, message)
+
+    def stream_query(self, *, user_id, session_id, message):
+        self.streamed.append((session_id, message))
+        return iter([{"text": "ok"}])
+
+
+def test_send_single_query_reuses_pool_session():
+    agent = PoolAgent()
+    pool = SessionPool(agent)
+    for i in range(4):
+        assert _send_single_query(agent, f"q{i}", "alice", "low", session_pool=pool)
+    assert agent.create_calls == ["alice"]  # one session for 4 queries
+    assert len({s for s, _ in agent.streamed}) == 1  # all on the same session
+
+
+def test_send_single_query_without_pool_is_unchanged():
+    agent = PoolAgent()
+    for i in range(3):
+        assert _send_single_query(agent, f"q{i}", "alice", "low")
+    assert agent.create_calls == ["alice", "alice", "alice"]  # per-query (legacy)
+
+
+class StaleOnceAgent(PoolAgent):
+    """Only the FIRST distinct session id is stale; the recreated one works.
+
+    Retry-once semantics: the first session that stream_query ever sees fails
+    with a stale-session error; every later (recreated) session succeeds.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._stale_sid = None
+
+    def stream_query(self, *, user_id, session_id, message):
+        if self._stale_sid is None:
+            self._stale_sid = session_id
+            raise RuntimeError("404 Session not found or terminated")
+        self.streamed.append((session_id, message))
+        return iter([{"text": "ok"}])
+
+
+def test_stale_session_invalidates_and_retries_once():
+    agent = StaleOnceAgent()
+    pool = SessionPool(agent)
+    # First call: sid#1 fails stale -> invalidate -> sid#2 is created and succeeds.
+    ok = _send_single_query(agent, "q", "alice", "low", session_pool=pool)
+    assert ok is True
+    assert len(agent.create_calls) == 2  # recreated once after the stale error
+    assert len({s for s, _ in agent.streamed}) == 1  # served on the fresh session
