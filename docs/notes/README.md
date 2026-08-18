@@ -71,7 +71,12 @@ file; keep this index short (< 200 lines).
   `tool_use_judge` explicitly can't cover — `run_inference` yields text but no
   trajectory); publishes `agent_eval/tool_faithfulness` (offline) +
   `agent_online_eval/tool_faithfulness` (online), floor 3.0. Load-bearing Branch-A/B
-  trajectory-visibility fork is spike-gated and **not yet resolved live**.
+  trajectory-visibility fork **resolved live 2026-08-18 → Branch A** (nested domain
+  MCP calls visible client-side, so coordinator faithfulness is action-level).
+- [Tool-call faithfulness — the console demo](./tool-faithfulness-demo.md) — a
+  curated 5-case dataset (`src/eval/data/faithfulness_demo.json`) where look-alike
+  confident responses differ only in the executed trajectory; the eval catches 3
+  fabrications → 2.60/5, below the floor, moving the console tile + firing the alert.
 - [Coordinator `tool_use_quality` ~0.27: root-cause finding](./coordinator-tool-use-quality.md)
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
