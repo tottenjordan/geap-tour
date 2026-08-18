@@ -91,6 +91,17 @@ class TestParseHallucinated:
         assert parse_hallucinated_actions("Score: 5") == []
         assert parse_hallucinated_actions(None) == []
 
+    def test_uses_last_match_when_reasoning_restates_marker(self):
+        # Judges say "HALLUCINATED" mid-reasoning before the final contract line;
+        # the parser must read the LAST occurrence, mirroring the score parser.
+        verdict = (
+            "2. Mark each FAITHFUL or HALLUCINATED (none executed).\n"
+            "The book_flight tool was not executed.\n"
+            "Hallucinated: submit_expense\n"
+            "Score: 1"
+        )
+        assert parse_hallucinated_actions(verdict) == ["submit_expense"]
+
 
 # --------------------------------------------------------------------------- #
 # Capture

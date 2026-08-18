@@ -76,16 +76,17 @@ def parse_faithfulness_score(text: str | None) -> float | None:
 def parse_hallucinated_actions(text: str | None) -> list[str]:
     """Parse the judge's ``Hallucinated: a, b`` line → ``["a", "b"]``.
 
-    ``NONE`` (case-insensitive) or an absent line yields ``[]``. Only the first
-    line after the marker is read, and markdown emphasis / stray punctuation is
-    stripped from each name.
+    ``NONE`` (case-insensitive) or an absent line yields ``[]``. Uses the *last*
+    match — like :func:`parse_faithfulness_score`, judges restate "HALLUCINATED"
+    while reasoning before the final verdict line, so the last occurrence is the
+    contract line. Markdown emphasis / stray punctuation is stripped from each name.
     """
     if not text:
         return []
-    match = _HALLUCINATED_RE.search(str(text))
-    if not match:
+    matches = _HALLUCINATED_RE.findall(str(text))
+    if not matches:
         return []
-    payload = match.group(1).splitlines()[0].strip().lstrip("*: ").strip()
+    payload = str(matches[-1]).splitlines()[0].strip().lstrip("*: ").strip()
     if not payload or payload.upper().startswith("NONE"):
         return []
     items = [item.strip().strip("*`.").strip() for item in payload.split(",")]
