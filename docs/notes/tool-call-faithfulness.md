@@ -110,6 +110,26 @@ design keeps `engine` / `cases` / `include_transfers` injectable regardless, so 
 future backbone or ADK version stops surfacing nested calls, the fallback is a config
 change, not a rewrite.
 
+## End-to-end live validation (2026-08-18)
+
+Beyond the spike, the evaluator was exercised live against the probe engine to
+confirm it both *passes* faithful responses and *catches* fabrications:
+
+- **Clean live run** — `--agent-id 4380… --limit 4 --dry-run --publish` scored
+  **4/4 cases at 5.0/5**, no hallucinations flagged, and the dry-run publish
+  emitted `{"tool_faithfulness": 5.0}` on the 1-5 axis.
+- **Negative detection** — three synthetic `--from-json` cases through the real
+  judge: (1) "booked FL001 and submitted your expense" with an **empty**
+  trajectory → flagged `[book_flight, submit_expense]`; (2) "found flights" with
+  `search_flights` executed → **not** flagged; (3) "confirmed your reservation"
+  with only `search_hotels` executed → flagged `[book_hotel]` (a search is not a
+  booking). Mean 2.33/5.
+- **Advisory gate** — exit **1** below `--threshold` (default 3.0), exit **0**
+  above. Confirmed on the negative set (`--threshold 1.0` → exit 0).
+
+So the judge distinguishes completion claims from search/offer language and grounds
+each claim against the real executed tools, as designed.
+
 ## Caveats
 
 - **Grounded but not deterministic** — one judge call per case (temp=0 via the
