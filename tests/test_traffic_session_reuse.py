@@ -1,5 +1,6 @@
 import threading
 
+import src.traffic.generate_traffic as gt
 from src.traffic.generate_traffic import SessionPool, _send_single_query
 
 
@@ -116,3 +117,33 @@ def test_stale_session_invalidates_and_retries_once():
     assert ok is True
     assert len(agent.create_calls) == 2  # recreated once after the stale error
     assert len({s for s, _ in agent.streamed}) == 1  # served on the fresh session
+
+
+def _patch_engine(monkeypatch, agent):
+    """Stub out the cloud plumbing generate_steady_traffic uses to get an agent."""
+    monkeypatch.setattr(gt.vertexai, "init", lambda **_: None)
+    monkeypatch.setattr(
+        gt, "_resolve_engine_resource", lambda a, d: "projects/x/reasoningEngines/1"
+    )
+    monkeypatch.setattr(gt.agent_engines, "get", lambda name: agent)
+
+
+def test_steady_passes_a_session_pool(monkeypatch):
+    agent = PoolAgent()
+    _patch_engine(monkeypatch, agent)
+    monkeypatch.setattr(gt.time, "sleep", lambda s: None)
+    # Advance the clock past end_time after the first batch so exactly one query
+    # is sent, then the loop stops (first two time.time() calls seed end_time and
+    # enter the loop; every later call is far past end_time).
+    times = iter([0.0, 0.0])
+    monkeypatch.setattr(gt.time, "time", lambda: next(times, 1_000_000.0))
+
+    seen = {}
+
+    def spy(a, q, u, c, *, session_pool=None):
+        seen["pool"] = session_pool
+        return True
+
+    monkeypatch.setattr(gt, "_send_single_query", spy)
+    gt.generate_steady_traffic(duration_minutes=1, interval_seconds=999, queries_per_interval=1)
+    assert isinstance(seen["pool"], gt.SessionPool)

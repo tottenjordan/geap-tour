@@ -470,6 +470,7 @@ def generate_steady_traffic(
     duration_minutes: int = 30,
     interval_seconds: int = 60,
     queries_per_interval: int = 3,
+    reuse_sessions: bool = True,
 ):
     """Send queries at a steady rate over an extended period.
 
@@ -482,12 +483,14 @@ def generate_steady_traffic(
         duration_minutes: How long to generate traffic (default: 30 min).
         interval_seconds: Seconds between each batch (default: 60s).
         queries_per_interval: Number of queries per interval (default: 3).
+        reuse_sessions: Reuse one session per user across queries (default: True).
     """
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
 
     agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
     agent = agent_engines.get(agent_resource_name)
+    pool = SessionPool(agent) if reuse_sessions else None
     total_queries = 0
     total_errors = 0
     end_time = time.time() + (duration_minutes * 60)
@@ -518,7 +521,7 @@ def generate_steady_traffic(
         for query, user_id, complexity in batch:
             total_queries += 1
             print(f"  ({complexity}) {query[:60]}")
-            if not _send_single_query(agent, query, user_id, complexity):
+            if not _send_single_query(agent, query, user_id, complexity, session_pool=pool):
                 total_errors += 1
 
         if time.time() < end_time:
