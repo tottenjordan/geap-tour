@@ -132,6 +132,38 @@ def score_interaction(
     return out
 
 
+def score_interaction_panel(
+    prompt: str,
+    response: str,
+    judges: Sequence[Callable[[str], str]],
+    metrics: Sequence[str] | None = None,
+) -> tuple[dict[str, float], dict[str, list[float | None]]]:
+    """Score one ``(prompt, response)`` with a DIVERSE JUDGE PANEL per rubric.
+
+    Like :func:`score_interaction`, but each rubric is scored by *every* judge in
+    ``judges`` and aggregated with the robust **median** (one contrarian judge
+    cannot swing the aggregate the way a mean would) — the same cross-generation
+    Gemini panel the offline judges use (:mod:`src.eval.judge_panel`), so the online surface is
+    no longer a single autorater's unchecked verdict. Returns ``(medians,
+    per_judge)``: ``medians`` is ``{name: 0-1}`` for every rubric whose panel
+    produced at least one parseable score (the median is dropped, not zeroed, when
+    all judges failed), and ``per_judge`` is ``{name: [score|None, ...]}`` (one
+    entry per judge, in panel order) so downstream can compute inter-rater
+    reliability (:func:`src.eval.judge_panel.panel_reliability`).
+    """
+    from src.eval.judge_panel import score_with_panel
+
+    names = list(metrics) if metrics is not None else list(RUBRIC_BUILDERS)
+    medians: dict[str, float] = {}
+    per_judge: dict[str, list[float | None]] = {}
+    for name in names:
+        result = score_with_panel(RUBRIC_BUILDERS[name](prompt, response), judges, parse_score)
+        per_judge[name] = result["per_judge"]
+        if result["median"] is not None:
+            medians[name] = result["median"]
+    return medians, per_judge
+
+
 def is_infra_empty(response: str) -> bool:
     """True for an empty / error-shaped response — an infra failure, not low quality.
 
@@ -266,7 +298,8 @@ def publish_infra_empty_rate(
 def score_and_publish(
     pairs: Sequence[tuple[str, str]],
     *,
-    generate_fn: Callable[[str], str],
+    generate_fn: Callable[[str], str] | None = None,
+    judges: Sequence[Callable[[str], str]] | None = None,
     sample_rate: float = 1.0,
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
@@ -277,15 +310,40 @@ def score_and_publish(
     The shared core of both CLI paths (live ``stream_query`` and ``--from-json``).
     Infra-empty responses (empty-at-200 / error-shaped) are separated *before*
     judging so they never drag the quality mean; they are counted toward
-    ``infra_empty_rate`` and published as a distinct infra signal. Returns
-    ``{"aggregate", "published", "infra_published", "n_captured", "n_sampled",
-    "n_infra_empty", "infra_empty_rate"}``. When ``dry_run`` is set, scores are
-    still computed and returned but nothing is written to Cloud Monitoring.
+    ``infra_empty_rate`` and published as a distinct infra signal.
+
+    Scoring uses either a **single** judge (``generate_fn``) or a **diverse
+    panel** (``judges`` — the cross-generation median-of-panel scorer, see
+    :func:`score_interaction_panel`); pass exactly one. In panel mode the returned
+    ``aggregate`` carries an extra ``"reliability"`` block (per-rubric Krippendorff
+    alpha + mean disagreement) so a low-agreement panel is visible rather than
+    silently averaged. Returns ``{"aggregate", "published", "infra_published",
+    "n_captured", "n_sampled", "n_infra_empty", "infra_empty_rate"}``. When
+    ``dry_run`` is set, scores are still computed and returned but nothing is
+    written to Cloud Monitoring.
     """
+    if generate_fn is None and judges is None:
+        raise ValueError("score_and_publish requires either generate_fn or judges")
     sampled = sample_interactions(pairs, sample_rate)
     real, empty = partition_interactions(sampled)
-    per_interaction = [score_interaction(p, r, generate_fn) for p, r in real]
-    agg = aggregate_scores(per_interaction)
+    if judges is not None:
+        from src.eval.judge_panel import panel_reliability
+
+        per_interaction: list[dict[str, float]] = []
+        per_judge_rows: dict[str, list[list[float | None]]] = {n: [] for n in RUBRIC_BUILDERS}
+        for p, r in real:
+            medians, per_judge = score_interaction_panel(p, r, judges)
+            per_interaction.append(medians)
+            for name, row in per_judge.items():
+                per_judge_rows[name].append(row)
+        agg = aggregate_scores(per_interaction)
+        agg["reliability"] = {n: panel_reliability(rows) for n, rows in per_judge_rows.items()}
+    else:
+        assert (
+            generate_fn is not None
+        )  # guaranteed by the guard above; narrows for the type checker
+        per_interaction = [score_interaction(p, r, generate_fn) for p, r in real]
+        agg = aggregate_scores(per_interaction)
     n_infra_empty = len(empty)
     infra_empty_rate = (n_infra_empty / len(sampled)) if sampled else 0.0
     agg["n_infra_empty"] = n_infra_empty
@@ -500,14 +558,21 @@ def run_online_monitor(
     dry_run: bool = False,
     agent=None,
     generate_fn: Callable[[str], str] | None = None,
+    panel: bool = False,
+    judges: Sequence[Callable[[str], str]] | None = None,
 ) -> dict:
     """Sample live coordinator traffic, score it, and publish ``agent_online_eval/*``.
 
     Drives the probe prompts (or ``prompts``, capped at ``n_interactions``)
-    against the deployed engine, captures responses client-side, samples, scores
-    with the judge model, and publishes. ``agent``/``generate_fn``/``writer`` are
-    injectable so the pipeline is testable; the CLI wires the real deployed engine
-    and the google.genai judge.
+    against the deployed engine, captures responses client-side, samples, scores,
+    and publishes. ``agent``/``generate_fn``/``judges``/``writer`` are injectable
+    so the pipeline is testable; the CLI wires the real deployed engine and the
+    google.genai judge.
+
+    With ``panel=True`` (or an explicit ``judges`` list) each response is scored by
+    the diverse multi-model :func:`src.eval.judge_panel.build_panel` (median of the
+    panel + inter-rater reliability) instead of the single ``judge_model``
+    autorater — the same higher-trust scoring the offline judges use.
     """
     from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION
 
@@ -525,6 +590,18 @@ def run_online_monitor(
         agent = agent_engines.get(_resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID))
 
     pairs = capture_live_interactions(agent, probe)
+    if panel or judges is not None:
+        from src.eval.judge_panel import build_panel
+
+        members = judges if judges is not None else build_panel()
+        return score_and_publish(
+            pairs,
+            judges=members,
+            sample_rate=sample_rate,
+            writer=writer,
+            extra_labels=extra_labels,
+            dry_run=dry_run,
+        )
     gen = generate_fn or _default_generate_fn(judge_model, None, None)
     return score_and_publish(
         pairs,
@@ -560,9 +637,12 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
     agg = result["aggregate"]
     n_empty = result.get("n_infra_empty", 0)
     empty_rate = result.get("infra_empty_rate", 0.0)
+    reliability = agg.get("reliability")
+    mode = "diverse judge panel (median)" if reliability else "single judge"
     print(
-        f"\nOnline quality monitor: scored {result['n_sampled']}/{result['n_captured']} "
-        f"captured interactions ({agg['n_interactions']} judged)"
+        f"\nOnline quality monitor [{mode}]: scored "
+        f"{result['n_sampled']}/{result['n_captured']} captured interactions "
+        f"({agg['n_interactions']} judged)"
     )
     print(
         f"  infra-empty (empty-at-200 / error-shaped, excluded from quality): "
@@ -581,6 +661,15 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
                 f"  {name}: {mean:.3f} (0-1) → {_to_monitored_scale(mean)} (1-5) "
                 f"over {count}{ci_str}{flag}"
             )
+            rel = (reliability or {}).get(name)
+            if rel and rel.get("n_judges", 0) >= 2:
+                alpha = rel.get("alpha")
+                alpha_str = "nan" if alpha is None or alpha != alpha else f"{alpha:.3f}"
+                print(
+                    f"      panel IRR: Krippendorff alpha={alpha_str}, "
+                    f"mean spread={rel.get('mean_spread', 0.0):.3f} "
+                    f"over {rel.get('n_judges')} judges"
+                )
     prefix = "[dry-run] would publish" if dry_run else "published"
     print(f"{prefix}: {json.dumps(result['published'], indent=2, sort_keys=True)}")
 
@@ -634,6 +723,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help="judge model id")
     parser.add_argument(
+        "--panel",
+        action="store_true",
+        help="score the quality rubrics with the DIVERSE MULTI-MODEL JUDGE PANEL "
+        "(median of gemini-2.5-flash + gemini-3.5-flash + "
+        "inter-rater reliability) instead of the single --judge-model autorater; "
+        "does not apply to --faithfulness",
+    )
+    parser.add_argument(
         "--faithfulness",
         action="store_true",
         help="score TOOL-CALL FAITHFULNESS (claimed vs actually-executed tools) instead of the "
@@ -675,13 +772,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.from_json:
         pairs = _load_pairs(args.from_json)
-        result = score_and_publish(
-            pairs,
-            generate_fn=_default_generate_fn(args.judge_model, None, None),
-            sample_rate=args.sample_rate,
-            extra_labels=extra_labels,
-            dry_run=args.dry_run,
-        )
+        if args.panel:
+            from src.eval.judge_panel import build_panel
+
+            result = score_and_publish(
+                pairs,
+                judges=build_panel(),
+                sample_rate=args.sample_rate,
+                extra_labels=extra_labels,
+                dry_run=args.dry_run,
+            )
+        else:
+            result = score_and_publish(
+                pairs,
+                generate_fn=_default_generate_fn(args.judge_model, None, None),
+                sample_rate=args.sample_rate,
+                extra_labels=extra_labels,
+                dry_run=args.dry_run,
+            )
     else:
         result = run_online_monitor(
             agent_id=args.agent_id,
@@ -690,6 +798,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             judge_model=args.judge_model,
             extra_labels=extra_labels,
             dry_run=args.dry_run,
+            panel=args.panel,
         )
 
     _print_summary(result, dry_run=args.dry_run)

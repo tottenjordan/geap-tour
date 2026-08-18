@@ -146,13 +146,15 @@ class TestBuildPanel:
         assert len(panel) == 3
         assert panel[0]("x") == "m1:x"
 
-    def test_default_models_are_diverse_families(self) -> None:
-        # A panel must span >1 model family so a single-family blind spot can't
-        # dominate the verdict.
-        families = {m.split("-")[0] for m in jp.DEFAULT_PANEL_MODELS}
-        assert "gemini" in families
-        assert "claude" in families
-        assert len(jp.DEFAULT_PANEL_MODELS) >= 3
+    def test_default_models_are_diverse_generations(self) -> None:
+        # A panel must span >1 model generation so a single version's blind spot
+        # can't dominate the verdict. Gemini-only: the genai generateContent path
+        # the judge client uses can't reach partner models like Claude (they 404
+        # under publishers/google), so diversity is cross-generation, not cross-vendor.
+        assert all(m.startswith("gemini") for m in jp.DEFAULT_PANEL_MODELS)
+        generations = {m.split("-")[1].split(".")[0] for m in jp.DEFAULT_PANEL_MODELS}
+        assert generations == {"2", "3"}  # spans Gemini-2 and Gemini-3
+        assert len(jp.DEFAULT_PANEL_MODELS) >= 2
 
 
 def _parse_1_5(text: str) -> float | None:

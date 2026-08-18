@@ -34,6 +34,26 @@ DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BACKOFF_S = 2.0
 
 
+def resolve_judge_location(judge_model: str, location: str | None = None) -> str:
+    """Pick the Vertex endpoint a ``google.genai`` judge client must target.
+
+    Mirrors the family split in :func:`src.config.resolve_model`: **Gemini-3.x**
+    models are only served on the **global** endpoint (a regional client 404s), so
+    force ``global`` for them regardless of the requested ``location``; **Gemini-2.x**
+    (and ``models/`` ids) are served regionally, so honor ``location`` or fall back
+    to the repo's default region. Only Gemini backbones are reachable through the
+    genai ``generateContent`` path this client uses (partner models such as Claude
+    resolve to ``publishers/google`` and 404), so the judge panel is Gemini-only.
+    """
+    if judge_model.startswith("gemini-3"):
+        return "global"
+    if location:
+        return location
+    from src.config import GCP_REGION
+
+    return GCP_REGION
+
+
 def generate_with_retry(
     call: Callable[[], object],
     *,
@@ -90,12 +110,12 @@ def build_judge_generate_fn(
     if client is None:
         from google import genai
 
-        from src.config import GCP_PROJECT_ID, GCP_REGION
+        from src.config import GCP_PROJECT_ID
 
         client = genai.Client(
             vertexai=True,
             project=project or GCP_PROJECT_ID,
-            location=location or GCP_REGION,
+            location=resolve_judge_location(judge_model, location),
         )
 
     config = types.GenerateContentConfig(temperature=temperature)

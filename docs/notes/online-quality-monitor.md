@@ -96,6 +96,14 @@ uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --dry-run
 # Stamp a series label (e.g. per-model, for a bake-off)
 uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --label model=gemini-3.6-flash
 
+# Score with the DIVERSE MULTI-MODEL JUDGE PANEL (median + inter-rater reliability)
+# instead of the single autorater — higher-trust online scores, prints per-rubric
+# Krippendorff alpha + mean spread (roadmap P1.4, now wired online). Panel is
+# Gemini-only (gemini-2.5-flash + gemini-3.5-flash): the genai generateContent path
+# the judge client uses can't reach partner models like Claude, so diversity spans
+# Gemini generations, not vendors. Gemini-3.5 is judged on the global endpoint.
+uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --panel
+
 # Read it back — third block alongside coordinator_quality + router_efficiency
 uv run python -m src.eval.verify_monitors --format json
 ```
@@ -110,8 +118,20 @@ widgets (aggregate + per-`model` breakdown) chart the series live.
 - **Self-driven probe traffic by default:** the live CLI drives a small
   cross-domain probe set (`ONLINE_PROBE_PROMPTS`) so a demo run exercises all
   three rubrics. In production you'd feed real sampled traffic via `--from-json`.
-- **Gemini-only judge:** scoring uses a single `gemini-2.5-flash` autorater
-  (`--judge-model` overridable), same as the standalone judges — not a panel.
+- **Single autorater by default, panel opt-in:** scoring uses a single
+  `gemini-2.5-flash` autorater (`--judge-model` overridable), same as the
+  standalone judges. Pass `--panel` to score the rubrics with the diverse
+  cross-generation Gemini panel (`judge_panel.build_panel`: `gemini-2.5-flash` +
+  `gemini-3.5-flash`) — per-item **median** (robust to one contrarian judge) plus
+  per-rubric **Krippendorff alpha** + mean spread so a low-agreement panel is
+  visible rather than silently averaged. The panel is **Gemini-only**: the genai
+  `generateContent` path the judge client uses only reaches Google-published models
+  (a Claude/partner judge resolves to `publishers/google` and 404s — verified live
+  2026-08-18), so panel diversity spans Gemini **generations**, not vendors.
+  Gemini-3.5 is judged on the **global** endpoint (regional 404s;
+  `judge_client.resolve_judge_location` mirrors `config.resolve_model`'s family
+  split). Panel mode is N× the judge cost (one call per judge per rubric);
+  faithfulness (`--faithfulness`) stays single-judge for now.
 - **Client-side sampling cost:** every scored interaction is one LLM judge call
   per rubric; `--sample-rate` bounds that cost. Sampling is a fixed stride, so a
   low rate scores a reproducible subset, not a random one.

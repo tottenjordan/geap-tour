@@ -378,3 +378,77 @@ def test_run_online_faithfulness_with_fakes():
     )
     assert result["published"] == {"tool_faithfulness": 5.0}
     assert result["n_captured"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Judge panel (diverse multi-model) — the online surface is no longer a single
+# autorater's unchecked verdict (roadmap P1.4 wired into online eval).
+# --------------------------------------------------------------------------- #
+def test_score_interaction_panel_medians_across_judges():
+    # three judges score 3, 5, 4 on every rubric → median 4 → 0.8
+    judges = [lambda _p: "Score: 3", lambda _p: "Score: 5", lambda _p: "Score: 4"]
+    medians, per_judge = om.score_interaction_panel("p", "r", judges)
+    assert medians == {"helpfulness": 0.8, "tool_use_accuracy": 0.8, "policy_compliance": 0.8}
+    # per-judge rows preserved (in panel order) for inter-rater reliability
+    assert per_judge["helpfulness"] == [0.6, 1.0, 0.8]
+    assert all(len(row) == 3 for row in per_judge.values())
+
+
+def test_score_interaction_panel_uses_robust_median_not_mean():
+    # one contrarian judge (Score 1) cannot swing the median off 4/5=0.8
+    judges = [lambda _p: "Score: 4", lambda _p: "Score: 4", lambda _p: "Score: 1"]
+    medians, _ = om.score_interaction_panel("p", "r", judges)
+    assert medians["helpfulness"] == 0.8
+
+
+def test_score_interaction_panel_drops_metric_when_all_judges_unparseable():
+    judges = [lambda _p: "no verdict", lambda _p: "still nothing"]
+    medians, per_judge = om.score_interaction_panel("p", "r", judges)
+    assert medians == {}
+    assert per_judge["helpfulness"] == [None, None]
+
+
+def test_score_and_publish_panel_publishes_medians_and_reliability():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    pairs = [("p1", "r1"), ("p2", "r2")]
+    judges = [lambda _p: "Score: 4", lambda _p: "Score: 4", lambda _p: "Score: 5"]
+    result = om.score_and_publish(pairs, judges=judges, writer=w)
+    # per-item median of [0.8, 0.8, 1.0] = 0.8 → 4.0 on the 1-5 axis
+    assert result["published"]["helpfulness"] == 4.0
+    agg = result["aggregate"]
+    assert "reliability" in agg
+    rel = agg["reliability"]["helpfulness"]
+    assert rel["n_judges"] == 3
+    # per-item spread = 1.0 - 0.8 = 0.2, constant across the two items
+    assert abs(rel["mean_spread"] - 0.2) < 1e-9
+    assert isinstance(rel["alpha"], float)
+
+
+def test_score_and_publish_panel_dry_run_writes_nothing():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    judges = [lambda _p: "Score: 5"]
+    result = om.score_and_publish([("p", "r")], judges=judges, writer=w, dry_run=True)
+    assert client.calls == []
+    assert result["published"] == {}
+    assert result["aggregate"]["scores"]["helpfulness"] == 1.0
+    assert "reliability" in result["aggregate"]
+
+
+def test_score_and_publish_requires_generate_fn_or_judges():
+    import pytest
+
+    with pytest.raises(ValueError, match="generate_fn or judges"):
+        om.score_and_publish([("p", "r")])
+
+
+def test_run_online_monitor_panel_uses_injected_judges_and_agent():
+    client = FakeMetricClient()
+    w = MetricsWriter(project_id="proj-x", client=client)
+    agent = _FakeAgent({"hi": [_text_event("hello there")], "bye": [_text_event("goodbye")]})
+    judges = [lambda _p: "Score: 4", lambda _p: "Score: 5"]
+    result = om.run_online_monitor(agent=agent, judges=judges, prompts=["hi", "bye"], writer=w)
+    # per-item median of [0.8, 1.0] = 0.9 → 4.5 on the 1-5 axis
+    assert result["published"]["helpfulness"] == 4.5
+    assert result["aggregate"]["reliability"]["helpfulness"]["n_judges"] == 2
