@@ -53,6 +53,20 @@ def _extract_text(event) -> str:
     return text_attr if isinstance(text_attr, str) else ""
 
 
+def _resolve_engine_resource(agent_resource_name: str | None, default_engine_id: str) -> str:
+    """Full ``reasoningEngines`` resource name from a supplied value or the default.
+
+    Accepts ``None`` (fall back to ``default_engine_id``), a **bare engine id**, or
+    an already-full ``projects/.../reasoningEngines/<id>`` name (returned
+    unchanged). The CLI/callers advertise "resource name or engine ID", but
+    ``agent_engines.get`` needs the full name — previously only the ``None`` case
+    produced one, so a supplied bare id 404'd. Delegates to the canonical resolver.
+    """
+    from src.eval.batch_eval import _resolve_agent_resource_name
+
+    return _resolve_agent_resource_name(agent_resource_name or default_engine_id)
+
+
 QUERIES = [
     # Travel — happy path
     ("Find me flights from SFO to JFK on June 15th", "alice", "low"),
@@ -212,10 +226,7 @@ def generate_traffic(
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     disable_pyopenssl()
 
-    if agent_resource_name is None:
-        agent_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
-        )
+    agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
     agent = agent_engines.get(agent_resource_name)
     total_queries = len(QUERIES) * count
@@ -306,10 +317,7 @@ def generate_router_traffic(
     """
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
 
-    if router_resource_name is None:
-        router_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{ROUTER_ENGINE_ID}"
-        )
+    router_resource_name = _resolve_engine_resource(router_resource_name, ROUTER_ENGINE_ID)
 
     agent = agent_engines.get(router_resource_name)
     total_queries = len(QUERIES) * count
@@ -408,10 +416,7 @@ def generate_steady_traffic(
     """
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
 
-    if agent_resource_name is None:
-        agent_resource_name = (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
-        )
+    agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
     agent = agent_engines.get(agent_resource_name)
     total_queries = 0
@@ -814,9 +819,7 @@ if __name__ == "__main__":
     if args.scaling:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         disable_pyopenssl()
-        resource = args.agent or (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
-        )
+        resource = _resolve_engine_resource(args.agent, AGENT_ENGINE_ID)
         scaling_agent = agent_engines.get(resource)
         stage_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}
         generate_scaling_profile(
@@ -830,9 +833,7 @@ if __name__ == "__main__":
     elif args.load:
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
         disable_pyopenssl()
-        resource = args.agent or (
-            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{AGENT_ENGINE_ID}"
-        )
+        resource = _resolve_engine_resource(args.agent, AGENT_ENGINE_ID)
         load_agent = agent_engines.get(resource)
         load_labels = {"engine_id": resource.rsplit("/", 1)[-1], **extra_labels}
         generate_load(
