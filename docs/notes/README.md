@@ -112,3 +112,9 @@ file; keep this index short (< 200 lines).
   thought signatures) and attaches server-side Model Armor only for Gemini-2.x; the
   fork's gemini-3.7 migration findings assessed, ADK pinned to 2.6.3, and an untested
   native-Gemini hypothesis for the coordinator outage.
+- [Coordinator latency attribution + thinking-budget knob](./coordinator-latency-attribution.md)
+  — `latency_probe.py` buckets the ~17s p50 by phase: MCP tools are cheap (0.2–1.1s),
+  **startup/time-to-first-event dominates** (3.6–13.3s) and Memory Bank preload adds
+  3–5s/turn. Ships opt-in `COORDINATOR_THINKING_BUDGET` / `COORDINATOR_MAX_OUTPUT_TOKENS`
+  knobs (regional-Gemini path only, default unset = no change) + the live A/B to
+  validate before changing the served default; memory-preload cache is a follow-up.
