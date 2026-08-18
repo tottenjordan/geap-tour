@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from google.genai.types import Content, Part
 
+from src import config as src_config
 from src.armor.config import (
     MAX_INPUT_LENGTH,
     REJECTION_MESSAGE,
@@ -96,6 +97,67 @@ class TestModelArmorConfig:
         # Safe default: no model → no server-side armor.
         config = get_armored_generate_config()
         assert config.model_armor_config is None
+
+
+class TestGenerationLatencyKnobs:
+    """The opt-in thinking/max-output-tokens knobs (regional-Gemini path only)."""
+
+    def test_no_knobs_by_default(self, monkeypatch):
+        # Unset knobs preserve prior behavior: armor present, no thinking/token caps.
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", None)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", None)
+        cfg = get_armored_generate_config("gemini-2.5-flash")
+        assert cfg.model_armor_config is not None
+        assert cfg.thinking_config is None
+        assert cfg.max_output_tokens is None
+
+    def test_thinking_budget_applied_on_regional_gemini(self, monkeypatch):
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", 0)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", None)
+        cfg = get_armored_generate_config("gemini-2.5-flash")
+        assert cfg.thinking_config is not None
+        assert cfg.thinking_config.thinking_budget == 0
+        assert cfg.model_armor_config is not None  # armor still attached
+
+    def test_max_output_tokens_applied_on_regional_gemini(self, monkeypatch):
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", None)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", 512)
+        cfg = get_armored_generate_config("gemini-2.5-flash")
+        assert cfg.max_output_tokens == 512
+
+    def test_knobs_ignored_for_gemini_3(self, monkeypatch):
+        # Gemini-3 resolves generation config natively/global — knobs must not leak.
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", 0)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", 512)
+        cfg = get_armored_generate_config("gemini-3.5-flash")
+        assert cfg.thinking_config is None
+        assert cfg.max_output_tokens is None
+        assert cfg.model_armor_config is None
+
+    def test_knobs_ignored_for_claude(self, monkeypatch):
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", 0)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", 512)
+        cfg = get_armored_generate_config("claude-sonnet-4-6")
+        assert cfg.thinking_config is None
+        assert cfg.max_output_tokens is None
+
+
+class TestOptionalIntEnv:
+    def test_unset_is_none(self, monkeypatch):
+        monkeypatch.delenv("GEAP_TEST_OPTINT", raising=False)
+        assert src_config._optional_int_env("GEAP_TEST_OPTINT") is None
+
+    def test_blank_is_none(self, monkeypatch):
+        monkeypatch.setenv("GEAP_TEST_OPTINT", "  ")
+        assert src_config._optional_int_env("GEAP_TEST_OPTINT") is None
+
+    def test_zero_parses(self, monkeypatch):
+        monkeypatch.setenv("GEAP_TEST_OPTINT", "0")
+        assert src_config._optional_int_env("GEAP_TEST_OPTINT") == 0
+
+    def test_invalid_is_none(self, monkeypatch):
+        monkeypatch.setenv("GEAP_TEST_OPTINT", "notanint")
+        assert src_config._optional_int_env("GEAP_TEST_OPTINT") is None
 
 
 class TestEntryPointGuardrails:

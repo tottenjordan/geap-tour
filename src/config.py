@@ -134,6 +134,29 @@ PROMPT_VARIANT = os.environ.get("PROMPT_VARIANT", "gepa")
 ENABLE_MEMORY_BANK = os.environ.get("ENABLE_MEMORY_BANK", "1") not in ("0", "false", "False", "")
 
 
+def _optional_int_env(name: str) -> int | None:
+    """Parse an optional int env var; unset/blank/invalid → None (feature off)."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+# Coordinator generation-config latency knobs (opt-in; default unset = no change).
+# On the Gemini-2.x path (regional endpoint) the coordinator runs with uncapped
+# default "thinking", which dominates time-to-first-token (empirically the largest
+# controllable slice of the ~17s p50 — see docs/notes/coordinator-latency-attribution.md).
+# COORDINATOR_THINKING_BUDGET caps/disables it (0 = off, -1 = dynamic, N = token
+# cap); COORDINATOR_MAX_OUTPUT_TOKENS caps the response length. Both are attached
+# ONLY on the regional-Gemini backbone by src.armor.config.get_armored_generate_config,
+# and only when explicitly set — an unset var preserves current behavior exactly.
+COORDINATOR_THINKING_BUDGET = _optional_int_env("COORDINATOR_THINKING_BUDGET")
+COORDINATOR_MAX_OUTPUT_TOKENS = _optional_int_env("COORDINATOR_MAX_OUTPUT_TOKENS")
+
+
 def resolve_model(model_str: str):
     """Resolve a model string to an ADK-compatible model.
 

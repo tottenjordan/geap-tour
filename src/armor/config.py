@@ -17,9 +17,10 @@ Provides three layers of protection:
 import os
 import re
 
-from google.genai.types import GenerateContentConfig, ModelArmorConfig
+from google.genai.types import GenerateContentConfig, ModelArmorConfig, ThinkingConfig
 from opentelemetry import trace
 
+from src import config
 from src.config import GCP_PROJECT_ID, GCP_REGION
 
 
@@ -56,10 +57,25 @@ def get_armored_generate_config(model: str | None = None) -> GenerateContentConf
     TEMPLATE_NOT_FOUND) and Claude runs via LiteLlm, so server-side armor is omitted
     for both; the client-side guardrail (``guardrail_with_telemetry``) is the
     guaranteed enforcement layer. See docs/notes/model-armor-security-dashboard.md.
+
+    On the same regional-Gemini path we also attach the opt-in latency knobs
+    (``COORDINATOR_THINKING_BUDGET`` / ``COORDINATOR_MAX_OUTPUT_TOKENS``) when set —
+    uncapped default "thinking" dominates the coordinator's time-to-first-token
+    (see docs/notes/coordinator-latency-attribution.md). Unset knobs preserve the
+    prior behavior exactly. They are gated to the regional path because Gemini-3
+    (native/global) and Claude (LiteLlm) resolve generation config differently; the
+    probe backbone that carries the latency is regional gemini-2.5-flash.
     """
-    if _is_regional_gemini(model):
-        return GenerateContentConfig(model_armor_config=get_model_armor_config())
-    return GenerateContentConfig()
+    if not _is_regional_gemini(model):
+        return GenerateContentConfig()
+
+    budget = config.COORDINATOR_THINKING_BUDGET
+    thinking = ThinkingConfig(thinking_budget=budget) if budget is not None else None
+    return GenerateContentConfig(
+        model_armor_config=get_model_armor_config(),
+        thinking_config=thinking,
+        max_output_tokens=config.COORDINATOR_MAX_OUTPUT_TOKENS,
+    )
 
 
 # --- Client-side guardrail callback ---
