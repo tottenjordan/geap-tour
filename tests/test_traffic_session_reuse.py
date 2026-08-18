@@ -2,6 +2,7 @@ import threading
 
 import src.traffic.generate_traffic as gt
 from src.traffic.generate_traffic import SessionPool, _send_single_query
+from tests.test_traffic_load import FakeClock
 
 
 class CountingAgent:
@@ -147,3 +148,58 @@ def test_steady_passes_a_session_pool(monkeypatch):
     monkeypatch.setattr(gt, "_send_single_query", spy)
     gt.generate_steady_traffic(duration_minutes=1, interval_seconds=999, queries_per_interval=1)
     assert isinstance(seen["pool"], gt.SessionPool)
+
+
+def test_generate_load_reuse_caps_create_sessions():
+    agent = PoolAgent()
+    clock = FakeClock()
+    summary = gt.generate_load(
+        agent,
+        target_qps=5,
+        duration_s=2.0,
+        ramp_s=0,
+        workers=4,
+        user_pool=["alice", "bob", "charlie"],
+        seed=1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        reuse_sessions=True,
+    )
+    assert summary["sent"] > 3
+    # create_session called at most once per distinct user, NOT once per query:
+    assert set(agent.create_calls) <= {"alice", "bob", "charlie"}
+    assert len(agent.create_calls) <= 3
+
+
+def test_generate_load_no_reuse_is_per_query():
+    agent = PoolAgent()
+    clock = FakeClock()
+    summary = gt.generate_load(
+        agent,
+        target_qps=5,
+        duration_s=2.0,
+        ramp_s=0,
+        workers=4,
+        user_pool=["alice"],
+        seed=1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        reuse_sessions=False,
+    )
+    assert len(agent.create_calls) == summary["sent"]  # one session per query
+
+
+def test_scaling_shares_one_pool_across_stages():
+    agent = PoolAgent()
+    clock = FakeClock()
+    stages = [{"qps": 3, "duration_s": 1.0}, {"qps": 3, "duration_s": 1.0}]
+    gt.generate_scaling_profile(
+        agent,
+        stages=stages,
+        workers=4,
+        seed=1,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+    # Two stages but sessions persist across them -> still <= distinct users:
+    assert len(agent.create_calls) <= 3

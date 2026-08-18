@@ -566,6 +566,8 @@ def generate_load(
     emit_metrics: bool = False,
     metrics_writer=None,
     extra_labels=None,
+    session_pool=None,
+    reuse_sessions: bool = True,
 ) -> dict:
     """Generate concurrent, ramped synthetic load against a deployed agent.
 
@@ -596,15 +598,24 @@ def generate_load(
     achieved_qps, p50_latency, p95_latency, duration_s.
     """
     rng = random.Random(seed)
-    pool = list(user_pool) if user_pool else ["alice", "bob", "charlie"]
+    users = list(user_pool) if user_pool else ["alice", "bob", "charlie"]
     corpus = queries if queries is not None else QUERIES
+
+    # Reuse one session per user across queries (create_session is the throughput
+    # ceiling) unless a caller opts out. A pool passed in (e.g. by
+    # generate_scaling_profile) is shared so sessions persist across stages.
+    session_pool = (
+        session_pool
+        if session_pool is not None
+        else (SessionPool(agent) if reuse_sessions else None)
+    )
 
     offered = 0
     futures = []
 
     def _do_send(user, message, complexity, injected):
         t0 = monotonic()
-        ok = _send_single_query(agent, message, user, complexity)
+        ok = _send_single_query(agent, message, user, complexity, session_pool=session_pool)
         t1 = monotonic()
         return ok, injected, max(0.0, t1 - t0)
 
@@ -627,7 +638,7 @@ def generate_load(
             credits -= n
             for _ in range(n):
                 injected = rng.random() < error_injection
-                user = rng.choice(pool)
+                user = rng.choice(users)
                 if injected:
                     message = rng.choice(INJECTED_QUERIES)
                     complexity = "injected"
@@ -720,6 +731,7 @@ def generate_scaling_profile(
     metrics_writer=None,
     extra_labels=None,
     on_stage=None,
+    reuse_sessions: bool = True,
 ) -> dict:
     """Run a staircase of QPS stages back-to-back to illustrate scaling.
 
@@ -751,6 +763,10 @@ def generate_scaling_profile(
     """
     stages = stages if stages is not None else SCALING_STAGES
 
+    # One pool shared across every stage so a user's session is created once for
+    # the whole staircase, not recreated per stage (create_session is the ceiling).
+    pool = SessionPool(agent) if reuse_sessions else None
+
     stage_summaries = []
     for i, spec in enumerate(stages):
         target_qps = spec["qps"]
@@ -772,6 +788,7 @@ def generate_scaling_profile(
             sleep=sleep,
             monotonic=monotonic,
             emit_metrics=False,  # emit per-stage below with scaling labels
+            session_pool=pool,
         )
         summary = {**summary, "stage": i, "target_qps": target_qps}
         stage_summaries.append(summary)
