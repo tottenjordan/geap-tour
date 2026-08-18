@@ -1,10 +1,15 @@
-"""Diagnostic spike: what tool calls does a deployed engine surface client-side?
+"""Diagnostic: what tool calls does a deployed engine surface client-side?
 
-**Throwaway** — this resolves ONE design question for the tool-call faithfulness
-evaluator (:mod:`src.eval.tool_faithfulness`): when we drive the *deployed
-coordinator* via ``stream_query``, does the event stream carry the nested
-sub-agent MCP calls (``search_flights``, ``book_flight``, …), or only the
-top-level ``transfer_to_agent`` delegation?
+Resolves ONE design question for the tool-call faithfulness evaluator
+(:mod:`src.eval.tool_faithfulness`): when we drive the *deployed coordinator* via
+``stream_query``, does the event stream carry the nested sub-agent MCP calls
+(``search_flights``, ``book_flight``, …), or only the top-level
+``transfer_to_agent`` delegation?
+
+Resolved **Branch A** live 2026-08-18 (see docs/notes/tool-call-faithfulness.md).
+Kept (not deleted) as the re-run tool the docs point to if a future backbone or
+ADK version changes what the coordinator surfaces client-side; it now shares the
+raw-SSE skew fallback so it works against a recycled engine.
 
 - **Branch A** — nested MCP calls are visible client-side → faithfulness runs at
   the coordinator level over the real domain tools.
@@ -15,9 +20,7 @@ top-level ``transfer_to_agent`` delegation?
 
 It drives one multi-step prompt (guaranteed ≥2 domain tools) and prints, per
 event, the author, the part keys, and every ``function_call`` / ``function_response``
-name. **Read-only**: no metric writes, no memory writes. Record the outcome in
-``docs/notes/tool-call-faithfulness.md`` and delete this module once the design is
-settled.
+name. **Read-only**: no metric writes, no memory writes.
 
 Run:
     uv run python -m src.eval.spike_trajectory_visibility --agent-id <ENGINE_ID>
@@ -53,6 +56,29 @@ def _part_summary(part: dict) -> str:
         preview = str(text).strip().replace("\n", " ")[:80]
         bits.append(f'text="{preview}"')
     return "  ".join(bits)
+
+
+def stream_events(engine, prompt: str, *, user_id: str) -> list[dict]:
+    """One ``stream_query`` pass → raw event dicts, with the SSE-skew fallback.
+
+    A recycled engine streams NDJSON the SDK's array-only parser rejects with a
+    ``ValueError`` ("Can only parse array of JSON objects"); fall back to the
+    client-only raw-SSE reader (identical event dicts) exactly like
+    :func:`src.eval.tool_faithfulness.capture_interaction`. Any other ``ValueError``
+    (or a resource we can't resolve) propagates unchanged.
+    """
+    from src.eval import raw_stream
+
+    try:
+        return list(engine.stream_query(user_id=user_id, message=prompt))
+    except ValueError as exc:
+        resource = raw_stream.agent_resource_name(engine)
+        if not raw_stream.is_sse_parse_skew(exc) or not resource:
+            raise
+        sid = raw_stream.create_session(resource, user_id)
+        return raw_stream.stream_query_events(
+            resource, message=prompt, user_id=user_id, session_id=sid
+        )
 
 
 def describe_events(events) -> None:
@@ -106,7 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Prompt: {args.prompt}\n")
 
     engine = agent_engines.get(resource)
-    events = list(engine.stream_query(user_id=args.user_id, message=args.prompt))
+    events = stream_events(engine, args.prompt, user_id=args.user_id)
     describe_events(events)
     return 0
 
