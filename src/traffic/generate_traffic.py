@@ -353,7 +353,13 @@ def generate_router_traffic(
 
 
 def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool:
-    """Send a single query to an agent in a new session. Returns True on success."""
+    """Send a single query to an agent in a new session. Returns True on success.
+
+    Falls back to the client-only raw-SSE reader when the SDK's array-only REST
+    parser can't read a recycled engine's NDJSON stream (:mod:`src.eval.raw_stream`)
+    — the same engine-side traffic, just parsed client-side — so steady traffic
+    keeps flowing (and keeps producing server-side spans/metrics) on such an engine.
+    """
     try:
         session = agent.create_session(user_id=user_id)
         response = agent.stream_query(
@@ -364,6 +370,19 @@ def _send_single_query(agent, query: str, user_id: str, complexity: str) -> bool
         for _chunk in response:
             pass
         return True
+    except ValueError as e:
+        from src.eval import raw_stream
+
+        resource = raw_stream.agent_resource_name(agent)
+        if not raw_stream.is_sse_parse_skew(e) or not resource:
+            print(f"  x Error: {e}")
+            return False
+        try:
+            raw_stream.capture_pairs(resource, [query], user_id=user_id)
+            return True
+        except Exception as raw_e:
+            print(f"  x Error (raw fallback): {raw_e}")
+            return False
     except Exception as e:
         print(f"  x Error: {e}")
         return False

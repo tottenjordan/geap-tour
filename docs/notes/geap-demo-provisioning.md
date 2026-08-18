@@ -110,12 +110,29 @@ uv run python -m src.eval.verify_monitors --format json    # read all three surf
 
 ## Run of show (the four money-shots)
 
+> **T-5min — warm the engine FIRST (do not skip).** A managed engine that has
+> been idle scales its container to zero and cold-starts empty: the first several
+> `stream_query` calls return **empty-at-200** (HTTP 200, 0 chars) before it warms.
+> Observed live 2026-08-18 — a lightly-probed idle engine ran **50–83% infra-empty**,
+> and the online faithfulness pass recovered `0/6 → 4/6` scorable *only as traffic
+> accumulated across cycles*. This is cold-start, **not** a wedged engine or a model
+> regression (see [[online-helpfulness-dips-are-empty-streams]]), so a *recycle*
+> (`deploy_coordinator --update`, in-place) is a heavier last resort — warming is the
+> first move. Drive ~2–3 min of traffic before any live probe / online-monitor /
+> cross-session-recall step so the presenter never demos into an empty stream:
+> ```bash
+> uv run python -m src.traffic.generate_traffic <ENGINE_ID> \
+>   --steady --duration 3 --interval 20 --qps 3   # warm-up only (no --emit-metrics)
+> ```
+
 1. **Scale / enabler — traffic.** Start the load generator so every board moves:
    ```bash
    uv run python -m src.traffic.generate_traffic <ENGINE_ID> \
      --load --qps 5 --duration 15 --ramp 60 --workers 8 --emit-metrics
    ```
    Ramp 0→5 QPS over 60s then hold; `--emit-metrics` writes `agent_traffic/*`.
+   Keep this running through the whole demo — sustained traffic keeps the container
+   warm, which is what holds the empty-at-200 rate near zero for the live probes.
 2. **Observability.** Open the dashboard (deep-link from step 3 above) — latency
    p50/p95, QPS, error-rate, injected count, and `agent_eval/*` quality widgets
    move in real time; an alert can be tripped.

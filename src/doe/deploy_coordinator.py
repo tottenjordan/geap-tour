@@ -72,6 +72,13 @@ def main(
         metavar="ENGINE_ID",
         help="Update this existing engine in place (new revision) instead of creating one",
     )
+    parser.add_argument(
+        "--min-instances",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Keep-warm floor: never scale below N instances (avoids the idle wedge)",
+    )
     args = parser.parse_args(argv)
 
     if agent is None:
@@ -80,11 +87,13 @@ def main(
     if args.update:
         if update_fn is None:
             from src.deploy.deploy_agents import update_agent as update_fn
-        resource = update_fn(agent, args.update, args.display_name)
+        resource = update_fn(
+            agent, args.update, args.display_name, min_instances=args.min_instances
+        )
     else:
         if deploy_fn is None:
             from src.deploy.deploy_agents import deploy_agent as deploy_fn
-        resource = deploy_fn(agent, args.display_name)
+        resource = deploy_fn(agent, args.display_name, min_instances=args.min_instances)
     print(f"{RESOURCE_MARKER}{resource}")
     return 0
 

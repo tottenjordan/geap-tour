@@ -129,6 +129,17 @@ def test_build_config_sets_resource_labels():
     assert _build_config(_fake_agent())["labels"] == cfg.RESOURCE_LABELS
 
 
+def test_build_config_omits_min_instances_by_default():
+    """No keep-warm floor unless explicitly requested (scale-to-zero default)."""
+    assert "min_instances" not in _build_config(_fake_agent())
+
+
+def test_build_config_sets_min_instances_when_requested():
+    """A keep-warm floor is baked into the deploy config as an int."""
+    config = _build_config(_fake_agent(), min_instances=1)
+    assert config["min_instances"] == 1
+
+
 def test_build_config_enables_agent_engine_telemetry():
     """Deployed engines must enable telemetry so agent-side OTel spans export."""
     env = _build_config(_fake_agent())["env_vars"]

@@ -40,6 +40,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from src.eval import raw_stream
 from src.eval.policy_judge import build_policy_prompt
 from src.eval.quality_alerts import ONLINE_MONITORED_METRICS
 from src.eval.tool_use_judge import build_tool_use_prompt
@@ -402,14 +403,26 @@ def capture_live_interactions(
     the captured text matches what the traffic tooling records. This is the
     load-bearing lever: the response CONTENT is available client-side even though
     the managed runtime strips it from the trace surface.
+
+    If the SDK's array-only REST parser can't read the engine's NDJSON stream
+    (:data:`raw_stream.SSE_PARSE_MARKER` — happens on a recycled engine), this
+    transparently falls back to the client-only raw-SSE reader
+    (:mod:`src.eval.raw_stream`), which addresses the same engine by resource name
+    and yields identical events. Unrelated errors propagate.
     """
     from src.traffic.generate_traffic import _extract_text
 
     pairs: list[tuple[str, str]] = []
     for prompt in prompts:
-        session = agent.create_session(user_id=user_id)
-        response = agent.stream_query(user_id=user_id, session_id=session["id"], message=prompt)
-        text = "".join(_extract_text(chunk) for chunk in response)
+        try:
+            session = agent.create_session(user_id=user_id)
+            response = agent.stream_query(user_id=user_id, session_id=session["id"], message=prompt)
+            text = "".join(_extract_text(chunk) for chunk in response)
+        except ValueError as exc:
+            resource = raw_stream.agent_resource_name(agent)
+            if not raw_stream.is_sse_parse_skew(exc) or not resource:
+                raise
+            [(_, text)] = raw_stream.capture_pairs(resource, [prompt], user_id=user_id)
         pairs.append((prompt, text))
     return pairs
 
@@ -441,8 +454,22 @@ def capture_live_faithfulness(
 
     triples: list[dict] = []
     for prompt in prompts:
-        session = agent.create_session(user_id=user_id)
-        events = list(agent.stream_query(user_id=user_id, session_id=session["id"], message=prompt))
+        try:
+            session = agent.create_session(user_id=user_id)
+            events = list(
+                agent.stream_query(user_id=user_id, session_id=session["id"], message=prompt)
+            )
+        except ValueError as exc:
+            resource = raw_stream.agent_resource_name(agent)
+            if not raw_stream.is_sse_parse_skew(exc) or not resource:
+                raise
+            # Raw-SSE fallback already builds the {prompt, response, trajectory} shape.
+            triples.extend(
+                raw_stream.capture_triples(
+                    resource, [prompt], user_id=user_id, include_transfers=include_transfers
+                )
+            )
+            continue
         triples.append(
             {
                 "prompt": prompt,

@@ -273,8 +273,16 @@ def _tagged_display_name(agent, tag: str | None = None) -> str:
     return f"{agent.name}_{tag}" if tag else agent.name
 
 
-def _build_config(agent, display_name: str | None = None) -> dict:
-    """Build the deployment config dict used for both create and update."""
+def _build_config(
+    agent, display_name: str | None = None, *, min_instances: int | None = None
+) -> dict:
+    """Build the deployment config dict used for both create and update.
+
+    ``min_instances`` sets a keep-warm floor (Agent Engine ``min_instances``) so
+    the engine never scales to zero. The default (None) preserves scale-to-zero;
+    a floor of 1 avoids the idle cold-start/error-shaped-stream wedge that a demo
+    engine can fall into when left idle (see the pre-demo readiness runbook).
+    """
     env_vars = {
         **OTEL_ENV_VARS,
         "GCP_PROJECT_ID": GCP_PROJECT_ID,
@@ -331,6 +339,10 @@ def _build_config(agent, display_name: str | None = None) -> dict:
         "labels": dict(RESOURCE_LABELS),
     }
 
+    if min_instances is not None:
+        config["min_instances"] = int(min_instances)
+        print(f"  Keep-warm: min_instances={int(min_instances)}")
+
     if ENABLE_AGENT_IDENTITY:
         config["identity_type"] = "AGENT_IDENTITY"
         print("  Identity: AGENT_IDENTITY (SPIFFE-based)")
@@ -358,11 +370,13 @@ def _get_client():
     )
 
 
-def deploy_agent(agent, display_name: str | None = None) -> str:
+def deploy_agent(
+    agent, display_name: str | None = None, *, min_instances: int | None = None
+) -> str:
     """Create a new agent on Agent Runtime."""
     os.chdir(PROJECT_ROOT)
     print(f"\n--- Creating {agent.name} ---")
-    config = _build_config(agent, display_name)
+    config = _build_config(agent, display_name, min_instances=min_instances)
 
     remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
@@ -370,14 +384,16 @@ def deploy_agent(agent, display_name: str | None = None) -> str:
     return resource_name
 
 
-def update_agent(agent, engine_id: str, display_name: str | None = None) -> str:
+def update_agent(
+    agent, engine_id: str, display_name: str | None = None, *, min_instances: int | None = None
+) -> str:
     """Update an existing agent on Agent Runtime."""
     os.chdir(PROJECT_ROOT)
     # Accept bare ID or full resource name
     if not engine_id.startswith("projects/"):
         engine_id = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{engine_id}"
     print(f"\n--- Updating {agent.name} ({engine_id.split('/')[-1]}) ---")
-    config = _build_config(agent, display_name)
+    config = _build_config(agent, display_name, min_instances=min_instances)
 
     remote = _get_client().agent_engines.update(
         name=engine_id,
