@@ -33,6 +33,7 @@ from src.config import (
     BOOKING_MCP_SERVER,
     BOOKING_MCP_URL,
     BQ_AGENT_ANALYTICS_DATASET,
+    CLASSIFIER_MODEL,
     COMPLEXITY_HIGH,
     COMPLEXITY_LOW,
     COMPLEXITY_THRESHOLD_HIGH,
@@ -40,6 +41,7 @@ from src.config import (
     DEPLOY_TAG,
     ENABLE_AGENT_ANALYTICS,
     ENABLE_MEMORY_BANK,
+    ENABLE_MEMORY_PRELOAD_CACHE,
     ENABLE_SPAN_CONTENT_CAPTURE,
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
@@ -308,6 +310,13 @@ def _build_config(
         "TRAVEL_MODEL": TRAVEL_MODEL,
         "EXPENSE_MODEL": EXPENSE_MODEL,
         "ROUTER_MODEL": ROUTER_MODEL,
+        # Complexity classifier model (router's before_agent_callback). Baked so a
+        # deploy-env override reaches the container — a thinking model (e.g.
+        # gemini-3.5-flash) spends its token budget on reasoning and returns empty
+        # text, forcing classify_complexity's low-score fallback on every request
+        # (so everything routes to the lite tier). A non-thinking model returns
+        # real differentiated scores.
+        "CLASSIFIER_MODEL": CLASSIFIER_MODEL,
         "COMPLEXITY_LOW": str(COMPLEXITY_LOW),
         "COMPLEXITY_HIGH": str(COMPLEXITY_HIGH),
         "MEDIUM_SPLIT": str(MEDIUM_SPLIT),
@@ -324,6 +333,15 @@ def _build_config(
         "EXPENSE_MCP_SERVER": EXPENSE_MCP_SERVER,
         "AGENT_REGISTRY_LOCATION": AGENT_REGISTRY_LOCATION,
     }
+
+    # Memory-preload cache (opt-in latency knob). The coordinator selects
+    # CachingPreloadMemoryTool vs PreloadMemoryTool at import time from this flag,
+    # so bake it into the container env — otherwise a runtime re-import inside the
+    # managed runtime would rebuild the tool with the default (cache off) and the
+    # deployed engine would silently not run the cache. Only baked when enabled so
+    # default deploys keep byte-identical env.
+    if ENABLE_MEMORY_PRELOAD_CACHE:
+        env_vars["ENABLE_MEMORY_PRELOAD_CACHE"] = "1"
 
     # Model Armor template names for server-side screening (read by
     # src/armor/config.get_model_armor_config). Only bake when explicitly set so

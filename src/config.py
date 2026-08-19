@@ -222,7 +222,13 @@ HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.95"))
 # Backwards-compat alias: still imported by src/deploy/deploy_agents.py
 COMPLEXITY_THRESHOLD_HIGH = COMPLEXITY_HIGH
 
-CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemini-3.5-flash")
+# Complexity classifier for the router's before_agent_callback. Must be a model
+# that reliably returns the JSON verdict: a Gemini-3 *thinking* model (e.g.
+# gemini-3.5-flash) spends its whole token budget on reasoning and returns empty
+# text, so classify_complexity falls back to the low-score default on EVERY
+# request and the router only ever reaches the lite tier. gemini-2.5-flash-lite
+# returns real, differentiated scores on the global endpoint (verified 2026-08-19).
+CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
 SIMULATOR_MODEL = os.environ.get("SIMULATOR_MODEL", "gemini-2.5-flash")
 
 # Evaluation
