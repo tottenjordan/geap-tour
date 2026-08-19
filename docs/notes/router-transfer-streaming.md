@@ -138,6 +138,58 @@ streams end-to-end on par with the coordinator. Driving empties to zero is a
 warmth/regional concern (keep-warm `min_instances`, retry — `raw_stream.py` already
 retries), orthogonal to the streaming architecture.
 
+## Observability dashboard: the direct-tools fix also restored the model/tool tiles
+
+The console **Observability** tab's per-model and per-tool tiles are **trace-derived**
+(no `workload.googleapis.com/gen_ai*` metrics exist in this project). The per-model
+tile aggregates `generate_content <model>` spans (emitted by
+`opentelemetry-instrumentation-google-genai`, carrying `gen_ai.request.model`); the
+per-tool tile aggregates `execute_tool <tool>` spans (emitted by ADK's
+function-calling flow). Both are grouped per agent by the span's `service.name`
+label, which on a deployed engine is the **reasoning-engine id**.
+
+The old `transfer_to_agent` router showed **empty model/tool tiles** for the same
+reason it didn't stream: the model + MCP work ran inside a *delegated sub-agent*
+whose turn never completed on the managed runtime, so no `generate_content` /
+`execute_tool` spans were emitted and attributed to the router engine. The
+direct-tools rearchitecture fixed this as a side effect — the router now emits the
+**same rich span tree as the coordinator**, attributed to its own engine
+(`service.name = 6134089059699523584`). Confirmed live 2026-08-19 (deploy
+`service.version=15`) — a router agent-run trace:
+
+```
+invoke_workflow router_agent           service.name=6134…
+  invoke_agent router_agent
+    router.route
+      generate_content gemini-2.5-flash-lite   [classifier]
+    call_llm                                   gen_ai.request.model=gemini-2.5-flash-lite
+    generate_content gemini-2.5-flash-lite     [genai-instrumentation lib]
+    execute_tool booking_mcp_book_flight
+    execute_tool search_mcp_search_hotels
+    call_llm / generate_content …              [synthesis hop]
+```
+
+**Residual caveat — Claude tiers (sonnet/opus) lack a dedicated `generate_content`
+span.** `_should_emit_native_telemetry` (ADK `telemetry/tracing.py`) suppresses
+ADK's own inference span whenever `_is_gemini_agent(agent)` is True; that check
+reads `agent.model.model`, which for the router is `TierRoutingLlm`'s default
+(`gemini-2.5-flash-lite`), so it returns True for **every** tier. For Gemini tiers
+this is correct — the genai instrumentation lib emits the `generate_content <model>`
+span. For Claude tiers the underlying model is LiteLlm (not `google.genai`), so the
+genai lib doesn't wrap it *and* ADK suppressed its native span → no dedicated
+`generate_content` span. The model is still recorded on the `call_llm` span
+(`gen_ai.request.model=claude-…`, set by `trace_call_llm` from `llm_request.model`),
+so the information is not lost. This is an inherent ADK+LiteLlm telemetry limitation
+(the coordinator would hit it too if it ran on Claude), not a router regression;
+fixing it fully would require ADK to evaluate the model family *per request* rather
+than off the static `agent.model`. Making `TierRoutingLlm.model` request-dynamic
+would reintroduce the concurrency race the stateless dispatcher exists to avoid, so
+it is deliberately left as documented behavior.
+
+Diagnose with a single tightly-bounded Cloud Trace read (the read quota is
+300/min; unfiltered `COMPLETE`-view pagination burns it fast — fetch one page via
+`itertools.islice` or the cheap `ROOTSPAN` view to collect ids, then `get_trace`).
+
 ## Measuring
 
 - `src/eval/spike_router_streaming.py --agent-id <id> --repeat N` — categorizes
