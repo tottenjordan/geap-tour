@@ -145,3 +145,28 @@ def test_cost_eval_responds_to_boundary_factor(reloaded_cost_eval, monkeypatch):
     # Cheaper tiers => strictly lower routed cost and higher savings.
     assert aggressive["routed_cost_usd"] < base["routed_cost_usd"]
     assert aggressive["savings_pct"] > base["savings_pct"]
+
+
+class TestClassifierClientCaching:
+    """The classifier's genai client is built once per process (hot-path latency)."""
+
+    def test_client_is_cached_across_calls(self, monkeypatch):
+        import src.router.complexity as cx
+
+        # Reset the module-level singleton so this test is order-independent.
+        monkeypatch.setattr(cx, "_CLASSIFIER_CLIENT", None, raising=False)
+
+        built: list[dict] = []
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                built.append(kwargs)
+
+        monkeypatch.setattr(cx.genai, "Client", _FakeClient)
+
+        first = cx._classifier_client()
+        second = cx._classifier_client()
+
+        assert first is second  # same instance reused
+        assert len(built) == 1  # constructed exactly once
+        assert built[0]["location"] == cx.CLASSIFIER_LOCATION

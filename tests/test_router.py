@@ -185,21 +185,28 @@ class TestAgentConfig:
         result2 = resolve_model("claude-sonnet-4-6")
         assert isinstance(result2, LiteLlm)
 
-    def test_router_has_five_sub_agents(self):
-        # The router delegates via ADK agent transfer (sub_agents), NOT AgentTool
-        # tools: AgentTool delegation to a sub-agent that makes nested MCP calls
-        # does not stream back through the deployed Agent Engine runtime, so the
-        # deployed router returned empty. Transferred sub-agents become the active
-        # streaming agent, so their MCP events stream through.
+    def test_router_has_no_sub_agents(self):
+        # The router is now ONE direct-tools agent that swaps its model per tier.
+        # It must NOT use sub_agents/transfer_to_agent: on the deployed Agent
+        # Engine runtime the transferred specialist's turn never streamed back
+        # (~0/8 full completions), the same wall the coordinator hit with nested
+        # AgentTool MCP calls. See docs/notes/router-transfer-streaming.md.
         from src.router.agents import router_agent
 
-        assert len(router_agent.sub_agents) == 5
+        assert not router_agent.sub_agents
 
-    def test_sub_agent_names(self):
+    def test_router_model_is_tier_dispatcher(self):
+        from src.router.agents import router_agent
+        from src.router.tier_routing_llm import TierRoutingLlm
+
+        assert isinstance(router_agent.model, TierRoutingLlm)
+
+    def test_router_holds_mcp_tools_directly(self):
+        # The MCP toolsets are held directly on the root so their calls stream as
+        # top-level events (the proven coordinator pattern).
         from src.router.agents import router_agent
 
-        names = {a.name for a in router_agent.sub_agents}
-        assert names == {"lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"}
+        assert len(router_agent.tools) >= 3  # 3 MCP toolsets + PreloadMemoryTool
 
     def test_router_has_no_agent_tools(self):
         # Guardrail: no AgentTool sub-agent delegation should sneak back in — it's
@@ -214,3 +221,90 @@ class TestAgentConfig:
         from src.router.agents import router_agent
 
         assert router_agent.before_agent_callback is not None
+
+    def test_router_has_model_select_callback(self):
+        from src.router.agents import router_agent
+
+        assert router_agent.before_model_callback is not None
+
+
+class TestSelectTierModelCallback:
+    def test_sets_request_model_from_state_tier(self):
+        from types import SimpleNamespace
+
+        from src.config import SONNET_MODEL
+        from src.router.agents import select_tier_model_callback
+
+        ctx = SimpleNamespace(state={"model_tier": "sonnet"})
+        req = SimpleNamespace(model=None)
+        select_tier_model_callback(callback_context=ctx, llm_request=req)
+        assert req.model == SONNET_MODEL
+
+    def test_no_tier_leaves_request_model_unchanged(self):
+        from types import SimpleNamespace
+
+        from src.router.agents import select_tier_model_callback
+
+        ctx = SimpleNamespace(state={})
+        req = SimpleNamespace(model="preset")
+        select_tier_model_callback(callback_context=ctx, llm_request=req)
+        assert req.model == "preset"
+
+    def test_missing_args_are_noop(self):
+        from src.router.agents import select_tier_model_callback
+
+        assert select_tier_model_callback() is None
+
+
+class TestTierInstructionProvider:
+    def test_router_instruction_is_a_provider(self):
+        # The router's instruction must be a callable provider (not a static str)
+        # so each turn is served the chosen tier's prompt.
+        from src.router.agents import router_agent, tier_instruction_provider
+
+        assert router_agent.instruction is tier_instruction_provider
+        assert callable(router_agent.instruction)
+
+    def test_each_tier_gets_its_own_instruction(self):
+        from types import SimpleNamespace
+
+        from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
+        from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
+        from src.agents.opus_agent import INSTRUCTION as OPUS_INSTRUCTION
+        from src.agents.pro_agent import INSTRUCTION as PRO_INSTRUCTION
+        from src.agents.sonnet_agent import INSTRUCTION as SONNET_INSTRUCTION
+        from src.router.agents import tier_instruction_provider
+
+        expected = {
+            "lite": LITE_INSTRUCTION,
+            "flash": FLASH_INSTRUCTION,
+            "pro": PRO_INSTRUCTION,
+            "sonnet": SONNET_INSTRUCTION,
+            "opus": OPUS_INSTRUCTION,
+        }
+        for tier, instruction in expected.items():
+            ctx = SimpleNamespace(state={"model_tier": tier})
+            assert tier_instruction_provider(ctx) == instruction
+
+    def test_no_tier_falls_back_to_generic_instruction(self):
+        from types import SimpleNamespace
+
+        from src.router.agents import ROUTER_INSTRUCTION, tier_instruction_provider
+
+        assert tier_instruction_provider(SimpleNamespace(state={})) == ROUTER_INSTRUCTION
+
+    def test_unknown_tier_falls_back_to_generic_instruction(self):
+        from types import SimpleNamespace
+
+        from src.router.agents import ROUTER_INSTRUCTION, tier_instruction_provider
+
+        ctx = SimpleNamespace(state={"model_tier": "mystery"})
+        assert tier_instruction_provider(ctx) == ROUTER_INSTRUCTION
+
+    def test_missing_state_falls_back_to_generic_instruction(self):
+        from types import SimpleNamespace
+
+        from src.router.agents import ROUTER_INSTRUCTION, tier_instruction_provider
+
+        # A ReadonlyContext with no usable state must not raise.
+        assert tier_instruction_provider(SimpleNamespace()) == ROUTER_INSTRUCTION

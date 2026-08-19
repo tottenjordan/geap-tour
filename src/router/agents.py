@@ -1,6 +1,21 @@
-"""Multi-model agent definitions — 5-tier router by prompt complexity.
+"""Multi-model router — one direct-tools agent that swaps model AND prompt per tier.
 
-Routes to: Lite → Flash → Pro → Sonnet → Opus based on classifier score.
+A complexity classifier (``before_agent_callback``) scores each prompt and picks
+a tier (lite → flash → pro → sonnet → opus). Per request the router then adopts
+that tier's specialization on TWO axes: a ``before_model_callback`` writes the
+tier's concrete model id onto the request so :class:`TierRoutingLlm` (the agent's
+single ``model``) runs the turn on that model, and an ``InstructionProvider``
+(:func:`tier_instruction_provider`) serves that tier's (GEPA-optimized)
+instruction. So a lite lookup and an opus planning task get both the right model
+and the right prompt — the full behavior of the old five sub-agents.
+
+**Why not sub_agents / transfer_to_agent (the previous design):** on the deployed
+Agent Engine runtime, only the *root* agent's own output streams back. Delegation
+via ``transfer_to_agent`` never streamed the transferred specialist's turn
+(measured ~0/8 full completions), the same wall the coordinator hit with nested
+``AgentTool`` MCP calls. So the router now holds the MCP toolsets DIRECTLY on the
+root and varies model+prompt per tier instead of delegating — the proven-streaming
+pattern. See ``docs/notes/router-transfer-streaming.md``.
 """
 
 import contextlib
@@ -14,6 +29,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content
 
+from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
 from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
 from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
 from src.agents.opus_agent import INSTRUCTION as OPUS_INSTRUCTION
@@ -24,6 +40,7 @@ from src.config import (
     BOOKING_MCP_SERVER,
     COMPLEXITY_HIGH,
     COMPLEXITY_LOW,
+    ENABLE_MEMORY_PRELOAD_CACHE,
     EXPENSE_MCP_SERVER,
     FLASH_MODEL,
     HIGH_SPLIT,
@@ -31,7 +48,6 @@ from src.config import (
     MEDIUM_SPLIT,
     OPUS_MODEL,
     PRO_MODEL,
-    ROUTER_MODEL,
     SEARCH_MCP_SERVER,
     SONNET_MODEL,
     resolve_model,
@@ -40,6 +56,12 @@ from src.observability.tracing import set_span_attributes, traced
 from src.registry import get_mcp_tools
 
 from .complexity import classify_complexity, score_to_model_tier, tier_to_model
+from .tier_routing_llm import TierRoutingLlm
+
+# Tier models the dispatcher can run a turn on, in ascending cost/capability
+# order. The first is the default (used before the classifier picks a tier and as
+# the fallback for an unknown request model).
+TIER_MODELS = [LITE_MODEL, FLASH_MODEL, PRO_MODEL, SONNET_MODEL, OPUS_MODEL]
 
 
 def _mcp_tools():
@@ -50,10 +72,29 @@ def _mcp_tools():
     ]
 
 
+def _memory_tool():
+    """The PreloadMemoryTool variant to use.
+
+    Stock ``PreloadMemoryTool`` issues a blocking Memory Bank retrieve before
+    EVERY internal LLM hop; a multi-hop router turn (tool call → synthesis) pays
+    that 3-5s retrieve repeatedly, stacking latency ahead of the first streamed
+    event and pushing borderline turns into an empty-at-200 timeout. Opt-in
+    ``ENABLE_MEMORY_PRELOAD_CACHE`` swaps in :class:`CachingPreloadMemoryTool`,
+    which memoizes the retrieve per ``(invocation_id, query)`` — one retrieve per
+    turn, zero cross-invocation staleness. Same knob the coordinator uses
+    (``src/agents/coordinator_agent.py``); default off ⇒ stock behavior.
+    """
+    return CachingPreloadMemoryTool() if ENABLE_MEMORY_PRELOAD_CACHE else PreloadMemoryTool()
+
+
 def _sub_agent_tools():
-    return [*_mcp_tools(), PreloadMemoryTool()]
+    return [*_mcp_tools(), _memory_tool()]
 
 
+# Standalone per-tier agent definitions. These are NO LONGER the router's
+# delegation targets (the router is a single direct-tools agent — see below); they
+# are retained for standalone per-tier deploy/eval and as the GEPA optimization
+# sandbox roots (src/router/<tier>_agent_opt/ import these).
 lite_agent = LlmAgent(
     model=resolve_model(LITE_MODEL),
     name="lite_agent",
@@ -96,7 +137,12 @@ opus_agent = LlmAgent(
 
 
 async def complexity_router_callback(callback_context=None, **kwargs):
-    """Classify prompt complexity and store in state for the router's delegation logic."""
+    """Classify prompt complexity and store the chosen tier in state.
+
+    The tier is read back by :func:`select_tier_model_callback` (before each LLM
+    hop) to select the model the turn actually runs on. Also runs the client-side
+    input guardrail and records a per-request routing span.
+    """
     if callback_context is None:
         return None
     user_message = ""
@@ -117,8 +163,7 @@ async def complexity_router_callback(callback_context=None, **kwargs):
 
     # The money shot: a per-request span that records WHY this query routed
     # where it did — score, chosen tier, resolved model, and the boundaries the
-    # decision was measured against. Transparent no-op when telemetry is off;
-    # routing behavior below is unchanged.
+    # decision was measured against. Transparent no-op when telemetry is off.
     with traced("router.route"):
         result = await classify_complexity(user_message)
         model_tier = score_to_model_tier(result.score)
@@ -142,6 +187,23 @@ async def complexity_router_callback(callback_context=None, **kwargs):
     return None
 
 
+def select_tier_model_callback(callback_context=None, llm_request=None, **kwargs):
+    """before_model_callback: point this turn's request at the chosen tier model.
+
+    :class:`TierRoutingLlm` (the agent's ``model``) reads ``llm_request.model`` and
+    forwards to that tier's pre-resolved backbone. Runs before every LLM hop so a
+    multi-hop turn stays on the tier the classifier picked. No tier in state (e.g.
+    an empty user message) leaves the request on the dispatcher's default.
+    """
+    if callback_context is None or llm_request is None:
+        return None
+    state = getattr(callback_context, "state", None)
+    tier = state.get("model_tier") if state else None
+    if tier:
+        llm_request.model = tier_to_model(tier)
+    return None
+
+
 async def save_memories_callback(callback_context: CallbackContext | None = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
     if callback_context is None:
@@ -151,41 +213,68 @@ async def save_memories_callback(callback_context: CallbackContext | None = None
     return None
 
 
+# Generic fallback instruction, used only when no tier has been chosen yet (e.g. an
+# empty user message that short-circuits complexity_router_callback before it sets
+# a tier). The normal path uses the per-tier instruction below.
 ROUTER_INSTRUCTION = """\
-You are a routing coordinator. You MUST always hand the request to a specialist
-agent — never answer the user yourself.
+You are a corporate travel and expense assistant. Fulfill the user's request
+DIRECTLY using your tools — never say you are transferring or handing off.
 
-A complexity classifier has assessed the user's request:
-- Level: {complexity_level}
-- Score: {complexity_score}
-- Model tier: {model_tier}
-- Reason: {complexity_reason}
+Available tools:
+- Flights: use `search_flights` to find flights and `book_flight` to book a
+  specific one (e.g. "Book flight FL001"). Ask for missing IDs/details first.
+- Hotels: use `search_hotels` to find hotels and `book_hotel` to book one.
+- Expenses: ALWAYS use `check_expense_policy` for policy questions and BEFORE any
+  submission; use `submit_expense` to submit (submit even if it exceeds policy,
+  and tell the user it was flagged for manager review); use `get_user_expenses`
+  to show past expenses.
 
-Transfer control to the specialist agent that matches the model_tier by calling
-transfer_to_agent with the agent_name:
-- "lite" → transfer_to_agent(agent_name="lite_agent")
-- "flash" → transfer_to_agent(agent_name="flash_agent")
-- "pro" → transfer_to_agent(agent_name="pro_agent")
-- "sonnet" → transfer_to_agent(agent_name="sonnet_agent")
-- "opus" → transfer_to_agent(agent_name="opus_agent")
+Use recalled memories to personalize responses. Greet the user, ask for
+clarification when intent is unclear, and if a request is outside travel/expense,
+say so briefly. Keep responses clear and concise, summarizing tool outputs."""
 
-Your ONLY action is that transfer. Do not produce any other text.\
-"""
 
-# Delegation is ADK agent transfer (sub_agents), NOT AgentTool tools. AgentTool
-# runs a sub-agent as a nested tool call whose nested MCP output must bubble back
-# up through the parent — and that nested stream does NOT come back through the
-# deployed Agent Engine runtime (works in-process, stalls on the managed
-# runtime; see the same note in coordinator_agent.py). transfer_to_agent instead
-# makes the chosen specialist the active agent, so its own MCP events stream out
-# as top-level events the runtime forwards correctly.
+# Per-tier instructions — the SAME (GEPA-optimized) prompts the five standalone
+# tier agents carry. The router keeps tier specialization: the classifier picks a
+# tier, TierRoutingLlm runs the turn on that tier's MODEL, and this provider serves
+# that tier's INSTRUCTION. So a lite lookup and an opus planning task get both the
+# right model AND the right prompt — the full routing behavior of the old five
+# sub-agents, but on one agent whose output streams end-to-end.
+_TIER_TO_INSTRUCTION = {
+    "lite": LITE_INSTRUCTION,
+    "flash": FLASH_INSTRUCTION,
+    "pro": PRO_INSTRUCTION,
+    "sonnet": SONNET_INSTRUCTION,
+    "opus": OPUS_INSTRUCTION,
+}
+
+
+def tier_instruction_provider(ctx) -> str:
+    """InstructionProvider: serve the chosen tier's instruction per request.
+
+    ADK calls this (with a ``ReadonlyContext``) while building each LLM request,
+    after ``complexity_router_callback`` has stored ``state["model_tier"]``. It
+    mirrors :func:`select_tier_model_callback` (which selects the model) so the
+    prompt and the backbone always match the classifier's tier. Falls back to the
+    generic :data:`ROUTER_INSTRUCTION` when no tier is set.
+    """
+    state = getattr(ctx, "state", None)
+    tier = state.get("model_tier") if state else None
+    return _TIER_TO_INSTRUCTION.get(tier, ROUTER_INSTRUCTION)
+
+
+# ONE root agent that holds the MCP toolsets DIRECTLY (so its tool calls stream as
+# top-level events the managed runtime forwards) and, per request, runs on the
+# tier's MODEL (via the TierRoutingLlm dispatcher) with the tier's INSTRUCTION (via
+# tier_instruction_provider). No sub_agents / transfer_to_agent — that delegation
+# never streamed the specialist's turn on the deployed runtime.
 router_agent = LlmAgent(
-    model=resolve_model(ROUTER_MODEL),
+    model=TierRoutingLlm(TIER_MODELS, default_model=LITE_MODEL),
     name="router_agent",
-    instruction=ROUTER_INSTRUCTION,
-    tools=[PreloadMemoryTool()],
-    sub_agents=[lite_agent, flash_agent, pro_agent, sonnet_agent, opus_agent],
+    instruction=tier_instruction_provider,
+    tools=[*_mcp_tools(), _memory_tool()],
     before_agent_callback=complexity_router_callback,
+    before_model_callback=select_tier_model_callback,
     after_agent_callback=save_memories_callback,
 )
 

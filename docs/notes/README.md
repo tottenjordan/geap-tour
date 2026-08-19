@@ -54,6 +54,11 @@ file; keep this index short (< 200 lines).
 - [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
   — why the first screening's routing/cost metrics were identical across all 9
   runs, and wiring the cost eval to the real 5-tier router so the factor moves.
+- [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
+  — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
+  managed runtime; rearchitected to one direct-tools agent that swaps its model per
+  tier via a stateless `TierRoutingLlm` dispatcher. Residual empty-at-200 is
+  platform-wide (coordinator empties at the same rate same-moment), not the router.
 - [DOE harvest `--wait` path hang (root cause & hardening)](./doe-harvest-wait-path.md)
   — a transient live-poll stall could hang unattended for the 2h timeout with no
   output; fixed via GCS ground-truth fall-through, a heartbeat, and a download
