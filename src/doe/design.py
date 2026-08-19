@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pyDOE3 import ff2n, fracfact
+from pyDOE3 import ff2n, fracfact  # ty: ignore[unresolved-import]
 
 from src.doe.factors import Factor
 

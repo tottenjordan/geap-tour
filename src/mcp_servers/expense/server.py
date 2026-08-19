@@ -4,7 +4,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 try:
-    from otel_setup import setup_opentelemetry
+    from otel_setup import setup_opentelemetry  # ty: ignore[unresolved-import]
 
     setup_opentelemetry("expense-mcp")
 except Exception as e:
@@ -17,9 +17,9 @@ try:
     from .mock_db import get_expenses as _get
     from .mock_db import submit_expense as _submit
 except ImportError:
-    from mock_db import check_policy as _check
-    from mock_db import get_expenses as _get
-    from mock_db import submit_expense as _submit
+    from mock_db import check_policy as _check  # ty: ignore[unresolved-import]
+    from mock_db import get_expenses as _get  # ty: ignore[unresolved-import]
+    from mock_db import submit_expense as _submit  # ty: ignore[unresolved-import]
 
 mcp = FastMCP("expense-mcp", instructions="Submit and manage corporate expense reports.")
 

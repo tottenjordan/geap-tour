@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import argparse
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
 from src.eval.verify_memory import (
@@ -144,7 +144,9 @@ def run_cross_session_recall(
         # init pins the regional endpoint (engines live in GCP_REGION); without it
         # create_session/stream_query hit the wrong endpoint and 404.
         vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
-        agent = agent_engines.get(_resolve_agent_resource_name(engine_id or _default_engine_id()))
+        agent: Any = agent_engines.get(
+            _resolve_agent_resource_name(engine_id or _default_engine_id())
+        )
 
     # --- Session A: establish preferences (fires save_memories_callback) ---
     sess_a = agent.create_session(user_id=user_id)

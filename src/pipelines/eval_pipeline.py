@@ -15,7 +15,7 @@ reflect the current ``.env``.
 
 import os
 
-from kfp import dsl
+from kfp import dsl  # ty: ignore[unresolved-import]
 
 from src.config import (
     BOOKING_MCP_SERVER,

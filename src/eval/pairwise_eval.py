@@ -243,7 +243,7 @@ def run_pairwise_eval(
     per_case: list[dict] = []
     choices: list[str] = []
     for c in cases:
-        prompt = c["prompt"]
+        prompt = str(c["prompt"])
         b = base_resp.get(prompt, "")
         a = cand_resp.get(prompt, "")
         if _is_error_response(b) or _is_error_response(a):

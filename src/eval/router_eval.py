@@ -202,8 +202,8 @@ async def run_single_round(cases: list[dict]) -> dict:
     total = len(results)
     correct = sum(1 for r in results if r["match"])
     accuracy = correct / total if total else 0
-    total_routed = sum(r["routed_cost"] for r in results)
-    total_opus = sum(r["opus_cost"] for r in results)
+    total_routed = sum(float(r["routed_cost"]) for r in results)
+    total_opus = sum(float(r["opus_cost"]) for r in results)
     savings_pct = (1 - total_routed / total_opus) * 100 if total_opus else 0
 
     return {
@@ -214,7 +214,7 @@ async def run_single_round(cases: list[dict]) -> dict:
         "total_routed_cost": round(total_routed, 8),
         "total_opus_cost": round(total_opus, 8),
         "savings_pct": round(savings_pct, 1),
-        "avg_latency_ms": round(statistics.mean(r["latency_ms"] for r in results), 1),
+        "avg_latency_ms": round(statistics.mean(float(r["latency_ms"]) for r in results), 1),
         "per_case": results,
     }
 

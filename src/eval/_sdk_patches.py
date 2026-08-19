@@ -183,14 +183,14 @@ def _patch_single_turn_parser() -> None:
 
         return response_row, intermediate_events_row, agent_data_row
 
-    ec._process_single_turn_agent_response = _patched
+    ec._process_single_turn_agent_response = _patched  # ty: ignore[invalid-assignment]
 
 
 def _throttle_agent_concurrency() -> None:
     """Cap the agent inference worker pool (SDK default AGENT_MAX_WORKERS=20)."""
     from vertexai._genai import _evals_common as ec
 
-    ec.AGENT_MAX_WORKERS = _AGENT_MAX_WORKERS
+    ec.AGENT_MAX_WORKERS = _AGENT_MAX_WORKERS  # ty: ignore[invalid-assignment]
 
 
 def _patch_retry_on_empty() -> None:
@@ -206,7 +206,7 @@ def _patch_retry_on_empty() -> None:
             sleep_fn=lambda attempt: time.sleep(_EMPTY_BACKOFF * (attempt + 1)),
         )
 
-    ec._execute_agent_run_with_retry = _wrapped
+    ec._execute_agent_run_with_retry = _wrapped  # ty: ignore[invalid-assignment]
 
 
 def warm_agent_engine(agent_engine, n: int = 2, message: str = "ping") -> int:

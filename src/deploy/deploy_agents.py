@@ -18,6 +18,8 @@ Controlled by .env:
 """
 
 import os
+from collections.abc import Callable
+from typing import Any, TypedDict
 
 import vertexai
 from vertexai import agent_engines
@@ -257,7 +259,9 @@ def _build_app(agent):
     plugins = [plugin] if plugin else None
     if ENABLE_SPAN_CONTENT_CAPTURE:
         builders["enable_tracing"] = True
-    return agent_engines.AdkApp(agent=agent, plugins=plugins, **builders)
+    # ty can't track the heterogeneous **builders dict against AdkApp's typed
+    # keyword params; the keys are validated by construction above.
+    return agent_engines.AdkApp(agent=agent, plugins=plugins, **builders)  # ty: ignore[invalid-argument-type]
 
 
 def _tagged_display_name(agent, tag: str | None = None) -> str:
@@ -413,7 +417,14 @@ PRO_ENGINE_ID = os.environ.get("PRO_ENGINE_ID", "")
 SONNET_ENGINE_ID = os.environ.get("SONNET_ENGINE_ID", "")
 OPUS_ENGINE_ID = os.environ.get("OPUS_ENGINE_ID", "")
 
-AGENT_SETS = {
+
+class _AgentSet(TypedDict):
+    loader: Callable[[], Any]
+    engine_id: str | None
+    env_var: str
+
+
+AGENT_SETS: dict[str, _AgentSet] = {
     "coordinator": {
         "loader": lambda: (
             __import__(

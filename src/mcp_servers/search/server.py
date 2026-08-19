@@ -4,7 +4,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 try:
-    from otel_setup import setup_opentelemetry
+    from otel_setup import setup_opentelemetry  # ty: ignore[unresolved-import]
 
     setup_opentelemetry("search-mcp")
 except Exception as e:
@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 try:
     from .mock_db import FLIGHTS, HOTELS
 except ImportError:
-    from mock_db import FLIGHTS, HOTELS
+    from mock_db import FLIGHTS, HOTELS  # ty: ignore[unresolved-import]
 
 mcp = FastMCP("search-mcp", instructions="Search for flights and hotels.")
 
@@ -32,7 +32,8 @@ def search_flights(origin: str, destination: str, date: str | None = None) -> li
     results = [
         f
         for f in FLIGHTS
-        if f["origin"].upper() == origin.upper() and f["destination"].upper() == destination.upper()
+        if str(f["origin"]).upper() == origin.upper()
+        and str(f["destination"]).upper() == destination.upper()
     ]
     if date:
         results = [f for f in results if f["date"] == date]
@@ -47,9 +48,9 @@ def search_hotels(city: str, max_price: float | None = None) -> list[dict]:
         city: City name (e.g., New York, Chicago, London)
         max_price: Optional maximum price per night filter
     """
-    results = [h for h in HOTELS if h["city"].lower() == city.lower()]
+    results = [h for h in HOTELS if str(h["city"]).lower() == city.lower()]
     if max_price is not None:
-        results = [h for h in results if h["price_per_night"] <= max_price]
+        results = [h for h in results if float(h["price_per_night"]) <= max_price]
     return results
 
 

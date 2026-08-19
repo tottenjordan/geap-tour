@@ -67,9 +67,9 @@ def _get_mcp_tools(server_name: str):
         toolset = _get_registry().get_mcp_toolset(server_name)
         if hasattr(toolset, "_connection_params"):
             if hasattr(toolset._connection_params, "timeout"):
-                toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS
+                toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS  # ty: ignore[invalid-assignment]
             if hasattr(toolset._connection_params, "sse_read_timeout"):
-                toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS
+                toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS  # ty: ignore[invalid-assignment]
         return toolset
     except (RuntimeError, ValueError) as exc:
         # Kept in sync with src/registry.py:get_mcp_tools — fall back to the direct
@@ -158,6 +158,8 @@ If the user asks about travel, direct them to the travel assistant.""",
 
 async def save_memories_callback(callback_context: CallbackContext | None = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
+    if callback_context is None:
+        return None
     with contextlib.suppress(Exception):
         await callback_context.add_session_to_memory()
     return None

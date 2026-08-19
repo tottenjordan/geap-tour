@@ -7,7 +7,7 @@ import contextlib
 
 import litellm
 
-litellm.suppress_debug_info = True
+litellm.suppress_debug_info = True  # ty: ignore[invalid-assignment]
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -97,6 +97,8 @@ opus_agent = LlmAgent(
 
 async def complexity_router_callback(callback_context=None, **kwargs):
     """Classify prompt complexity and store in state for the router's delegation logic."""
+    if callback_context is None:
+        return None
     user_message = ""
     if callback_context and callback_context.user_content:
         if isinstance(callback_context.user_content, Content):
@@ -142,6 +144,8 @@ async def complexity_router_callback(callback_context=None, **kwargs):
 
 async def save_memories_callback(callback_context: CallbackContext | None = None, **kwargs):
     """Persist session events to Memory Bank after each turn."""
+    if callback_context is None:
+        return None
     with contextlib.suppress(Exception):
         await callback_context.add_session_to_memory()
     return None

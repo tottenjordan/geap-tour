@@ -4,7 +4,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 try:
-    from otel_setup import setup_opentelemetry
+    from otel_setup import setup_opentelemetry  # ty: ignore[unresolved-import]
 
     setup_opentelemetry("booking-mcp")
 except Exception as e:
@@ -16,8 +16,8 @@ try:
     from .mock_db import cancel_booking as _cancel
     from .mock_db import create_booking, get_booking, list_bookings
 except ImportError:
-    from mock_db import cancel_booking as _cancel
-    from mock_db import create_booking, get_booking, list_bookings
+    from mock_db import cancel_booking as _cancel  # ty: ignore[unresolved-import]
+    from mock_db import create_booking, get_booking, list_bookings  # ty: ignore[unresolved-import]
 
 mcp = FastMCP("booking-mcp", instructions="Book and manage flight and hotel reservations.")
 

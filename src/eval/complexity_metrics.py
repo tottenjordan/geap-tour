@@ -70,9 +70,8 @@ try:
                 continue
 
             result = await classify_complexity(prompt_text)
-            response_text = "".join(
-                part.text for part in (actual.final_response.parts or []) if part.text
-            ).lower()
+            parts = actual.final_response.parts if actual.final_response else None
+            response_text = "".join(part.text for part in (parts or []) if part.text).lower()
 
             routed_correctly = False
             if (
@@ -93,7 +92,9 @@ try:
             )
 
         scores = [
-            r.score for r in per_invocation_results if r.eval_status != EvalStatus.NOT_EVALUATED
+            r.score
+            for r in per_invocation_results
+            if r.eval_status != EvalStatus.NOT_EVALUATED and r.score is not None
         ]
         avg = statistics.mean(scores) if scores else 0.0
         threshold = eval_metric.criterion.threshold if eval_metric.criterion else 0.8

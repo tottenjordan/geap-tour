@@ -115,7 +115,7 @@ def serialize_agent_card(card: AgentCard) -> dict:
     pydantic ``model_dump``.
     """
     if hasattr(card, "model_dump"):
-        return card.model_dump(mode="json", exclude_none=True)  # type: ignore[attr-defined]
+        return card.model_dump(mode="json", exclude_none=True)  # ty: ignore[call-non-callable]
     from google.protobuf.json_format import MessageToDict
 
     return MessageToDict(card)
