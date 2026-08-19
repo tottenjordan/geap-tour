@@ -7,9 +7,15 @@ GCP or MCP connections required.
 """
 
 from google.adk.tools.agent_tool import AgentTool
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 from src import config
-from src.agents.coordinator_agent import coordinator_agent, save_memories_callback
+from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
+from src.agents.coordinator_agent import (
+    _build_memory_tools,
+    coordinator_agent,
+    save_memories_callback,
+)
 from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
 
 
@@ -21,6 +27,25 @@ class TestCoordinatorCallbacks:
     def test_after_agent_callback_still_saves_memories(self):
         # Wiring the guardrail must not disturb the existing Memory Bank callback.
         assert coordinator_agent.after_agent_callback is save_memories_callback
+
+
+class TestMemoryPreloadToolSelection:
+    def test_no_memory_tool_when_bank_disabled(self):
+        assert _build_memory_tools(enable_bank=False, enable_cache=False) == []
+        # Cache flag is moot when the bank is off.
+        assert _build_memory_tools(enable_bank=False, enable_cache=True) == []
+
+    def test_stock_preload_tool_when_cache_disabled(self):
+        tools = _build_memory_tools(enable_bank=True, enable_cache=False)
+        assert len(tools) == 1
+        assert type(tools[0]) is PreloadMemoryTool  # exactly the stock tool
+
+    def test_caching_preload_tool_when_cache_enabled(self):
+        tools = _build_memory_tools(enable_bank=True, enable_cache=True)
+        assert len(tools) == 1
+        assert isinstance(tools[0], CachingPreloadMemoryTool)
+        # Subclass of PreloadMemoryTool ⇒ deploy._wants_memory() still detects it.
+        assert isinstance(tools[0], PreloadMemoryTool)
 
 
 class TestCoordinatorServerSideArmor:
