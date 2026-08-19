@@ -119,8 +119,28 @@ RESPONSE_SCHEMA = {
 }
 
 
+_CLASSIFIER_CLIENT: genai.Client | None = None
+
+
+def _classifier_client() -> genai.Client:
+    """Process-wide cached genai client for the classifier.
+
+    The classifier runs in ``before_agent_callback`` on the hot path, ahead of
+    the first streamed token. Building a fresh ``genai.Client`` per request pays
+    credential resolution + setup every turn, stacking latency that can tip a
+    borderline request into an empty-at-200 timeout. The client is stateless and
+    thread-safe to reuse, so build it once per container.
+    """
+    global _CLASSIFIER_CLIENT
+    if _CLASSIFIER_CLIENT is None:
+        _CLASSIFIER_CLIENT = genai.Client(
+            vertexai=True, project=GCP_PROJECT_ID, location=CLASSIFIER_LOCATION
+        )
+    return _CLASSIFIER_CLIENT
+
+
 async def classify_complexity(prompt: str) -> ComplexityResult:
-    client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=CLASSIFIER_LOCATION)
+    client = _classifier_client()
     response = await client.aio.models.generate_content(
         model=CLASSIFIER_MODEL,
         contents=CLASSIFIER_PROMPT_TEMPLATE.format(prompt=prompt),
