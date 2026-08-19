@@ -110,11 +110,80 @@ i.e. a pre-existing measurement artifact, not a thinking-cap regression.
 this is now a **baked env var** — a bare `--update` without it silently reverts to
 uncapped thinking (same class as the model-revert trap).
 
-## Follow-up (not yet done): memory-preload per-invocation cache
+## The second lever: opt-in memory-preload cache (`ENABLE_MEMORY_PRELOAD_CACHE`)
 
-The Memory Bank retrieve is the other 3–5s controllable slice, but it is
-**load-bearing for the validated cross-session-recall demo**, so it is deliberately
-left as a separate, careful change. Candidate: a short-TTL per-`(user, query)`
-cache in front of `PreloadMemoryTool.search_memory` so a multi-turn request does
-not re-pay the network retrieve on every internal LLM hop. Must be validated
-against `verify_cross_session_recall` before shipping.
+The Memory Bank retrieve is the other 3–5s controllable slice. Root cause (from
+ADK source, `google/adk/tools/preload_memory_tool.py`): `PreloadMemoryTool`
+runs `process_llm_request` **before every LLM hop** and each time issues
+`tool_context.search_memory(user_query)` — a blocking Vertex Memory Bank round-trip
+— where `user_query = user_content.parts[0].text`, the invocation's *original*
+message, **constant across all hops**. So a multi-hop request (initial → after a
+tool → after the next tool → final) re-issues the *identical* retrieve every hop.
+The latency table above shows the cost: seeded user `alice` is consistently 3–5s
+slower than an empty user, and a multi-tool turn pays it on each internal hop.
+
+`src/agents/caching_preload_memory_tool.py:CachingPreloadMemoryTool` subclasses
+`PreloadMemoryTool` and memoizes the retrieve keyed by `(invocation_id, query)`:
+
+- **Within one invocation** every hop shares the same key → the network retrieve
+  happens **once**; subsequent hops hit the cache and re-render from it.
+- **Across invocations** a new `invocation_id` (`ReadonlyContext.invocation_id`)
+  always misses → **zero cross-invocation staleness by construction**. A fact added
+  to Memory Bank between two requests can never be masked by a stale entry — the
+  exact property the validated cross-session-recall demo depends on. (This is why
+  keying on `invocation_id` is preferred over a TTL cache at the memory-service
+  seam, which the service layer can't scope to an invocation.)
+- Only *successful* retrieves are cached (an empty-memories result included); a
+  transient `search_memory` exception is not cached, so a later hop retries.
+- Being a subclass, `deploy._wants_memory()` still detects it (isinstance) and
+  provisions the Memory Bank service.
+
+**Opt-in, default off** (`src/config.py:ENABLE_MEMORY_PRELOAD_CACHE`, mirrors the
+thinking-budget knob): with the flag unset the coordinator wires the stock
+`PreloadMemoryTool` — byte-identical behavior, so a bare `deploy_coordinator
+--update` changes nothing. `src/agents/coordinator_agent.py:_build_memory_tools`
+selects the tool.
+
+### Recommended live validation (recall MUST hold before baking in)
+
+Deploy a probe *revision* in place (never recreate, never repoint `.env`) with the
+model split pinned, the thinking budget preserved, and the cache flag on:
+
+```bash
+COORDINATOR_THINKING_BUDGET=512 ENABLE_MEMORY_PRELOAD_CACHE=1 \
+COORDINATOR_MODEL=gemini-2.5-flash AGENT_MODEL=gemini-3.5-flash \
+TRAVEL_MODEL=gemini-3.5-flash EXPENSE_MODEL=gemini-3.5-flash ROUTER_MODEL=gemini-3.1-flash-lite \
+  uv run python -m src.doe.deploy_coordinator --update 4380288848559603712 \
+    --min-instances 4 --display-name coordinator-gemini25-probe
+
+uv run python -m src.eval.verify_cross_session_recall --user-id alice \
+    --engine-id 4380288848559603712                                    # MUST print RECALL: PASS
+uv run python -m src.eval.latency_probe --agent-id 4380288848559603712 # latency delta
+```
+
+### Live validation (2026-08-19, `ENABLE_MEMORY_PRELOAD_CACHE=1`)
+
+Deployed the probe engine `4380288848559603712` in place as a new revision with
+the cache flag on (model split pinned, `COORDINATOR_THINKING_BUDGET=512` preserved,
+`--min-instances 4`).
+
+- **Recall holds — the load-bearing gate.** `verify_cross_session_recall
+  --user-id alice` printed **`RECALL: PASS`**: a preference stated in session A
+  ("window seats / Delta / Marriott corporate rate") resurfaced verbatim in a
+  brand-new session B via `PreloadMemoryTool`. The invocation-scoped key means the
+  session-B probe (a fresh `invocation_id`) always misses the cache and does a live
+  retrieve, so the cache cannot mask a newly-persisted fact — confirmed live, not
+  just by construction.
+- **Latency healthy** (`latency_probe --user-id alice`, seeded user): warm
+  multi-tool booking **7.9s total** (startup 4.2s, mcp 0.3s, llm 3.0s), with the two
+  real domain tools surfaced. That warm startup (4.2s) sits in the *empty-user*
+  range from the table above — i.e. the seeded-user preload penalty (previously
+  +3–5s, re-paid per hop) no longer dominates a warm turn. (Single combined run:
+  the thinking cap and the cache are both on, so this is the shipped-config number,
+  not an isolated cache-only delta.)
+
+**Decision:** implementation shipped behind the default-off flag. The probe engine
+is left with the flag **on** as the reference revision; recall + latency both pass.
+Enabling it on any other deploy is an opt-in env var, and recall must be re-checked
+if the coordinator backbone or ADK's `PreloadMemoryTool` changes.
+

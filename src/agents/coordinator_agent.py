@@ -11,6 +11,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
+from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
 from src.agents.expense_agent import expense_agent
 from src.agents.travel_agent import travel_agent
 from src.armor.config import get_armored_generate_config, guardrail_with_telemetry
@@ -18,6 +19,7 @@ from src.config import (
     BOOKING_MCP_SERVER,
     COORDINATOR_MODEL,
     ENABLE_MEMORY_BANK,
+    ENABLE_MEMORY_PRELOAD_CACHE,
     EXPENSE_MCP_SERVER,
     SEARCH_MCP_SERVER,
     resolve_model,
@@ -92,7 +94,23 @@ async def save_memories_callback(callback_context: CallbackContext):
 # coordinator drops the PreloadMemoryTool (no recall) and the memory-save
 # after-callback (no write), which also makes deploy._wants_memory() False so the
 # engine is wrapped session-only with no Memory Bank service. Default is on.
-_memory_tools = [PreloadMemoryTool()] if ENABLE_MEMORY_BANK else []
+def _build_memory_tools(*, enable_bank: bool, enable_cache: bool) -> list:
+    """Select the Memory Bank preload tool for the coordinator's tool list.
+
+    - bank off → no memory tool (and no recall).
+    - bank on, cache off → stock ``PreloadMemoryTool`` (current default behavior).
+    - bank on, cache on → ``CachingPreloadMemoryTool`` (opt-in latency knob:
+      collapses the per-hop retrieve; a subclass, so ``deploy._wants_memory()``
+      still detects it and provisions the Memory Bank service).
+    """
+    if not enable_bank:
+        return []
+    return [CachingPreloadMemoryTool() if enable_cache else PreloadMemoryTool()]
+
+
+_memory_tools = _build_memory_tools(
+    enable_bank=ENABLE_MEMORY_BANK, enable_cache=ENABLE_MEMORY_PRELOAD_CACHE
+)
 _after_callback = save_memories_callback if ENABLE_MEMORY_BANK else None
 
 coordinator_agent = LlmAgent(

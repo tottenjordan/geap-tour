@@ -133,6 +133,21 @@ PROMPT_VARIANT = os.environ.get("PROMPT_VARIANT", "gepa")
 # service is provisioned for that variant.
 ENABLE_MEMORY_BANK = os.environ.get("ENABLE_MEMORY_BANK", "1") not in ("0", "false", "False", "")
 
+# Memory-preload cache (opt-in; default off = stock PreloadMemoryTool behavior).
+# ADK re-issues the identical Memory Bank retrieve before EVERY internal LLM hop
+# (the query is the invocation's original message, constant across hops), costing
+# ~3-5s per seeded-user invocation (docs/notes/coordinator-latency-attribution.md).
+# ENABLE_MEMORY_PRELOAD_CACHE=1 swaps in CachingPreloadMemoryTool, which memoizes
+# the retrieve per (invocation_id, query) so a multi-hop request pays it once. A
+# new invocation always misses (fresh invocation_id) ⇒ zero cross-invocation
+# staleness, so cross-session recall is unaffected. Validate with
+# verify_cross_session_recall before baking into a deploy.
+ENABLE_MEMORY_PRELOAD_CACHE = os.environ.get("ENABLE_MEMORY_PRELOAD_CACHE", "0") in (
+    "1",
+    "true",
+    "True",
+)
+
 
 def _optional_int_env(name: str) -> int | None:
     """Parse an optional int env var; unset/blank/invalid → None (feature off)."""
