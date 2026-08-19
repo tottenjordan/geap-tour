@@ -15,6 +15,7 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import vertexai
 from vertexai import agent_engines
@@ -229,7 +230,7 @@ def generate_traffic(
 
     agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
-    agent = agent_engines.get(agent_resource_name)
+    agent: Any = agent_engines.get(agent_resource_name)
     total_queries = len(QUERIES) * count
     complexity_counts: dict[str, int] = {}
     errors = 0
@@ -320,7 +321,7 @@ def generate_router_traffic(
 
     router_resource_name = _resolve_engine_resource(router_resource_name, ROUTER_ENGINE_ID)
 
-    agent = agent_engines.get(router_resource_name)
+    agent: Any = agent_engines.get(router_resource_name)
     total_queries = len(QUERIES) * count
     complexity_counts: dict[str, int] = {}
     errors = 0
@@ -489,7 +490,7 @@ def generate_steady_traffic(
 
     agent_resource_name = _resolve_engine_resource(agent_resource_name, AGENT_ENGINE_ID)
 
-    agent = agent_engines.get(agent_resource_name)
+    agent: Any = agent_engines.get(agent_resource_name)
     pool = SessionPool(agent) if reuse_sessions else None
     total_queries = 0
     total_errors = 0

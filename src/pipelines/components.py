@@ -9,7 +9,7 @@ container before the env is populated.
 
 from typing import NamedTuple
 
-from kfp import dsl
+from kfp import dsl  # ty: ignore[unresolved-import]
 
 IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v3"
 
@@ -19,7 +19,7 @@ def resolve_agent(
     agent_id: str,
     agent_module: str,
     display_name: str = "",
-) -> NamedTuple("Out", [("agent_resource", str), ("deployed_fresh", bool)]):  # type: ignore[valid-type]
+) -> NamedTuple("Out", [("agent_resource", str), ("deployed_fresh", bool)]):  # ty: ignore[invalid-type-form]
     from src.config import GCP_PROJECT_ID, GCP_REGION
 
     if agent_id:
@@ -234,8 +234,9 @@ def cleanup(agent_id: str, display_name: str):
             name = getattr(eng, "resource_name", None) or getattr(
                 getattr(eng, "api_resource", None), "name", None
             )
-            agent_engines.delete(name, force=True)
-            print(f"deleted temp engine: {name}")
+            if name:
+                agent_engines.delete(name, force=True)
+                print(f"deleted temp engine: {name}")
     except Exception as e:
         print(f"cleanup skipped: {e}")
 

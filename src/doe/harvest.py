@@ -132,7 +132,8 @@ def fetch_results(gcs_uri: str, *, client=None, timeout: float = 300) -> dict:
 def _get_job_state(resource_name: str) -> str:
     from google.cloud import aiplatform
 
-    return aiplatform.PipelineJob.get(resource_name).state.name
+    state = aiplatform.PipelineJob.get(resource_name).state
+    return state.name if state else "UNKNOWN"
 
 
 def _results_exist(gcs_uri: str, *, client=None) -> bool:

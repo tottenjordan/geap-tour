@@ -5,6 +5,10 @@ from google.protobuf import duration_pb2
 
 from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 
+# ty's generated protobuf stubs don't expose the well-known Duration message
+# (it exists at runtime); alias it once rather than ignoring at each call site.
+_Duration = duration_pb2.Duration  # ty: ignore[unresolved-attribute]
+
 _COMPARISONS = {
     "LT": monitoring_v3.ComparisonType.COMPARISON_LT,
     "GT": monitoring_v3.ComparisonType.COMPARISON_GT,
@@ -34,10 +38,10 @@ def _build_policy(
             filter=f'metric.type="custom.googleapis.com/{family}/{metric_name}" AND resource.type="global"',
             comparison=_COMPARISONS[comparison],
             threshold_value=threshold,
-            duration=duration_pb2.Duration(seconds=600),
+            duration=_Duration(seconds=600),
             aggregations=[
                 monitoring_v3.Aggregation(
-                    alignment_period=duration_pb2.Duration(seconds=600),
+                    alignment_period=_Duration(seconds=600),
                     per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_MEAN,
                 )
             ],
@@ -206,7 +210,7 @@ def _engine_scope(engine_id: str | None) -> str:
 def _engine_aggregation() -> monitoring_v3.Aggregation:
     """5-min ALIGN_RATE, summed per engine — shared by the error-rate ratio."""
     return monitoring_v3.Aggregation(
-        alignment_period=duration_pb2.Duration(seconds=300),
+        alignment_period=_Duration(seconds=300),
         per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_RATE,
         cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
         group_by_fields=["resource.label.reasoning_engine_id"],
@@ -223,10 +227,10 @@ def _build_engine_latency_policy(
             filter=f'metric.type="{ENGINE_LATENCY_METRIC}" AND {_engine_scope(engine_id)}',
             comparison=_COMPARISONS["GT"],
             threshold_value=threshold_ms,
-            duration=duration_pb2.Duration(seconds=300),
+            duration=_Duration(seconds=300),
             aggregations=[
                 monitoring_v3.Aggregation(
-                    alignment_period=duration_pb2.Duration(seconds=300),
+                    alignment_period=_Duration(seconds=300),
                     per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_PERCENTILE_99,
                     cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_MEAN,
                     group_by_fields=["resource.label.reasoning_engine_id"],
@@ -274,7 +278,7 @@ def _build_engine_error_rate_policy(
             denominator_aggregations=[_engine_aggregation()],
             comparison=_COMPARISONS["GT"],
             threshold_value=threshold,
-            duration=duration_pb2.Duration(seconds=300),
+            duration=_Duration(seconds=300),
         ),
     )
     return monitoring_v3.AlertPolicy(

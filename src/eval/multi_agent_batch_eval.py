@@ -298,7 +298,7 @@ def run_multi_agent_batch_eval(
             }
 
     # Cross-agent summary
-    total_cases = sum(r.get("test_cases", 0) for r in agent_results.values())
+    total_cases = sum(int(r.get("test_cases", 0)) for r in agent_results.values())
     agents_passed = sum(1 for r in agent_results.values() if r.get("status") == "PASSED")
     all_passed = agents_passed == len(agents)
 

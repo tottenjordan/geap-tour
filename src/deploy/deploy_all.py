@@ -2,7 +2,7 @@
 
 import os
 
-from src.deploy.deploy_agents import deploy_all_agents
+from src.deploy.deploy_agents import run_deploy
 from src.deploy.deploy_mcp_servers import deploy_all_servers
 
 
@@ -22,7 +22,7 @@ def main():
 
     # Step 2: Deploy agents to Agent Runtime
     print("\n[2/3] Deploying agents to Agent Runtime...")
-    agent_resources = deploy_all_agents()
+    agent_resources = run_deploy()
 
     # Step 3: Publish periodic-snapshot eval scores (canonical quality source)
     print("\n[3/3] Skipping eval publish (run after generating traffic)")

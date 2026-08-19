@@ -21,7 +21,7 @@ try:
 
     _TRACE_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - exercised only when lib is absent
-    trace_v1 = None  # type: ignore[assignment]
+    trace_v1 = None  # ty: ignore[invalid-assignment]
     _TRACE_IMPORT_ERROR = exc
 
 

@@ -116,7 +116,7 @@ async def run_one_time_eval(agent_key: str = "coordinator", num_runs: int = 1):
     module = AGENT_MODULES.get(agent_key)
     agent_name = AGENT_NAMES.get(agent_key)
     evalset_file = EVALSET_FILES.get(agent_key)
-    if not module:
+    if not module or not evalset_file:
         print(f"Unknown agent: {agent_key}. Available: {list(AGENT_MODULES)}")
         sys.exit(1)
 

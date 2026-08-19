@@ -22,15 +22,13 @@ import vertexai
 from vertexai import Client, types
 
 from src.config import EVAL_OUTPUT_DIR, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
-from src.eval.agent_eval_configs import (
-    TIER_EVAL_CASES,
-    get_metrics,
-)
+from src.eval.agent_eval_configs import get_metrics
 from src.eval.eval_experiment import (
     ensure_eval_experiment,
     eval_run_display_name,
     eval_run_labels,
 )
+from src.eval.tier_eval_cases import TIER_EVAL_CASES
 
 GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
 MAX_POLL_SECONDS = 1200

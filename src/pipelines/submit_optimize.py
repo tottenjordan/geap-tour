@@ -20,7 +20,7 @@ import argparse
 import os
 
 from google.cloud import aiplatform
-from kfp import compiler
+from kfp import compiler  # ty: ignore[unresolved-import]
 
 from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, RESOURCE_LABELS
 from src.pipelines.optimize_pipeline import optimize_pipeline

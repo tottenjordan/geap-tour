@@ -145,6 +145,9 @@ def _load_agent(agent_module_path: str):
         sys.exit(1)
 
     spec = importlib.util.spec_from_file_location("agent", init_path)
+    if spec is None or spec.loader is None:
+        print(f"Error: could not load module spec from {init_path}")
+        sys.exit(1)
     module = importlib.util.module_from_spec(spec)
     sys.modules["agent"] = module
     spec.loader.exec_module(module)

@@ -33,9 +33,9 @@ def get_mcp_tools(server_name: str):
         # Agent Registry uses default 5s/300s — override for Cloud Run
         if hasattr(toolset, "_connection_params"):
             if hasattr(toolset._connection_params, "timeout"):
-                toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS
+                toolset._connection_params.timeout = MCP_TIMEOUT_SECONDS  # ty: ignore[invalid-assignment]
             if hasattr(toolset._connection_params, "sse_read_timeout"):
-                toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS
+                toolset._connection_params.sse_read_timeout = MCP_READ_TIMEOUT_SECONDS  # ty: ignore[invalid-assignment]
         return toolset
     except (RuntimeError, ValueError) as exc:
         # ADK raises RuntimeError on registry control-plane HTTP/creds errors and

@@ -15,7 +15,7 @@ itself DOE-fannable (optimize under flash vs pro, etc.).
 
 import os
 
-from kfp import dsl
+from kfp import dsl  # ty: ignore[unresolved-import]
 
 from src.config import (
     BOOKING_MCP_SERVER,
