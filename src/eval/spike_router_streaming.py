@@ -96,7 +96,7 @@ def _session_with_retry(resource, user_id, *, attempts=5):
     for a in range(attempts):
         try:
             return create_session(resource, user_id)
-        except Exception as exc:  # noqa: BLE001 - diagnostic, any failure retries
+        except Exception as exc:
             last = exc
             time.sleep(3 * (a + 1))
     raise RuntimeError(f"create_session failed after {attempts} attempts: {last}")

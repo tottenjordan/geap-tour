@@ -12,8 +12,9 @@ from src.router.tier_routing_llm import TierRoutingLlm
 class _FakeLlm:
     """Minimal BaseLlm stand-in that records the request and yields one chunk."""
 
-    def __init__(self, tag: str):
+    def __init__(self, tag: str, model: str | None = None):
         self.tag = tag
+        self.model = model if model is not None else tag
         self.seen: list = []
 
     async def generate_content_async(self, llm_request, stream=False):
@@ -72,6 +73,44 @@ def test_is_base_llm_and_carries_default_model():
     disp, _ = _dispatcher(["lite-x", "flash-x"])
     assert isinstance(disp, BaseLlm)
     assert disp.model == "lite-x"  # BaseLlm.model field == default tier
+
+
+@pytest.mark.asyncio
+async def test_request_model_rewritten_to_underlying_model():
+    """The tier's *resolved* id reaches the backbone, not the bare tier key.
+
+    ADK's ``LiteLlm.generate_content_async`` uses
+    ``effective_model = llm_request.model or self.model``, so leaving the bare
+    key on the request discards ``resolve_model``'s ``vertex_ai/`` prefix and
+    LiteLLM routes Claude to provider=anthropic (Missing Anthropic API Key).
+    """
+    fake = _FakeLlm("claude-x", model="vertex_ai/claude-x")
+    disp = TierRoutingLlm(["claude-x"], default_model="claude-x", resolver=lambda _m: fake)
+    req = SimpleNamespace(model="claude-x")
+
+    await _collect(disp.generate_content_async(req))
+
+    assert req.model == "vertex_ai/claude-x"
+    assert fake.seen[0][0].model == "vertex_ai/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_fallback_rewrites_request_model_to_default():
+    """An unknown tier runs on the default, so the request must name the default."""
+    disp, fakes = _dispatcher(["lite-x", "flash-x"])
+    req = SimpleNamespace(model="does-not-exist")
+
+    await _collect(disp.generate_content_async(req))
+
+    assert req.model == "lite-x"
+    assert fakes["lite-x"].seen[0][0].model == "lite-x"
+
+
+def test_claude_tier_resolves_with_vertex_prefix():
+    """Regression guard on the resolver itself (no network)."""
+    from src.router.tier_routing_llm import _as_base_llm
+
+    assert _as_base_llm("claude-sonnet-4-6").model == "vertex_ai/claude-sonnet-4-6"
 
 
 def test_resolver_called_once_per_unique_model():

@@ -92,7 +92,18 @@ class TierRoutingLlm(BaseLlm):
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
-        """Forward the turn to the tier model chosen for this request."""
+        """Forward the turn to the tier model chosen for this request.
+
+        Rewrites ``llm_request.model`` to the *resolved* backbone id before
+        forwarding. ADK's ``LiteLlm.generate_content_async`` takes
+        ``effective_model = llm_request.model or self.model``, i.e. the request
+        wins over the instance — so leaving the bare tier key on the request
+        would strip the ``vertex_ai/`` prefix ``resolve_model`` added, and
+        LiteLLM would route Claude to provider ``anthropic`` (failing with
+        "Missing Anthropic API Key" instead of reaching Vertex). Rewriting also
+        keeps the request honest when ``_select`` falls back to the default.
+        """
         underlying = self._select(llm_request.model)
+        llm_request.model = underlying.model
         async for response in underlying.generate_content_async(llm_request, stream=stream):
             yield response
