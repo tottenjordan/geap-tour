@@ -22,6 +22,7 @@ from opentelemetry import trace
 
 from src import config
 from src.config import GCP_PROJECT_ID, GCP_REGION
+from src.models.afc import with_afc_disabled
 
 
 def get_model_armor_config() -> ModelArmorConfig:
@@ -75,16 +76,24 @@ def get_armored_generate_config(model: str | None = None) -> GenerateContentConf
     prior behavior exactly. They are gated to the regional path because Gemini-3
     (native/global) and Claude (LiteLlm) resolve generation config differently; the
     probe backbone that carries the latency is regional gemini-2.5-flash.
+
+    Both branches disable google-genai automatic function calling: AFC is on by
+    default and ADK copies this config verbatim onto the request, which logged an
+    "AFC is enabled" INFO per call plus a per-process WARNING. ADK does its own
+    function calling, so this is behaviour-preserving — see
+    docs/notes/genai-afc-warning.md.
     """
     if not _is_regional_gemini(model):
-        return GenerateContentConfig()
+        return with_afc_disabled(GenerateContentConfig())
 
     budget = config.COORDINATOR_THINKING_BUDGET
     thinking = ThinkingConfig(thinking_budget=budget) if budget is not None else None
-    return GenerateContentConfig(
-        model_armor_config=get_model_armor_config(),
-        thinking_config=thinking,
-        max_output_tokens=config.COORDINATOR_MAX_OUTPUT_TOKENS,
+    return with_afc_disabled(
+        GenerateContentConfig(
+            model_armor_config=get_model_armor_config(),
+            thinking_config=thinking,
+            max_output_tokens=config.COORDINATOR_MAX_OUTPUT_TOKENS,
+        )
     )
 
 

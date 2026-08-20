@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from google.genai.types import Content, Part
 
 from src import config as src_config
@@ -97,6 +98,18 @@ class TestModelArmorConfig:
         # Safe default: no model → no server-side armor.
         config = get_armored_generate_config()
         assert config.model_armor_config is None
+
+    @pytest.mark.parametrize(
+        "model", ["gemini-2.5-flash", "gemini-3.5-flash", "claude-sonnet-4-6", None]
+    )
+    def test_afc_disabled_on_every_branch(self, model):
+        """Both return branches must disable google-genai automatic function
+        calling. AFC defaults ON, and ADK copies this config straight onto the
+        genai request, which logged an INFO per call plus a per-process WARNING.
+        See docs/notes/genai-afc-warning.md.
+        """
+        config = get_armored_generate_config(model)
+        assert config.automatic_function_calling.disable is True
 
 
 class TestGenerationLatencyKnobs:

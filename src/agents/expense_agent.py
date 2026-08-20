@@ -3,6 +3,7 @@
 from google.adk.agents import LlmAgent
 
 from src.config import EXPENSE_MCP_SERVER, EXPENSE_MODEL, PROMPT_VARIANT, resolve_model
+from src.models.afc import with_afc_disabled
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.60 → optimized 0.90).
@@ -63,6 +64,7 @@ expense_agent = LlmAgent(
     tools=[
         get_mcp_tools(EXPENSE_MCP_SERVER),
     ],
+    generate_content_config=with_afc_disabled(),
 )
 
 root_agent = expense_agent

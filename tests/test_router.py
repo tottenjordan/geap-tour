@@ -227,6 +227,14 @@ class TestAgentConfig:
 
         assert router_agent.before_model_callback is not None
 
+    def test_router_disables_afc(self):
+        # ADK copies generate_content_config onto the genai request, and AFC is
+        # ON by default — which is what flooded this engine's logs with an
+        # "AFC is enabled" INFO per call. See docs/notes/genai-afc-warning.md.
+        from src.router.agents import router_agent
+
+        assert router_agent.generate_content_config.automatic_function_calling.disable is True
+
 
 class TestSelectTierModelCallback:
     def test_sets_request_model_from_state_tier(self):
@@ -334,6 +342,13 @@ class TestLazyTierAgents:
 
         assert lite_agent.name == "lite_agent"
         assert lite_agent.instruction is not None
+
+    def test_tier_agent_disables_afc(self):
+        """The lazily-built tier agents ship AFC off, like every other agent
+        (docs/notes/genai-afc-warning.md)."""
+        from src.router.agents import flash_agent
+
+        assert flash_agent.generate_content_config.automatic_function_calling.disable is True
 
     def test_tier_agent_is_cached_across_accesses(self):
         import src.router.agents as m

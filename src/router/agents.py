@@ -48,6 +48,7 @@ from src.config import (
     SONNET_MODEL,
     resolve_model,
 )
+from src.models.afc import with_afc_disabled
 from src.observability.tracing import set_span_attributes, traced
 from src.registry import get_mcp_tools
 
@@ -145,6 +146,7 @@ def _build_tier_agent(name: str) -> LlmAgent:
         description=description,
         instruction=instruction,
         tools=_sub_agent_tools(),
+        generate_content_config=with_afc_disabled(),
     )
 
 
@@ -303,6 +305,9 @@ router_agent = LlmAgent(
     name="router_agent",
     instruction=tier_instruction_provider,
     tools=[*_mcp_tools(), _memory_tool()],
+    # AFC off — ADK copies this onto every genai request and google-genai
+    # defaults it on (docs/notes/genai-afc-warning.md).
+    generate_content_config=with_afc_disabled(),
     before_agent_callback=complexity_router_callback,
     before_model_callback=select_tier_model_callback,
     after_agent_callback=save_memories_callback,
