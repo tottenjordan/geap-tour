@@ -81,9 +81,18 @@ def get_booking_details(booking_id: str) -> dict:
 
 
 @mcp.tool()
-def list_all_bookings() -> list[dict]:
-    """List all bookings in the system."""
-    return list_bookings()
+def list_all_bookings(limit: int = 20) -> dict:
+    """List the most recent bookings in the system.
+
+    Returns at most `limit` bookings (capped at 20), newest first, plus
+    `total_count` over all stored bookings and a `truncated` flag. If
+    `truncated` is true, say so — report the total count and make clear the
+    listed bookings are only the most recent ones, never the complete list.
+
+    Args:
+        limit: Maximum number of bookings to return (default 20, capped at 20)
+    """
+    return list_bookings(limit)
 
 
 if __name__ == "__main__":

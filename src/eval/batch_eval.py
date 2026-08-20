@@ -593,6 +593,13 @@ def _build_agent_info() -> types.evals.AgentInfo:
     because that method requires an instantiated ADK LlmAgent object, which
     would attempt to connect to the MCP tool servers. For offline evaluation
     we only need the structural metadata.
+
+    Single-agent by design: the coordinator holds the search/booking/expense MCP
+    toolsets DIRECTLY and carries no AgentTools (see
+    docs/notes/coordinator-router-learnings.md). travel_agent/expense_agent are
+    still deployed and evaluated, but standalone — their descriptors are built
+    by agent_eval_configs, not nested here, because the delegation-aware
+    `geap_tool_use` judge reads this topology.
     """
     return types.evals.AgentInfo(
         name="coordinator_agent",
@@ -601,32 +608,15 @@ def _build_agent_info() -> types.evals.AgentInfo:
             "coordinator_agent": types.evals.AgentConfig(
                 agent_id="coordinator_agent",
                 agent_type="LlmAgent",
-                description="Corporate assistant coordinator that routes requests to travel or expense specialists.",
-                instruction=(
-                    "You are a corporate assistant coordinator. Route requests to the right specialist: "
-                    "flight/hotel search and booking to travel_agent, expense submission and policy checks "
-                    "to expense_agent, general travel info via search tools directly."
+                description=(
+                    "Corporate assistant that handles travel and expense requests itself "
+                    "using its own search, booking, and expense MCP tools."
                 ),
-                sub_agents=["travel_agent", "expense_agent"],
-            ),
-            "travel_agent": types.evals.AgentConfig(
-                agent_id="travel_agent",
-                agent_type="LlmAgent",
-                description="Corporate travel assistant for searching and booking flights and hotels.",
                 instruction=(
-                    "You are a corporate travel assistant. Search for and book flights and hotels. "
-                    "Use search tools to find options, present them clearly, and use booking tools to confirm."
-                ),
-                sub_agents=[],
-            ),
-            "expense_agent": types.evals.AgentConfig(
-                agent_id="expense_agent",
-                agent_type="LlmAgent",
-                description="Corporate expense management assistant for submitting expenses and checking policies.",
-                instruction=(
-                    "You are a corporate expense management assistant. Policy limits: "
-                    "meals ($75), transport ($200), lodging ($400), supplies ($100), entertainment ($150). "
-                    "Check policy first, submit expenses, and view history."
+                    "You are a corporate assistant coordinator. Handle requests directly with your "
+                    "own tools: search_flights/search_hotels to find options, book_flight/book_hotel "
+                    "to book them, check_expense_policy before any submission, submit_expense to "
+                    "submit, and get_user_expenses to report on past expenses."
                 ),
                 sub_agents=[],
             ),

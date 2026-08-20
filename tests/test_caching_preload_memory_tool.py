@@ -147,6 +147,51 @@ class TestNoOpPaths:
         assert req1.appended == [] and req2.appended == []
 
 
+class TestPreloadSpan:
+    """The preload is the coordinator's biggest un-traced latency contributor.
+
+    ``docs/notes/coordinator-latency-attribution.md`` measures the Memory Bank
+    retrieve at 3-5s per invocation, and until now it emitted no span at all —
+    a trace could not tell you whether a slow turn was the model or the memory
+    fetch, nor whether the cache actually collapsed the per-hop retrieves.
+    """
+
+    def _preload_spans(self, exporter):
+        return [s for s in exporter.get_finished_spans() if s.name == "coordinator.memory_preload"]
+
+    async def test_span_records_cache_hit_and_result_count(self, span_exporter):
+        tool = CachingPreloadMemoryTool()
+        ctx = _FakeToolContext("prefs?", "inv-1", _response("likes window seat"))
+
+        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+
+        spans = self._preload_spans(span_exporter)
+        assert len(spans) == 2  # one span per hop, even when the retrieve is cached
+        assert [s.attributes["memory.cache_hit"] for s in spans] == [False, True]
+        assert spans[0].attributes["memory.result_count"] == 1
+        assert spans[0].attributes["memory.invocation_id"] == "inv-1"
+
+    async def test_span_marks_a_failed_retrieve(self, span_exporter):
+        """A preload failure was a logger.warning and nothing else."""
+        tool = CachingPreloadMemoryTool()
+        ctx = _FakeToolContext("q", "inv-1", None, raises=True)
+
+        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+
+        span = self._preload_spans(span_exporter)[0]
+        assert span.attributes["memory.error"] == "RuntimeError"
+        assert span.attributes["memory.cache_hit"] is False
+
+    async def test_no_span_when_there_is_nothing_to_preload(self, span_exporter):
+        tool = CachingPreloadMemoryTool()
+        ctx = _FakeToolContext(None, "inv-1", _response("x"))
+
+        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+
+        assert self._preload_spans(span_exporter) == []
+
+
 class TestEviction:
     async def test_cache_is_bounded(self):
         tool = CachingPreloadMemoryTool(maxsize=2)

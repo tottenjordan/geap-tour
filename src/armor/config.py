@@ -49,6 +49,16 @@ def _is_regional_gemini(model: str | None) -> bool:
     return bool(model) and model.startswith(("gemini-2", "models/"))
 
 
+def server_side_armor_enabled(model: str | None) -> bool:
+    """True when ``get_armored_generate_config`` actually attaches Model Armor.
+
+    Exactly the gate applied below, named and exported so callers (e.g. the
+    coordinator publishing ``armor.server_side`` on its request span) can report
+    which security layers are live without re-deriving the family check.
+    """
+    return _is_regional_gemini(model)
+
+
 def get_armored_generate_config(model: str | None = None) -> GenerateContentConfig:
     """GenerateContentConfig with server-side Model Armor only where it is honored.
 

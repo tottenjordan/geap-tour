@@ -57,8 +57,19 @@ file; keep this index short (< 200 lines).
 - [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
   — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
-  tier via a stateless `TierRoutingLlm` dispatcher. Residual empty-at-200 is
-  platform-wide (coordinator empties at the same rate same-moment), not the router.
+  tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
+  platform-wide" claim is falsified — see the note below.)
+- [Router empty responses: an oversized tool payload burning the quota](./router-empty-responses-quota.md)
+  — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED`, driven
+  by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools
+  agent must absorb and re-emit; fixed by capping the tool payload and retrying +
+  labelling 429s instead of returning silence. Includes the falsified hypotheses.
+- [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
+  — a two-engine trace census showed the gap was published *attributes*, not
+  instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
+  wrapper (insurance — the coordinator took 0 of the 215 429s), domain spans for
+  the un-traced 3-5s Memory Bank preload + the silently-swallowed save, and drops
+  both AgentTools (0 calls measured across 10 traces).
 - [DOE harvest `--wait` path hang (root cause & hardening)](./doe-harvest-wait-path.md)
   — a transient live-poll stall could hang unattended for the 2h timeout with no
   output; fixed via GCS ground-truth fall-through, a heartbeat, and a download

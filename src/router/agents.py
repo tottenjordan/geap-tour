@@ -20,10 +20,6 @@ pattern. See ``docs/notes/router-transfer-streaming.md``.
 
 import contextlib
 
-import litellm
-
-litellm.suppress_debug_info = True  # ty: ignore[invalid-assignment]
-
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
@@ -95,45 +91,79 @@ def _sub_agent_tools():
 # delegation targets (the router is a single direct-tools agent — see below); they
 # are retained for standalone per-tier deploy/eval and as the GEPA optimization
 # sandbox roots (src/router/<tier>_agent_opt/ import these).
-lite_agent = LlmAgent(
-    model=resolve_model(LITE_MODEL),
-    name="lite_agent",
-    description="Handles trivial, single-intent lookups — direct facts, single policy checks.",
-    instruction=LITE_INSTRUCTION,
-    tools=_sub_agent_tools(),
-)
+#
+# **Built LAZILY (PEP 562 module __getattr__).** Each one calls
+# ``_sub_agent_tools()`` => 3 McpToolsets apiece, so eagerly building all five
+# made the *serving* container construct 7 agents and perform 18 Agent Registry
+# toolset lookups at import for agents the router never invokes (it holds its own
+# toolsets directly and reuses only the tier INSTRUCTION constants). Measured
+# effect: 7 agents → 2, 18 lookups → 3, import ~8.3s → ~7.3s. Resident memory was
+# NOT the win here — RSS measured 265.5MB before vs 265.3MB after, i.e. unchanged;
+# the router's real +140MB over the coordinator was ``litellm``, fixed separately
+# by resolving tier backbones lazily in :mod:`src.router.tier_routing_llm`.
+# Importing ``lite_agent`` & co. by name still works exactly as before; nothing is
+# built until first access.
+_TIER_AGENT_SPECS: dict[str, tuple[str, str, str]] = {
+    "lite_agent": (
+        LITE_MODEL,
+        "Handles trivial, single-intent lookups — direct facts, single policy checks.",
+        LITE_INSTRUCTION,
+    ),
+    "flash_agent": (
+        FLASH_MODEL,
+        "Handles simple tasks with light reasoning — formatted searches, single submissions.",
+        FLASH_INSTRUCTION,
+    ),
+    "pro_agent": (
+        PRO_MODEL,
+        "Handles moderate tasks requiring reasoning — comparisons, multi-step lookups, policy analysis.",
+        PRO_INSTRUCTION,
+    ),
+    "sonnet_agent": (
+        SONNET_MODEL,
+        "Handles complex, multi-intent requests requiring cross-domain analysis.",
+        SONNET_INSTRUCTION,
+    ),
+    "opus_agent": (
+        OPUS_MODEL,
+        "Handles expert-level requests requiring deep multi-step planning, budget optimization, and strategic synthesis.",
+        OPUS_INSTRUCTION,
+    ),
+}
 
-flash_agent = LlmAgent(
-    model=resolve_model(FLASH_MODEL),
-    name="flash_agent",
-    description="Handles simple tasks with light reasoning — formatted searches, single submissions.",
-    instruction=FLASH_INSTRUCTION,
-    tools=_sub_agent_tools(),
-)
+# Cache for lazily-built tier agents. Deliberately NOT written back into the
+# module namespace: ``__getattr__`` only fires while the name is absent from
+# globals(), and keeping it out keeps "was anything built?" observable.
+_tier_agents: dict[str, LlmAgent] = {}
 
-pro_agent = LlmAgent(
-    model=resolve_model(PRO_MODEL),
-    name="pro_agent",
-    description="Handles moderate tasks requiring reasoning — comparisons, multi-step lookups, policy analysis.",
-    instruction=PRO_INSTRUCTION,
-    tools=_sub_agent_tools(),
-)
 
-sonnet_agent = LlmAgent(
-    model=resolve_model(SONNET_MODEL),
-    name="sonnet_agent",
-    description="Handles complex, multi-intent requests requiring cross-domain analysis.",
-    instruction=SONNET_INSTRUCTION,
-    tools=_sub_agent_tools(),
-)
+def _build_tier_agent(name: str) -> LlmAgent:
+    model_id, description, instruction = _TIER_AGENT_SPECS[name]
+    return LlmAgent(
+        model=resolve_model(model_id),
+        name=name,
+        description=description,
+        instruction=instruction,
+        tools=_sub_agent_tools(),
+    )
 
-opus_agent = LlmAgent(
-    model=resolve_model(OPUS_MODEL),
-    name="opus_agent",
-    description="Handles expert-level requests requiring deep multi-step planning, budget optimization, and strategic synthesis.",
-    instruction=OPUS_INSTRUCTION,
-    tools=_sub_agent_tools(),
-)
+
+def __getattr__(name: str) -> LlmAgent:
+    """PEP 562 hook: build a standalone tier agent on first access.
+
+    Keeps ``from src.router.agents import opus_agent`` working for the GEPA
+    sandboxes and the standalone deploy/eval paths without paying their
+    construction cost on the router's serving path.
+    """
+    if name in _TIER_AGENT_SPECS:
+        if name not in _tier_agents:
+            _tier_agents[name] = _build_tier_agent(name)
+        return _tier_agents[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *_TIER_AGENT_SPECS])
 
 
 async def complexity_router_callback(callback_context=None, **kwargs):

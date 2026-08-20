@@ -64,6 +64,40 @@ def test_fallback_on_resolution_error_returns_direct_toolset_and_warns(monkeypat
     assert any("direct URL" in r.getMessage() for r in warnings)
 
 
+class TestFallbackMapMatchesTheConfiguredNames:
+    """The fallback map must be keyed by the server names the agents actually pass.
+
+    A credential-less environment (CI) reaches Agent Registry, fails on ADC, and
+    survives only because ``MCP_SERVER_URLS`` has an entry for the name it was
+    called with. That held by accident until the test env vars were applied in a
+    *fixture*: modules imported during collection (``src/router/__init__.py``
+    imports the router agent) bound ``SEARCH_MCP_SERVER = ""`` while a later
+    ``importlib.reload`` of src.config/src.registry re-keyed the map to the real
+    names — stranding the empty key and re-raising the ADC error. The defaults now
+    land at conftest *import* time, which is what these two assertions pin.
+    """
+
+    def test_configured_server_names_are_non_empty(self):
+        import src.config as config
+
+        for name in (
+            config.SEARCH_MCP_SERVER,
+            config.BOOKING_MCP_SERVER,
+            config.EXPENSE_MCP_SERVER,
+        ):
+            assert name, "src.config was imported before the test env defaults were set"
+
+    def test_every_configured_server_name_has_a_fallback_url(self):
+        import src.config as config
+
+        for name in (
+            config.SEARCH_MCP_SERVER,
+            config.BOOKING_MCP_SERVER,
+            config.EXPENSE_MCP_SERVER,
+        ):
+            assert registry.MCP_SERVER_URLS.get(name), f"no direct-URL fallback for {name!r}"
+
+
 @pytest.mark.parametrize("exc", [RuntimeError("control-plane 403"), ValueError("no endpoint URI")])
 def test_fallback_reraises_when_no_mapped_url(monkeypatch, exc):
     """With no direct URL to fall back to, the original error propagates — a

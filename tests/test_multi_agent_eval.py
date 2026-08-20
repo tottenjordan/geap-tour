@@ -55,6 +55,38 @@ class TestAgentInfoBuilder:
             build_agent_info("nonexistent_agent")
 
 
+class TestCoordinatorDescriptorMatchesTheAgent:
+    """The eval descriptors must describe the coordinator that is actually deployed.
+
+    The coordinator holds its MCP toolsets directly and no longer carries the
+    travel_agent/expense_agent AgentTools (0 measured delegations — see
+    docs/notes/coordinator-router-learnings.md). These descriptors feed the
+    delegation-aware ``geap_tool_use`` judge, so a stale multi-agent topology
+    would have it grading routing behaviour the agent cannot exhibit.
+    """
+
+    def _coordinator_infos(self):
+        from src.eval.agent_eval_configs import build_agent_info
+        from src.eval.batch_eval import _build_agent_info
+
+        return [build_agent_info("coordinator_agent"), _build_agent_info()]
+
+    def test_descriptors_declare_no_sub_agents(self):
+        for info in self._coordinator_infos():
+            assert info.agents["coordinator_agent"].sub_agents == []
+
+    def test_descriptors_describe_only_the_coordinator(self):
+        for info in self._coordinator_infos():
+            assert list(info.agents) == ["coordinator_agent"]
+
+    def test_descriptors_name_no_specialist(self):
+        for info in self._coordinator_infos():
+            config = info.agents["coordinator_agent"]
+            text = f"{config.description} {config.instruction}"
+            assert "travel_agent" not in text
+            assert "expense_agent" not in text
+
+
 class TestEvalCasesPerAgent:
     def test_coordinator_has_cases(self):
         from src.eval.agent_eval_configs import get_eval_cases
