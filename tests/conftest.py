@@ -24,6 +24,38 @@ collect_ignore = [
     module for module, dep in _OPTIONAL_DEP_MODULES.items() if importlib.util.find_spec(dep) is None
 ]
 
+
+@pytest.fixture
+def span_exporter():
+    """Install a fresh in-memory TracerProvider, then restore the previous one.
+
+    Restoring matters: the rest of the suite relies on the default (no-op)
+    provider, which is what makes ``src.observability.tracing`` transparent
+    outside a deployed engine.
+    """
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.util._once import Once
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    saved_provider = trace._TRACER_PROVIDER
+    saved_once = trace._TRACER_PROVIDER_SET_ONCE
+    # Reset the "set once" guard so a fresh provider can be installed.
+    trace._TRACER_PROVIDER_SET_ONCE = Once()
+    trace._TRACER_PROVIDER = None
+    trace.set_tracer_provider(provider)
+    try:
+        yield exporter
+    finally:
+        trace._TRACER_PROVIDER = saved_provider
+        trace._TRACER_PROVIDER_SET_ONCE = saved_once
+
+
 _TEST_ENV_DEFAULTS = {
     "GCP_PROJECT_ID": "test-project",
     "GCP_REGION": "us-central1",

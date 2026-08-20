@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING, override
 from google.adk.tools import _memory_entry_utils
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
+from src.observability.tracing import set_span_attributes, traced
+
 if TYPE_CHECKING:
     from google.adk.memory.base_memory_service import SearchMemoryResponse
     from google.adk.models import LlmRequest
@@ -96,14 +98,33 @@ class CachingPreloadMemoryTool(PreloadMemoryTool):
         user_query: str = user_content.parts[0].text
         key = (tool_context.invocation_id, user_query)
 
-        response = self._get(key)
-        if response is None:  # cache miss → single network retrieve for this invocation
-            try:
-                response = await tool_context.search_memory(user_query)
-            except Exception:
-                logger.warning("Failed to preload memory for query: %s", user_query)
-                return  # transient failure is NOT cached; a later hop retries
-            self._put(key, response)
+        # Traced because this retrieve is the coordinator's dominant un-attributed
+        # latency (3-5s per invocation, docs/notes/coordinator-latency-attribution.md)
+        # and because ``memory.cache_hit`` is the only way to see from a trace
+        # whether the per-hop collapse this class exists for actually happened.
+        with traced("coordinator.memory_preload") as span:
+            response = self._get(key)
+            cache_hit = response is not None
+            set_span_attributes(
+                **{
+                    "memory.cache_hit": cache_hit,
+                    "memory.invocation_id": tool_context.invocation_id,
+                }
+            )
+            if not cache_hit:  # cache miss → single network retrieve for this invocation
+                try:
+                    response = await tool_context.search_memory(user_query)
+                except Exception as exc:
+                    # Not re-raised (the parent tool also gives up quietly), so
+                    # annotate the span by hand — ``traced`` only records
+                    # exceptions that propagate out of the block.
+                    span.record_exception(exc)
+                    set_span_attributes(**{"memory.error": type(exc).__name__})
+                    logger.warning("Failed to preload memory for query: %s", user_query)
+                    return  # transient failure is NOT cached; a later hop retries
+                self._put(key, response)
+
+            set_span_attributes(**{"memory.result_count": len(response.memories or [])})
 
         self._render(response, llm_request)
 
