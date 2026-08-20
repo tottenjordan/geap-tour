@@ -19,13 +19,13 @@ def test_coordinator_agent_config():
     from src.agents.coordinator_agent import coordinator_agent
 
     assert coordinator_agent.name == "coordinator_agent"
-    assert len(coordinator_agent.tools) >= 4  # MCP + PreloadMemory + 2 AgentTools
+    assert len(coordinator_agent.tools) >= 4  # 3 MCP toolsets + PreloadMemory
 
 
-def test_coordinator_uses_agent_tools():
+def test_coordinator_holds_no_agent_tools():
+    """Direct tools only — delegation measured 0 calls and cannot stream."""
     from google.adk.tools.agent_tool import AgentTool
 
     from src.agents.coordinator_agent import coordinator_agent
 
-    agent_tools = [t for t in coordinator_agent.tools if isinstance(t, AgentTool)]
-    assert len(agent_tools) == 2
+    assert [t for t in coordinator_agent.tools if isinstance(t, AgentTool)] == []

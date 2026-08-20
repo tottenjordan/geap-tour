@@ -85,17 +85,26 @@ class TestAgentConfigE2E:
         assert expense_agent.name == "expense_agent"
         assert coordinator_agent.name == "coordinator_agent"
 
-    def test_coordinator_orchestration_structure(self):
+    def test_coordinator_orchestrates_with_direct_tools_only(self):
+        """The coordinator calls MCP tools itself — it delegates to no one.
+
+        Nested sub-agent MCP calls do not stream back through the deployed
+        Agent Engine runtime, so delegation was already dead weight: a trace
+        census over 10 coordinator invocations recorded **0** AgentTool calls.
+        """
         from google.adk.tools.agent_tool import AgentTool
 
         from src.agents.coordinator_agent import coordinator_agent
 
-        # Coordinator delegates via AgentTool-wrapped specialists (not sub_agents).
-        tool_agent_names = [
-            t.agent.name for t in coordinator_agent.tools if isinstance(t, AgentTool)
-        ]
-        assert "travel_agent" in tool_agent_names
-        assert "expense_agent" in tool_agent_names
+        assert [t for t in coordinator_agent.tools if isinstance(t, AgentTool)] == []
+
+    def test_specialist_agents_keep_their_own_toolsets(self):
+        """They are still deployed and evaluated standalone — two deployables."""
+        from src.agents.expense_agent import expense_agent
+        from src.agents.travel_agent import travel_agent
+
+        assert travel_agent.tools
+        assert expense_agent.tools
 
     def test_entry_point_agents_wire_guardrail(self):
         # Model Armor is enforced server-side at deploy time (gateway policy);
