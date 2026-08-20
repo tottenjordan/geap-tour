@@ -49,13 +49,19 @@ def check_expense_policy(amount: float, category: str) -> dict:
 
 
 @mcp.tool()
-def get_user_expenses(user_id: str) -> list[dict]:
-    """Get all expenses submitted by a specific user.
+def get_user_expenses(user_id: str, limit: int = 20) -> dict:
+    """Get a user's most recent expenses, newest first.
+
+    Returns ``total_count`` and ``total_amount`` over the user's ENTIRE history
+    plus the most recent ``limit`` records under ``expenses``. When
+    ``truncated`` is true, older records were omitted — say so rather than
+    implying the listed records are the complete history.
 
     Args:
         user_id: Employee ID to look up expenses for
+        limit: Maximum number of records to return (1-20, default 20)
     """
-    return _get(user_id)
+    return _get(user_id, limit)
 
 
 if __name__ == "__main__":

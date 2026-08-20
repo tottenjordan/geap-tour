@@ -1,13 +1,20 @@
 """Tests for MCP server tools — validates mock data and tool logic."""
 
 from src.mcp_servers.booking.mock_db import (
+    MAX_BOOKINGS_RETURNED,
     bookings,
     cancel_booking,
     create_booking,
     get_booking,
     list_bookings,
 )
-from src.mcp_servers.expense.mock_db import check_policy, expenses, get_expenses, submit_expense
+from src.mcp_servers.expense.mock_db import (
+    MAX_EXPENSES_RETURNED,
+    check_policy,
+    expenses,
+    get_expenses,
+    submit_expense,
+)
 from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
 
 
@@ -59,7 +66,45 @@ class TestBookingMockDB:
     def test_list_bookings(self):
         create_booking("flight", "FL001", {"passenger_name": "A"})
         create_booking("hotel", "HT001", {"guest_name": "B"})
-        assert len(list_bookings()) == 2
+        result = list_bookings()
+        assert result["total_count"] == 2
+        assert result["returned_count"] == 2
+        assert result["truncated"] is False
+        assert len(result["bookings"]) == 2
+
+    def test_list_bookings_is_capped_and_newest_first(self):
+        """``bookings`` is the same unbounded accumulator ``expenses`` was.
+
+        Nothing prunes it, so every demo, eval and traffic run grows it on a
+        long-lived Cloud Run instance. The coordinator holds the booking toolset
+        directly, so an uncapped "list all bookings" is absorbed *and* re-emitted
+        on its context — the exact token blow-up behind the router's HTTP 429
+        empty responses (docs/notes/router-empty-responses-quota.md).
+        """
+        for i in range(MAX_BOOKINGS_RETURNED + 5):
+            create_booking("flight", f"FL{i:03d}", {"passenger_name": "A"})
+        result = list_bookings()
+        assert result["total_count"] == MAX_BOOKINGS_RETURNED + 5
+        assert result["returned_count"] == MAX_BOOKINGS_RETURNED
+        assert result["truncated"] is True
+        # Newest first, so the most recent booking leads.
+        assert result["bookings"][0]["item_id"] == f"FL{MAX_BOOKINGS_RETURNED + 4:03d}"
+        assert len(result["bookings"]) == MAX_BOOKINGS_RETURNED
+
+    def test_list_bookings_limit_cannot_exceed_the_cap(self):
+        """A model asking for more than the cap must not reopen the blow-up."""
+        for i in range(MAX_BOOKINGS_RETURNED + 5):
+            create_booking("flight", f"FL{i:03d}", {"passenger_name": "A"})
+        assert list_bookings(limit=1000)["returned_count"] == MAX_BOOKINGS_RETURNED
+        assert list_bookings(limit=0)["returned_count"] == 1
+        assert list_bookings(limit=3)["returned_count"] == 3
+
+    def test_list_bookings_on_an_empty_store_is_well_formed(self):
+        result = list_bookings()
+        assert result["bookings"] == []
+        assert result["total_count"] == 0
+        assert result["returned_count"] == 0
+        assert result["truncated"] is False
 
 
 class TestExpenseMockDB:
@@ -90,5 +135,48 @@ class TestExpenseMockDB:
     def test_get_expenses_by_user(self):
         submit_expense(50.0, "meals", "lunch", "EMP001")
         submit_expense(30.0, "transport", "taxi", "EMP002")
-        assert len(get_expenses("EMP001")) == 1
-        assert len(get_expenses("EMP002")) == 1
+        assert len(get_expenses("EMP001")["expenses"]) == 1
+        assert len(get_expenses("EMP002")["expenses"]) == 1
+
+    def test_get_expenses_reports_totals_over_all_records(self):
+        submit_expense(50.0, "meals", "lunch", "EMP001")
+        submit_expense(25.0, "meals", "coffee", "EMP001")
+        result = get_expenses("EMP001")
+        assert result["user_id"] == "EMP001"
+        assert result["total_count"] == 2
+        assert result["returned_count"] == 2
+        assert result["total_amount"] == 75.0
+        assert result["truncated"] is False
+
+    def test_get_expenses_is_capped_and_newest_first(self):
+        """The store is an unbounded accumulator; the tool payload must not be.
+
+        An uncapped "list all expenses" grew to 96 records / 26KB of JSON for
+        EMP001, which a direct-tools agent has to absorb *and* re-emit — the
+        token blow-up behind the router's HTTP 429 empty responses.
+        """
+        for i in range(MAX_EXPENSES_RETURNED + 5):
+            submit_expense(10.0, "meals", f"lunch {i}", "EMP001")
+        result = get_expenses("EMP001")
+        assert result["total_count"] == MAX_EXPENSES_RETURNED + 5
+        assert result["returned_count"] == MAX_EXPENSES_RETURNED
+        assert result["truncated"] is True
+        # Newest first, so the most recent submission leads.
+        descriptions = [e["description"] for e in result["expenses"]]
+        assert descriptions[0] == f"lunch {MAX_EXPENSES_RETURNED + 4}"
+        assert len(descriptions) == MAX_EXPENSES_RETURNED
+
+    def test_get_expenses_limit_cannot_exceed_the_cap(self):
+        """A model asking for more than the cap must not reopen the blow-up."""
+        for i in range(MAX_EXPENSES_RETURNED + 5):
+            submit_expense(10.0, "meals", f"lunch {i}", "EMP001")
+        assert get_expenses("EMP001", limit=1000)["returned_count"] == MAX_EXPENSES_RETURNED
+        assert get_expenses("EMP001", limit=0)["returned_count"] == 1
+        assert get_expenses("EMP001", limit=3)["returned_count"] == 3
+
+    def test_get_expenses_for_unknown_user_is_empty_but_well_formed(self):
+        result = get_expenses("NOBODY")
+        assert result["expenses"] == []
+        assert result["total_count"] == 0
+        assert result["total_amount"] == 0
+        assert result["truncated"] is False
