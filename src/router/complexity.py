@@ -28,6 +28,7 @@ from src.config import (
     PRO_MODEL,
     SONNET_MODEL,
 )
+from src.models.afc import with_afc_disabled
 
 # Newer Gemini models (3.x) are only available via location=global
 CLASSIFIER_LOCATION = os.environ.get("CLASSIFIER_LOCATION", "global")
@@ -144,13 +145,19 @@ async def classify_complexity(prompt: str) -> ComplexityResult:
     response = await client.aio.models.generate_content(
         model=CLASSIFIER_MODEL,
         contents=CLASSIFIER_PROMPT_TEMPLATE.format(prompt=prompt),
-        config=GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=RESPONSE_SCHEMA,
-            # Thinking models (gemini-3.x) use output tokens for reasoning,
-            # so we need extra headroom beyond the ~80 tokens of JSON output
-            max_output_tokens=2048,
-            temperature=0.0,
+        # AFC off: this runs on every router request, and genai's default-on
+        # automatic function calling logged an INFO per call plus a WARNING per
+        # worker process (docs/notes/genai-afc-warning.md). The classifier has no
+        # tools, so the AFC branch was pure overhead.
+        config=with_afc_disabled(
+            GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA,
+                # Thinking models (gemini-3.x) use output tokens for reasoning,
+                # so we need extra headroom beyond the ~80 tokens of JSON output
+                max_output_tokens=2048,
+                temperature=0.0,
+            )
         ),
     )
     # Thinking models may return None text if all tokens went to reasoning

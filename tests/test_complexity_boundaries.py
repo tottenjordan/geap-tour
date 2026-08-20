@@ -170,3 +170,40 @@ class TestClassifierClientCaching:
         assert first is second  # same instance reused
         assert len(built) == 1  # constructed exactly once
         assert built[0]["location"] == cx.CLASSIFIER_LOCATION
+
+
+class TestClassifierRequestConfig:
+    """The classifier call must disable google-genai automatic function calling.
+
+    AFC defaults ON, and the classifier runs in ``before_agent_callback`` on every
+    router request — which made the deployed router log an ``AFC is enabled`` INFO
+    per request plus a once-per-worker-process WARNING (1000+ rows in 6h).
+    See docs/notes/genai-afc-warning.md.
+    """
+
+    async def test_classifier_disables_afc_and_keeps_its_own_settings(self, monkeypatch):
+        import types
+
+        import src.router.complexity as cx
+
+        captured: dict = {}
+
+        class _FakeModels:
+            async def generate_content(self, *, model, contents, config):
+                captured["config"] = config
+                return types.SimpleNamespace(text='{"score": 0.1, "reason": "x"}')
+
+        monkeypatch.setattr(
+            cx,
+            "_classifier_client",
+            lambda: types.SimpleNamespace(aio=types.SimpleNamespace(models=_FakeModels())),
+        )
+
+        result = await cx.classify_complexity("hi")
+
+        assert result.score == 0.1
+        assert captured["config"].automatic_function_calling.disable is True
+        # The classifier's own settings must survive the stamp.
+        assert captured["config"].response_mime_type == "application/json"
+        assert captured["config"].temperature == 0.0
+        assert captured["config"].max_output_tokens == 2048
