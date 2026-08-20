@@ -70,6 +70,36 @@ def test_router_create_does_not_touch_agent_engine_id(monkeypatch, tmp_path):
     assert "AGENT_ENGINE_ID=" not in text
 
 
+def test_run_deploy_forwards_min_instances_on_update(monkeypatch, tmp_path):
+    """--min-instances threads through run_deploy → update_agent → config."""
+    _stub_deploy(monkeypatch, tmp_path, "router_agent", "router")
+    monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
+    captured = {}
+
+    def _fake_build_config(agent, display_name=None, *, min_instances=None):
+        captured["min_instances"] = min_instances
+        return {"display_name": display_name or agent.name}
+
+    monkeypatch.setattr(da, "_build_config", _fake_build_config)
+    da.run_deploy(agent_set="router", update=True, min_instances=1)
+    assert captured["min_instances"] == 1
+
+
+def test_run_deploy_min_instances_defaults_to_none(monkeypatch, tmp_path):
+    """Omitting --min-instances preserves each engine's existing scaling."""
+    _stub_deploy(monkeypatch, tmp_path, "router_agent", "router")
+    monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
+    captured = {}
+
+    def _fake_build_config(agent, display_name=None, *, min_instances=None):
+        captured["min_instances"] = min_instances
+        return {"display_name": display_name or agent.name}
+
+    monkeypatch.setattr(da, "_build_config", _fake_build_config)
+    da.run_deploy(agent_set="router", update=True)
+    assert captured["min_instances"] is None
+
+
 def test_tagged_display_name_appends_suffix():
     """--tag suffixes the agent's display name for console grouping."""
     assert _tagged_display_name(_fake_agent(), "demo1") == "coordinator_agent_demo1"

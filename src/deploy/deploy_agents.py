@@ -510,7 +510,11 @@ def _update_env_file(env_var: str, value: str):
 
 
 def run_deploy(
-    agent_set: str = "all", update: bool = False, tag: str | None = None
+    agent_set: str = "all",
+    update: bool = False,
+    tag: str | None = None,
+    *,
+    min_instances: int | None = None,
 ) -> dict[str, str]:
     """Deploy or update agents and return a map of name → resource name.
 
@@ -521,6 +525,10 @@ def run_deploy(
         tag: Optional suffix appended to each agent's console display name
              (e.g. tag="demo1" → "coordinator_agent_demo1") to keep a deploy
              batch grouped in the Agent Engine console.
+        min_instances: Keep-warm floor (Agent Engine ``min_instances``) applied
+             to every agent in this batch. None (default) preserves each
+             engine's existing scaling (scale-to-zero on create); a floor of
+             1-2 avoids idle cold-start / empty-at-200 streams.
     """
     vertexai.init(
         project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
@@ -545,9 +553,11 @@ def run_deploy(
             if not engine_id:
                 print(f"  No engine ID for {name} — set {entry['env_var']} in .env")
                 continue
-            deployed[agent.name] = update_agent(agent, engine_id, display_name)
+            deployed[agent.name] = update_agent(
+                agent, engine_id, display_name, min_instances=min_instances
+            )
         else:
-            resource_name = deploy_agent(agent, display_name)
+            resource_name = deploy_agent(agent, display_name, min_instances=min_instances)
             deployed[agent.name] = resource_name
             _update_env_file(entry["env_var"], resource_name)
             # Durable fix: the coordinator IS the default engine. Keep
@@ -575,9 +585,22 @@ if __name__ == "__main__":
         help="Suffix appended to each agent's console display name "
         "(e.g. --tag demo1 → coordinator_agent_demo1) to group a deploy batch",
     )
+    parser.add_argument(
+        "--min-instances",
+        type=int,
+        default=None,
+        help="Keep-warm floor (Agent Engine min_instances) so the engine never "
+        "scales to zero — avoids idle cold-start / empty-at-200 streams "
+        "(e.g. --min-instances 1). Default: unset (preserves existing scaling).",
+    )
     args = parser.parse_args()
 
-    deployed = run_deploy(agent_set=args.agent_set, update=args.update, tag=args.tag)
+    deployed = run_deploy(
+        agent_set=args.agent_set,
+        update=args.update,
+        tag=args.tag,
+        min_instances=args.min_instances,
+    )
     print("\n=== Agent Resource Names ===")
     for name, resource in deployed.items():
         print(f"  {name}: {resource}")
