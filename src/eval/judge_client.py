@@ -107,6 +107,8 @@ def build_judge_generate_fn(
     """
     from google.genai import types
 
+    from src.models.afc import with_afc_disabled
+
     if client is None:
         from google import genai
 
@@ -118,7 +120,9 @@ def build_judge_generate_fn(
             location=resolve_judge_location(judge_model, location),
         )
 
-    config = types.GenerateContentConfig(temperature=temperature)
+    # AFC off — the judge passes no tools, so google-genai's default-on automatic
+    # function calling is pure overhead (docs/notes/genai-afc-warning.md).
+    config = with_afc_disabled(types.GenerateContentConfig(temperature=temperature))
 
     def _generate(prompt: str) -> str:
         return generate_with_retry(

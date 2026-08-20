@@ -91,6 +91,7 @@ def test_build_judge_generate_fn_pins_temperature_zero_and_strips() -> None:
             seen["model"] = model
             seen["contents"] = contents
             seen["temperature"] = config.temperature
+            seen["afc"] = config.automatic_function_calling
             return _Resp("  Score: 2  ")
 
     fake_client = SimpleNamespace(models=_Models())
@@ -102,6 +103,9 @@ def test_build_judge_generate_fn_pins_temperature_zero_and_strips() -> None:
     assert seen["model"] == "gemini-2.5-flash"
     assert seen["contents"] == "rate this"
     assert seen["temperature"] == 0.0  # deterministic by default
+    # AFC off: the judge has no tools, and genai's default-on AFC costs a deep
+    # config copy per call plus log noise (docs/notes/genai-afc-warning.md).
+    assert seen["afc"].disable is True
 
 
 def test_build_judge_generate_fn_retries_via_client() -> None:
