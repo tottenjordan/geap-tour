@@ -176,11 +176,18 @@ def _session_service_builder():
 
 
 def _wants_memory(agent) -> bool:
-    """True if the agent reads Memory Bank (holds a PreloadMemoryTool).
+    """True if the agent reads Memory Bank (holds a ``PreloadMemoryTool``).
 
-    Only agents that read/write Memory Bank (the coordinator) need the managed
-    memory + session services; single-tier agents and the router do not, so
-    they deploy unchanged.
+    This is a purely structural check, so it is true for every agent that
+    *reads* Memory Bank, not just the ones that also write it:
+
+    * **coordinator** — reads + writes (gated by ``ENABLE_MEMORY_BANK``)
+    * **router** — reads + writes (its own ``save_memories_callback``)
+    * **lite/flash/pro/sonnet/opus** — read only, no save callback
+    * **travel/expense** — neither ⇒ ``False``
+
+    Only a ``True`` here adds ``memory_service_builder``. Every agent gets the
+    session builder regardless — see :func:`_build_app`.
     """
     from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 

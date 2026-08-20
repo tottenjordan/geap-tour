@@ -1,11 +1,15 @@
-"""Offline tests for Vertex Memory Bank + Session wiring in the coordinator deploy.
+"""Offline tests for Vertex Memory Bank + Session wiring in the agent deploys.
 
-The coordinator reads Memory Bank (``PreloadMemoryTool``) and writes it
-(``save_memories_callback``), but recall only persists across sessions if the
+An agent reads Memory Bank via ``PreloadMemoryTool`` and writes it via
+``save_memories_callback``, but recall only persists across sessions if the
 deployed Agent Engine is backed by managed Memory Bank + Session services. These
 tests assert the deploy wraps memory-enabled agents in an ``AdkApp`` carrying
-both service builders, leaves non-memory agents (e.g. the router) untouched, and
+*both* service builders, gives every other agent the session builder alone, and
 that the ``verify_memory`` helper reads persisted facts back for a user.
+
+``TestRealAgentMemoryWiring`` pins the actual per-agent matrix, which is wider
+than "just the coordinator": the router and all five tier agents also hold a
+preload tool, so ``_wants_memory()`` is true for them too.
 
 No live GCP or MCP connections required — the deploy client and ``AdkApp`` are
 monkeypatched so no real Agent Engine call happens.
@@ -14,6 +18,7 @@ monkeypatched so no real Agent Engine call happens.
 import types
 from typing import ClassVar
 
+import pytest
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 import src.deploy.deploy_agents as da
@@ -25,8 +30,8 @@ def _memory_agent(name="coordinator_agent"):
     return types.SimpleNamespace(name=name, tools=[PreloadMemoryTool()])
 
 
-def _plain_agent(name="router_agent"):
-    """A minimal agent with no Memory Bank usage (e.g. the router)."""
+def _plain_agent(name="travel_agent"):
+    """A minimal agent with no Memory Bank usage (e.g. travel/expense)."""
     return types.SimpleNamespace(name=name, tools=[])
 
 
@@ -200,6 +205,44 @@ class TestCoordinatorRegression:
         from src.agents.coordinator_agent import coordinator_agent
 
         assert da._wants_memory(coordinator_agent) is True
+
+
+class TestRealAgentMemoryWiring:
+    """The real per-agent memory matrix — wider than "just the coordinator".
+
+    ``_wants_memory()`` is a pure structural check (does the agent hold a
+    ``PreloadMemoryTool``?), so it is true for every agent that reads Memory
+    Bank, not only the ones that also write it. The router reads *and* writes;
+    the five tier agents read only; travel/expense do neither. This test exists
+    because the docs claimed the router and tier agents deployed as non-memory
+    agents long after they had grown a preload tool.
+    """
+
+    def test_router_reads_and_writes_memory(self):
+        # The router defines its OWN save_memories_callback (different signature
+        # from the coordinator's), so assert against the router module's.
+        from src.router.agents import router_agent, save_memories_callback
+
+        assert any(isinstance(t, PreloadMemoryTool) for t in router_agent.tools)
+        assert router_agent.after_agent_callback is save_memories_callback
+        assert da._wants_memory(router_agent) is True
+
+    @pytest.mark.parametrize("module", ["lite", "flash", "pro", "sonnet", "opus"])
+    def test_tier_agents_read_memory_but_do_not_write(self, module):
+        import importlib
+
+        agent = getattr(importlib.import_module(f"src.agents.{module}_agent"), f"{module}_agent")
+        assert any(isinstance(t, PreloadMemoryTool) for t in agent.tools)
+        assert agent.after_agent_callback is None  # read-only: no save callback
+        assert da._wants_memory(agent) is True
+
+    @pytest.mark.parametrize("module", ["travel", "expense"])
+    def test_domain_agents_use_no_memory(self, module):
+        import importlib
+
+        agent = getattr(importlib.import_module(f"src.agents.{module}_agent"), f"{module}_agent")
+        assert not any(isinstance(t, PreloadMemoryTool) for t in agent.tools)
+        assert da._wants_memory(agent) is False
 
 
 class TestMemoryBankToggle:
