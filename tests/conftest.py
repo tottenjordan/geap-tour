@@ -70,19 +70,19 @@ _TEST_ENV_DEFAULTS = {
 }
 
 
-@pytest.fixture(autouse=True, scope="session")
-def set_test_env():
-    """Set minimal env vars for structural tests. Only sets vars not already defined."""
-    original = {}
-    for key, value in _TEST_ENV_DEFAULTS.items():
-        if key not in os.environ:
-            original[key] = None
-            os.environ[key] = value
-        else:
-            original[key] = os.environ[key]
-    yield
-    for key, value in original.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+# Applied at conftest IMPORT time, NOT from a fixture. pytest imports conftest.py
+# before it collects the test modules, and collection imports src.config
+# transitively (src/router/__init__.py imports the router agent, which binds
+# SEARCH_MCP_SERVER et al. at import). A session fixture runs *after* collection,
+# so on a machine without a .env (CI) those modules bound empty server names while
+# a later importlib.reload of src.config/src.registry (tests/test_prompt_variant.py)
+# re-keyed src.registry's direct-URL fallback map to these real names — the empty
+# key vanished and a credential-less get_mcp_tools re-raised the ADC error instead
+# of falling back. Setting the defaults here closes that window: every module sees
+# the same names, whenever it is imported or reloaded.
+# setdefault, so an exported env var still wins — but note these now also take
+# precedence over a local .env, since src.config's load_dotenv() does not override
+# what is already in os.environ. That is deliberate: it makes a local run and CI
+# resolve the same names.
+for _key, _value in _TEST_ENV_DEFAULTS.items():
+    os.environ.setdefault(_key, _value)
