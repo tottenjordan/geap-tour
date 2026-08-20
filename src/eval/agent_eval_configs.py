@@ -329,6 +329,13 @@ def build_agent_info(agent_name: str) -> types.evals.AgentInfo:
 
 
 def _build_coordinator_info() -> types.evals.AgentInfo:
+    """Descriptor for the coordinator — single-agent, direct MCP tools.
+
+    It carries no AgentTools (0 measured delegations; a nested sub-agent MCP call
+    does not stream on the managed runtime — see
+    docs/notes/coordinator-router-learnings.md). travel_agent/expense_agent keep
+    their own descriptors below and are still scored standalone.
+    """
     return types.evals.AgentInfo(
         name="coordinator_agent",
         root_agent_id="coordinator_agent",
@@ -336,27 +343,10 @@ def _build_coordinator_info() -> types.evals.AgentInfo:
             "coordinator_agent": types.evals.AgentConfig(
                 agent_id="coordinator_agent",
                 agent_type="LlmAgent",
-                description="Corporate assistant coordinator routing to travel or expense specialists.",
+                description="Corporate assistant handling travel and expenses with its own MCP tools.",
                 instruction=(
-                    "Route requests to the right specialist: flight/hotel to travel_agent, "
-                    "expenses to expense_agent, general travel info via search tools directly."
-                ),
-                sub_agents=["travel_agent", "expense_agent"],
-            ),
-            "travel_agent": types.evals.AgentConfig(
-                agent_id="travel_agent",
-                agent_type="LlmAgent",
-                description="Corporate travel assistant for searching and booking flights and hotels.",
-                instruction="Search for and book flights and hotels using MCP tools.",
-                sub_agents=[],
-            ),
-            "expense_agent": types.evals.AgentConfig(
-                agent_id="expense_agent",
-                agent_type="LlmAgent",
-                description="Corporate expense management assistant.",
-                instruction=(
-                    "Policy limits: meals ($75), transport ($200), lodging ($400), "
-                    "supplies ($100), entertainment ($150). Check policy, submit, view history."
+                    "Handle requests directly: search/book flights and hotels, check expense "
+                    "policy before submitting, submit expenses, and report past expenses."
                 ),
                 sub_agents=[],
             ),
