@@ -308,3 +308,70 @@ class TestTierInstructionProvider:
 
         # A ReadonlyContext with no usable state must not raise.
         assert tier_instruction_provider(SimpleNamespace()) == ROUTER_INSTRUCTION
+
+
+class TestLazyTierAgents:
+    """The five standalone tier agents must not be built on the serving path.
+
+    Each one calls ``_sub_agent_tools()`` => 3 McpToolsets apiece, so building
+    all five at import cost the router container ~265MB resident vs the
+    coordinator's ~125MB — for agents the router never invokes. It holds its own
+    toolsets directly and reuses only the tier INSTRUCTION constants. They stay
+    importable (the GEPA sandboxes in ``src/router/<tier>_agent_opt`` and the
+    standalone deploy path import them by name) but are now built on demand.
+    """
+
+    def test_tier_agents_not_constructed_at_import(self):
+        import src.router.agents as m
+
+        # PEP 562 module __getattr__ builds these lazily, so a plain import of
+        # the serving module must not have them in its namespace.
+        for name in ("lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"):
+            assert name not in vars(m), f"{name} was constructed at import time"
+
+    def test_tier_agent_built_on_attribute_access(self):
+        from src.router.agents import lite_agent
+
+        assert lite_agent.name == "lite_agent"
+        assert lite_agent.instruction is not None
+
+    def test_tier_agent_is_cached_across_accesses(self):
+        import src.router.agents as m
+
+        assert m.opus_agent is m.opus_agent  # built once, not per access
+
+    def test_unknown_attribute_still_raises_attribute_error(self):
+        import src.router.agents as m
+
+        with pytest.raises(AttributeError):
+            _ = m.definitely_not_an_agent
+
+
+class TestRouterImportFootprint:
+    """The router's serving import must stay as light as the coordinator's.
+
+    ``litellm`` costs ~140MB resident (router 308MB vs coordinator 168MB, the
+    whole gap). Every worker process in the container pays it at import, even
+    though only the sonnet/opus tiers need it. Keeping it out of the import path
+    lets a Gemini-tier worker run at coordinator-parity footprint and defers the
+    cost to the first Claude-tier turn that actually lands on that worker.
+    """
+
+    def test_importing_router_does_not_load_litellm(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys, src.router.agents; print('litellm' in sys.modules)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert result.returncode == 0, result.stderr[-2000:]
+        assert result.stdout.strip().splitlines()[-1] == "False", (
+            "importing the router pulled in litellm (~140MB); tier backbones must resolve lazily"
+        )
