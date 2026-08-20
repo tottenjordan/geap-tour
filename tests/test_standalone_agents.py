@@ -102,6 +102,16 @@ class TestStandaloneAgentConfigs:
         assert agent.name == agent_name
 
     @pytest.mark.parametrize("agent_name", STANDALONE_AGENTS)
+    def test_agent_disables_afc(self, agent_name):
+        """Every agent must ship AFC off — a new one without it reintroduces the
+        google-genai AFC log flood (docs/notes/genai-afc-warning.md). ADK copies
+        ``generate_content_config`` straight onto the genai request.
+        """
+        mod = __import__(f"src.agents.{agent_name}", fromlist=[agent_name])
+        agent = getattr(mod, agent_name)
+        assert agent.generate_content_config.automatic_function_calling.disable is True
+
+    @pytest.mark.parametrize("agent_name", STANDALONE_AGENTS)
     def test_agent_has_tools(self, agent_name):
         mod = __import__(f"src.agents.{agent_name}", fromlist=[agent_name])
         agent = getattr(mod, agent_name)

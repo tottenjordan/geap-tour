@@ -9,6 +9,7 @@ from src.config import (
     TRAVEL_MODEL,
     resolve_model,
 )
+from src.models.afc import with_afc_disabled
 from src.registry import get_mcp_tools
 
 # GEPA-optimized instruction (base score 0.70 → optimized 1.00).
@@ -75,6 +76,7 @@ travel_agent = LlmAgent(
         get_mcp_tools(SEARCH_MCP_SERVER),
         get_mcp_tools(BOOKING_MCP_SERVER),
     ],
+    generate_content_config=with_afc_disabled(),
 )
 
 root_agent = travel_agent

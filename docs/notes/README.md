@@ -134,3 +134,10 @@ file; keep this index short (< 200 lines).
   3–5s/turn. Ships opt-in `COORDINATOR_THINKING_BUDGET` / `COORDINATOR_MAX_OUTPUT_TOKENS`
   knobs (regional-Gemini path only, default unset = no change) + the live A/B to
   validate before changing the served default; memory-preload cache is a follow-up.
+- [The google-genai AFC warning](./genai-afc-warning.md) — google-genai defaults
+  automatic function calling **on**, so every call took the AFC branch and the
+  router logged an `AFC is enabled` INFO per request plus a WARNING per worker
+  process (1000+ rows in 6h). Two emitters (our classifier + ADK's own call, which
+  copies the agent's `generate_content_config` verbatim), one shared
+  `src/models/afc.py:with_afc_disabled` stamp on every config we build. Invisible
+  locally: the string only exists in google-genai ≥ 2.18.1.

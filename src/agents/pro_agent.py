@@ -10,6 +10,7 @@ from src.config import (
     SEARCH_MCP_SERVER,
     resolve_model,
 )
+from src.models.afc import with_afc_disabled
 from src.registry import get_mcp_tools
 
 INSTRUCTION = """\
@@ -49,6 +50,7 @@ pro_agent = LlmAgent(
         get_mcp_tools(EXPENSE_MCP_SERVER),
         PreloadMemoryTool(),
     ],
+    generate_content_config=with_afc_disabled(),
 )
 
 root_agent = pro_agent
