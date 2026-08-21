@@ -268,3 +268,52 @@ class TestRouterImportsInstructions:
         for agent in [lite_agent, flash_agent, pro_agent, sonnet_agent, opus_agent]:
             assert agent.instruction is not None
             assert len(agent.instruction) > 50
+
+
+class TestPromptsAgreeWithTheSystem:
+    """Instructions must not contradict the servers, each other, or their eval cases.
+
+    GEPA produced "If over limit, do not submit" for expense_agent, which told the
+    agent to withhold the exact tool call its own eval case requires — the server
+    always records an over-limit expense with ``status="pending_review"``. Hand-fixed
+    2026-08-21 by owner decision; pinned here because re-optimization will
+    reintroduce it unless the sampler cases are corrected first. See
+    docs/notes/prompt-architecture-audit.md.
+    """
+
+    def test_expense_prompt_does_not_forbid_over_limit_submission(self):
+        from src.agents.expense_agent import INSTRUCTION_GEPA
+
+        text = INSTRUCTION_GEPA.lower()
+        assert "do not submit" not in text
+        assert "never refuse to submit" in text
+        assert "pending_review" in text
+
+    def test_expense_prompt_matches_its_own_eval_case(self):
+        """The submission-over-limit case expects the tool to be called."""
+        from src.agents.expense_agent import INSTRUCTION_GEPA
+        from src.eval.agent_eval_configs import EXPENSE_EVAL_CASES
+
+        over = [c for c in EXPENSE_EVAL_CASES if c["category"] == "submission_over"]
+        assert over, "expected a submission_over case to exist"
+        for case in over:
+            assert case["expected_tool"] == "expense_mcp_submit_expense"
+            assert "pending_review" in " ".join(case["expected_signals"]).lower()
+        assert "submit the expense either way" in INSTRUCTION_GEPA.lower()
+
+    def test_coordinator_prompt_claims_no_delegation(self):
+        from src.agents.coordinator_agent import INSTRUCTION
+
+        text = INSTRUCTION.lower()
+        assert "no sub-agents" in text
+        assert "route user requests" not in text
+
+    def test_coordinator_prompt_describes_every_tool_it_holds(self):
+        """The coordinator takes whole toolsets, so every server tool is callable."""
+        from src.agents.coordinator_agent import INSTRUCTION
+        from src.eval.verify_mcp_tools import EXPECTED_TOOLS
+
+        missing = [
+            tool for tools in EXPECTED_TOOLS.values() for tool in tools if tool not in INSTRUCTION
+        ]
+        assert not missing, f"coordinator instruction never mentions: {missing}"

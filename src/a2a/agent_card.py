@@ -27,6 +27,13 @@ COORDINATOR_DESCRIPTION = (
 # Skills mirror the coordinator's real, tool-backed capabilities (see
 # src/agents/coordinator_agent.py Section 1). Kept as a module constant so tests
 # can assert on the exact contract without constructing the card.
+#
+# Deliberately capability-level, not one-per-tool: `booking` covers book_flight
+# and book_hotel. cancel_booking / get_booking_details / list_all_bookings are held
+# by the coordinator and (since 2026-08-21) described by its instruction, but they
+# stay off the card until an eval case exercises them — an A2A skill is a published
+# contract, so advertise only what is tested. See
+# docs/notes/prompt-architecture-audit.md.
 _SKILLS: tuple[dict, ...] = (
     {
         "id": "flight_search",
@@ -55,6 +62,13 @@ _SKILLS: tuple[dict, ...] = (
         "description": "Check an expense against corporate policy limits by category.",
         "tags": ["expense", "policy", "compliance"],
         "examples": ["Is a $90 dinner within the meals policy?"],
+    },
+    {
+        "id": "expense_history",
+        "name": "Expense History",
+        "description": "Retrieve a user's recent expenses with amounts, categories and statuses.",
+        "tags": ["expense", "history", "reporting"],
+        "examples": ["Show my expenses", "What's the status of my last expense?"],
     },
     {
         "id": "expense_submission",
