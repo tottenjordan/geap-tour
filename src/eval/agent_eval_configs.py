@@ -1,6 +1,6 @@
 """Per-agent evaluation configs — test cases, AgentInfo builders, and metric selectors."""
 
-from vertexai import types
+from agentplatform import types
 
 from src.eval.batch_eval import EVAL_CASES as COORDINATOR_EVAL_CASES
 

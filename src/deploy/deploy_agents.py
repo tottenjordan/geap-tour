@@ -21,7 +21,14 @@ import os
 from collections.abc import Callable
 from typing import Any, TypedDict
 
+import agentplatform
 import vertexai
+
+# Deliberately mixed: only `vertexai.Client` is deprecated (-> agentplatform.Client,
+# see `_get_client`). `vertexai.init` and `vertexai.agent_engines` are not, and the
+# AdkApp built in `_build_app` is cloudpickled into the served engine — swapping the
+# class that runs `set_up()` on the managed runtime buys nothing and risks a lot.
+# See docs/notes/agentplatform-client-migration.md.
 from vertexai import agent_engines
 
 from src.config import (
@@ -461,7 +468,7 @@ def _build_config(
 
 
 def _get_client():
-    return vertexai.Client(
+    return agentplatform.Client(
         project=GCP_PROJECT_ID,
         location=GCP_REGION,
         # http_options=dict(api_version="v1beta1"),

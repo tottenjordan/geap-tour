@@ -90,11 +90,18 @@ DEMO_PERSONAS: tuple[Persona, ...] = (
 
 
 def _default_client():
-    """Lazily construct a region-scoped Vertex client (kept out of import time)."""
+    """Lazily construct a region-scoped Vertex client (kept out of import time).
+
+    Imports from both packages on purpose: ``vertexai.Client`` is deprecated in
+    favour of ``agentplatform.Client``, but ``init`` is not — ``agentplatform.init``
+    *is* ``vertexai.init`` (both re-export ``google.cloud.aiplatform.init``), so
+    moving it would be pure churn. See docs/notes/agentplatform-client-migration.md.
+    """
+    import agentplatform
     import vertexai
 
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
-    return vertexai.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+    return agentplatform.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
 
 
 def create_persona_memories(

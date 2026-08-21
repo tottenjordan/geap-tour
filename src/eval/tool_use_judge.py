@@ -150,12 +150,12 @@ def run_tool_use_eval(
     directly (bypassing the SDK-broken ``client.evals`` custom-metric path).
     Returns ``{"score": 0-1|None, "n_scored", "n_total"}``.
     """
-    from vertexai import types
+    from agentplatform import types
 
     selected = select_tool_use_cases(cases if cases is not None else EVAL_CASES)
 
     if client is None:
-        from vertexai import Client
+        from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 

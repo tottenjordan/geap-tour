@@ -170,7 +170,7 @@ def _measure_usage(engine_id: str, model_id: str, *, client=None, cases=None) ->
 
         cases = get_eval_cases("coordinator_agent")
     if client is None:
-        from vertexai import Client
+        from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 
