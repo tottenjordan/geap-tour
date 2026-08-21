@@ -212,7 +212,18 @@ judge was penalising an agent it had been told had no tools.
 **Since shipped** — the phantom candidate is avoided by aligning `agent_info.name`
 to the dataset's candidate name. See the section above for the measured result.
 
-## The residual rate: measured, and it is NOT concurrency
+## The residual rate: RESOLVED — the 4Gi default was OOM-killing the engine
+
+> **Root-caused 2026-08-21.** Everything in this section is still accurate as
+> *elimination*, but the answer is now known: the coordinator was being OOM-killed at
+> the Agent Runtime default of 4Gi, exactly like the Claude router before it. Raising
+> that one engine to 16Gi took it from **22/147 empty with 180 empty attempts** to
+> **0/147 with 0 attempts**. `_auto_memory()` had only granted headroom to
+> LiteLlm-backed engines, so a Gemini-only coordinator kept the default; it now
+> applies to every deployed agent. Full write-up and the full list of what was ruled
+> out first: [empty-at-200-field-guide.md](./empty-at-200-field-guide.md), cause 5.
+
+## What was ruled out on the way (all still valid)
 
 *Swept 2026-08-21 with `src/eval/sweep_empty_rate.py` — 9 inference-only runs, 441
 items, on the warm probe engine.*

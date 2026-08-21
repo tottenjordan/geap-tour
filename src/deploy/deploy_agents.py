@@ -115,9 +115,11 @@ REQUIREMENTS = [
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENV_FILE = os.path.join(PROJECT_ROOT, ".env")
 
-# Container limits applied to a LiteLlm-backed engine. The Agent Runtime default
-# (cpu 4 / memory 4Gi) OOM-kills a Claude worker mid-call — see _auto_memory for
-# the measurement. cpu must be one of 1/2/4/6/8 and memory must end in "Gi".
+# Container limits applied to EVERY deployed engine. The Agent Runtime default
+# (cpu 4 / memory 4Gi) OOM-kills workers mid-call — measured on both a LiteLlm
+# router and a Gemini-only coordinator; see _auto_memory. cpu must be one of
+# 1/2/4/6/8 and memory must end in "Gi". Kept under the LITELLM_* names because
+# `--memory` overrides and existing callers reference them.
 LITELLM_CPU = "4"
 LITELLM_MEMORY = "16Gi"
 
@@ -324,27 +326,34 @@ def _model_ids(agent) -> list[str]:
 def _auto_memory(agent) -> str | None:
     """The memory limit this agent needs, or None to keep the platform default.
 
-    A **LiteLlm-backed** engine (any Claude tier or backbone) does not fit in the
-    Agent Runtime default of 4Gi. Measured on router ``6134089059699523584``
-    (2026-08-21): every Claude-tier turn came back HTTP 200 with zero characters.
-    The logs showed the tier dispatch, then ``LiteLLM completion() … provider =
-    vertex_ai``, then a *fresh worker booting* ~5.6s later — no traceback, no
-    error, and a Cloud Trace missing its enclosing ``invoke_agent`` span. An
-    exception closes and exports its spans; only a SIGKILL loses them, so the
-    worker was killed mid-call. The container runs several worker processes and
-    each one that touches Claude pulls in litellm (~140MB resident, ~334MB peak
-    on a full turn) on top of ADK, the MCP toolsets and the model clients.
+    **The Agent Runtime default of 4Gi is not enough for any agent in this repo**,
+    regardless of backbone. Two independent measurements, different causes assumed,
+    same fix:
 
-    Raising the limit to 16Gi took the identical probe set from 8/8 empty to
-    0/8 (lite/flash/pro/sonnet all answering, sonnet returning 7-11k characters).
-    Gemini-only engines never load litellm, so they keep the platform default and
-    nothing about them changes. See docs/notes/router-empty-stream-retry.md.
+    * **LiteLlm router `6134…` (2026-08-21).** Every Claude-tier turn returned HTTP
+      200 with zero characters. Logs showed the tier dispatch, then
+      ``LiteLLM completion() … provider = vertex_ai``, then a *fresh worker booting*
+      ~5.6s later — no traceback, and a trace missing its enclosing ``invoke_agent``
+      span. Only a SIGKILL loses an open span. litellm adds ~140MB resident /
+      ~334MB peak per worker on top of ADK, the MCP toolsets and the model clients.
+      16Gi took the identical probes from 8/8 empty to 0/8.
+    * **Gemini-only coordinator `4380…` (2026-08-21).** This was believed safe —
+      "Gemini-only engines never load litellm, so they keep the platform default"
+      — and it was **wrong**. The probe was dropping turns at a steady ~15%
+      (49-case batch) with ~180 empty *attempts* per 147 items behind the retries.
+      Ruled out in turn: client concurrency (flat across 1/4/8 over 441 items),
+      graceful worker recycling (uncorrelated), the SDK's SSE parser, session
+      creation/reuse, thought-only turns, and Model Armor (armored vs unarmored
+      ``generate_content``, with and without tool declarations, 0/8 failures both
+      ways). Raising this one engine to 16Gi took it to **0/147 empty with 0 empty
+      attempts**. An ADK agent holding three MCP toolsets plus Memory Bank, across
+      several worker processes per container, simply does not fit in 4Gi either.
+
+    So the limit is applied to every deployed agent. ``--memory`` overrides it. The
+    value is the measured one: 8Gi was never tested, and claiming it would suffice
+    is not supported. See docs/notes/empty-at-200-field-guide.md (cause 5).
     """
-    from src.router.tier_routing_llm import needs_litellm
-
-    if any(needs_litellm(model_id) for model_id in _model_ids(agent)):
-        return LITELLM_MEMORY
-    return None
+    return LITELLM_MEMORY
 
 
 def _build_config(

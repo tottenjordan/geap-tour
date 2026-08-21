@@ -41,22 +41,56 @@ Treat the span shape as a **hint that needs a second, independent signal**:
 | the fix moving the number (8/8 empty → 0/8 on 16Gi) | the kill was memory pressure |
 | reproduces in-process with no runtime at all | **not** a kill; look at the model call itself — cause 2 or 4 |
 
-## Cause 5 — a steady-state per-request rate that is nobody's fault above
+## Cause 5 — RESOLVED: the 4Gi default OOMs Gemini-only engines too
 
-*Added 2026-08-21.* After the four causes above were fixed, the coordinator still
-drops **~14% of turns** on a warm `min_instances=4` engine. A 9-run, 441-item sweep
-(`src/eval/sweep_empty_rate.py`) shows it is **flat across client concurrency 1/4/8**
-(14% / 15% / 12%, overlapping intervals) — so it is not scale-out contention, and a
-fully serial run still loses 14%. Failures are scattered across items, not
-contiguous, so it is per-request rather than one replica dying.
+*Root-caused 2026-08-21.* After causes 1-4 were fixed, the coordinator still dropped
+~15% of turns on a warm engine. **It was cause 3 all along** — an OOM at the Agent
+Runtime default of 4Gi — but on an engine we had explicitly ruled out, because
+`_auto_memory()` only granted headroom when `needs_litellm()` fired. A Gemini-only
+coordinator holding three MCP toolsets plus Memory Bank does not fit in 4Gi either.
 
-Retries hide most of it: ~159 empty *attempts* per 147 items collapse to ~20
-survivors. Whatever the reported rate, the underlying rate is ~8x higher.
+**The fix and its effect**, same engine, same 49 cases, nothing else changed:
 
-Distinguishing signature: **it does not respond to any client-side lever.** If
-throttling, warming and serialising all fail to move the rate, you are looking at
-this one, not at causes 1-4. Full write-up and the open router-vs-coordinator
-experiment: [offline-eval-empty-turns.md](./offline-eval-empty-turns.md).
+| | empty (surviving) | empty **attempts** |
+| --- | --- | --- |
+| 4Gi (default) | 22/147 — 15% | **180** |
+| **16Gi** | **0/147 — 0%** | **0** |
+
+Zero *attempts*, not merely zero survivors: the failure is gone at the source rather
+than retried away. `_auto_memory()` now applies the limit to every deployed agent.
+
+### Why it took so long to find, and what it cost to rule out
+
+The trap was that cause 3's documented signature is a **LiteLlm** engine, so a
+Gemini-only one "couldn't" be it. Everything below was measured and refuted first:
+
+| ruled out | evidence |
+| --- | --- |
+| client concurrency | flat across workers 1/4/8 — 14%/15%/12% over 441 items |
+| graceful worker recycling | uncorrelated: the 27% run had **0** shutdowns in its window, the 4% run had **33** |
+| the SDK's SSE parser | SDK path 1/8 empty vs raw-SSE 5/8 — the SDK was *better* |
+| session creation / reuse | one shared session 5/10 vs fresh-per-request 3/10 |
+| thought-only turns | empties carry **zero events**, not thought parts |
+| Model Armor | armored vs unarmored `generate_content`, with **and** without tool declarations: 0/8 failures both ways |
+| the memory-preload cache | cache off 5/10 vs on 6-7/10 |
+
+The signal that actually cracked it was an **engine A/B under identical client code**:
+probe `4380` 6-7/10 empty, coordinator `3639` 2/10, router `6134` **0/10**. The router
+was the only engine already at 16Gi.
+
+### Diagnostic signature
+
+- HTTP **200** server-side (`request_count` showed 2104/2105 as 2xx), zero events
+  client-side, and `agent_data` parses as a real `AgentData` with an empty turn — so
+  it is not an error payload.
+- **No graceful-shutdown log**, because an OOM SIGKILL does not emit one. Correlating
+  against `Shutting down...` actively misleads here.
+- Retries mask the scale: ~one empty *attempt per item* collapsing ~8x. Always read
+  `empty_attempts`, not just survivors (`_sdk_patches.retry_counters()`).
+
+**If an engine drops turns and no client-side lever moves the rate, check
+`resourceLimits` before anything else.** It is the cheapest test and it was the answer
+twice.
 
 ## Telling 1 from 3 — both look like "the worker died"
 
