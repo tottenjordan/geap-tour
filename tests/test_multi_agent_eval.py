@@ -87,6 +87,106 @@ class TestCoordinatorDescriptorMatchesTheAgent:
             assert "expense_agent" not in text
 
 
+class TestRouterDescriptorMatchesTheAgent:
+    """The router stopped delegating on 2026-08-20 — the descriptor must follow.
+
+    ``src/router/agents.py`` is now ONE direct-tools agent that swaps its model
+    per tier via ``TierRoutingLlm``; the five tier agents are no longer reachable
+    from the root agent and ``transfer_to_agent`` is gone. A descriptor still
+    claiming ``sub_agents=[lite_agent, …]`` tells the eval judge about an
+    architecture that cannot run, and that stale ``transfer_to_agent`` was also
+    the thing that used to guarantee a ``function_call`` in every trace (see
+    docs/notes/router-tool-use-quality.md).
+    """
+
+    def _router_info(self):
+        from src.eval.agent_eval_configs import build_agent_info
+
+        return build_agent_info("router_agent")
+
+    def test_descriptor_declares_no_sub_agents(self):
+        assert self._router_info().agents["router_agent"].sub_agents == []
+
+    def test_descriptor_describes_only_the_router(self):
+        assert list(self._router_info().agents) == ["router_agent"]
+
+    def test_descriptor_does_not_promise_delegation(self):
+        config = self._router_info().agents["router_agent"]
+        text = f"{config.description} {config.instruction}".lower()
+        assert "delegate" not in text
+        assert "transfer_to_agent" not in text
+        for tier in ("lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"):
+            assert tier not in text
+
+
+class TestAgentConfigsDeclareTools:
+    """``AgentConfig.tools`` is a real field and was populated nowhere.
+
+    The eval service is handed ``AgentData.agents`` built from these descriptors,
+    so leaving ``tools`` empty means the tool-use judge is never told what the
+    agent can call. Declaring them is what lets it grade the trajectory against
+    the real inventory instead of inferring one.
+    """
+
+    def test_every_descriptor_declares_tools(self):
+        from src.eval.agent_eval_configs import ALL_AGENTS, build_agent_info
+
+        missing = [
+            f"{name}/{agent_id}"
+            for name in ALL_AGENTS
+            for agent_id, config in build_agent_info(name).agents.items()
+            if not config.tools
+        ]
+        assert not missing, f"declare AgentConfig.tools for: {missing}"
+
+    def test_batch_eval_coordinator_descriptor_declares_tools(self):
+        """The second coordinator descriptor must not drift from the first."""
+        from src.eval.batch_eval import _build_agent_info
+
+        assert _build_agent_info().agents["coordinator_agent"].tools
+
+    @staticmethod
+    def _declared_names(config) -> set[str]:
+        """Function-declaration names out of ``AgentConfig.tools``.
+
+        ``tools`` is ``list[google.genai.types.Tool]``, not a list of strings —
+        each Tool carries ``function_declarations``.
+        """
+        return {
+            decl.name
+            for tool in (config.tools or [])
+            for decl in (tool.function_declarations or [])
+        }
+
+    def test_declared_tools_are_real_mcp_tool_names(self):
+        """Guard against inventing names: every declared tool must be expected
+        by at least one eval case (``expected_tool``)."""
+        from src.eval.agent_eval_configs import _EVAL_CASES, ALL_AGENTS, build_agent_info
+
+        known = {
+            case["expected_tool"]
+            for cases in _EVAL_CASES.values()
+            for case in cases
+            if case.get("expected_tool") and case["expected_tool"] != "multiple"
+        }
+        for name in ALL_AGENTS:
+            for agent_id, config in build_agent_info(name).agents.items():
+                unknown = self._declared_names(config) - known
+                assert not unknown, f"{name}/{agent_id} declares unknown tools: {unknown}"
+
+    def test_every_declaration_carries_a_description(self):
+        """A bare name tells the judge nothing about what the tool does."""
+        from src.eval.agent_eval_configs import ALL_AGENTS, build_agent_info
+
+        for name in ALL_AGENTS:
+            for agent_id, config in build_agent_info(name).agents.items():
+                for tool in config.tools or []:
+                    for decl in tool.function_declarations or []:
+                        assert decl.description, (
+                            f"{name}/{agent_id}: {decl.name} has no description"
+                        )
+
+
 class TestEvalCasesPerAgent:
     def test_coordinator_has_cases(self):
         from src.eval.agent_eval_configs import get_eval_cases

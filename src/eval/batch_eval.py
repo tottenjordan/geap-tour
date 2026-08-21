@@ -20,6 +20,7 @@ from datetime import datetime
 import pandas as pd
 import vertexai
 from agentplatform import Client, types
+from google.genai import types as genai_types
 
 from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
 from src.eval.eval_experiment import (
@@ -586,6 +587,64 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
+# Tool inventories declared to the eval service via ``AgentConfig.tools``.
+#
+# The field is real (``list[google.genai.types.Tool]``) and was populated nowhere,
+# so the tool-use judge was never told what any agent could call — it had to infer
+# the inventory from the trace alone. Names are the real MCP tool ids (server
+# prefix included) matching the ``expected_tool`` values on the eval cases, and
+# descriptions are lifted from the MCP servers' own tool docstrings
+# (``src/mcp_servers/*/server.py``). A test pins the names to the ``expected_tool``
+# set so a typo can't invent a tool.
+#
+# Defined here, not in agent_eval_configs, because that module imports from this
+# one — keeping the dependency one-way.
+_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "search_mcp_search_flights": (
+        "Search available flights by origin and destination airport codes."
+    ),
+    "search_mcp_search_hotels": "Search available hotels by city name, optionally price-capped.",
+    "booking_mcp_book_flight": "Book a flight for a passenger by flight id.",
+    "booking_mcp_book_hotel": "Book a hotel for a guest by hotel id, with check-in/check-out dates.",
+    "expense_mcp_check_expense_policy": (
+        "Check whether an expense amount is within corporate policy limits for its category."
+    ),
+    "expense_mcp_submit_expense": (
+        "Submit an expense report for reimbursement; over-limit items are flagged for review."
+    ),
+    "expense_mcp_get_user_expenses": "Get a user's most recent expenses, newest first.",
+}
+
+SEARCH_TOOL_NAMES = ("search_mcp_search_flights", "search_mcp_search_hotels")
+BOOKING_TOOL_NAMES = ("booking_mcp_book_flight", "booking_mcp_book_hotel")
+EXPENSE_TOOL_NAMES = (
+    "expense_mcp_check_expense_policy",
+    "expense_mcp_submit_expense",
+    "expense_mcp_get_user_expenses",
+)
+# The coordinator and the router are both direct-tools agents holding all three
+# MCP toolsets (src/agents/coordinator_agent.py, src/router/agents.py).
+ALL_MCP_TOOL_NAMES = (*SEARCH_TOOL_NAMES, *BOOKING_TOOL_NAMES, *EXPENSE_TOOL_NAMES)
+
+
+def declared_tools(names: tuple[str, ...]) -> list[genai_types.Tool]:
+    """Build the ``AgentConfig.tools`` value for a set of MCP tool names.
+
+    One ``Tool`` carrying all the declarations, mirroring how a model is handed a
+    single tool config. Parameter schemas are deliberately omitted — the judge
+    grades *which* tools ran and whether the answer matches, not argument
+    validity, and duplicating the MCP schemas here would rot silently.
+    """
+    return [
+        genai_types.Tool(
+            function_declarations=[
+                genai_types.FunctionDeclaration(name=name, description=_TOOL_DESCRIPTIONS[name])
+                for name in names
+            ]
+        )
+    ]
+
+
 def _build_agent_info() -> types.evals.AgentInfo:
     """Build AgentInfo manually from known agent structure.
 
@@ -618,6 +677,7 @@ def _build_agent_info() -> types.evals.AgentInfo:
                     "to book them, check_expense_policy before any submission, submit_expense to "
                     "submit, and get_user_expenses to report on past expenses."
                 ),
+                tools=declared_tools(ALL_MCP_TOOL_NAMES),
                 sub_agents=[],
             ),
         },

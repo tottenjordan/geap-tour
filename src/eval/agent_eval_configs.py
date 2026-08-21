@@ -2,6 +2,13 @@
 
 from agentplatform import types
 
+from src.eval.batch_eval import (
+    ALL_MCP_TOOL_NAMES,
+    BOOKING_TOOL_NAMES,
+    EXPENSE_TOOL_NAMES,
+    SEARCH_TOOL_NAMES,
+    declared_tools,
+)
 from src.eval.batch_eval import EVAL_CASES as COORDINATOR_EVAL_CASES
 
 # ---------------------------------------------------------------------------
@@ -348,6 +355,7 @@ def _build_coordinator_info() -> types.evals.AgentInfo:
                     "Handle requests directly: search/book flights and hotels, check expense "
                     "policy before submitting, submit expenses, and report past expenses."
                 ),
+                tools=declared_tools(ALL_MCP_TOOL_NAMES),
                 sub_agents=[],
             ),
         },
@@ -367,6 +375,7 @@ def _build_travel_info() -> types.evals.AgentInfo:
                     "Search for flights and hotels using MCP tools. Present options clearly, "
                     "then use booking tools to confirm reservations."
                 ),
+                tools=declared_tools((*SEARCH_TOOL_NAMES, *BOOKING_TOOL_NAMES)),
                 sub_agents=[],
             ),
         },
@@ -387,6 +396,7 @@ def _build_expense_info() -> types.evals.AgentInfo:
                     "supplies ($100), entertainment ($150). Check policy first, "
                     "submit expenses, view history."
                 ),
+                tools=declared_tools(EXPENSE_TOOL_NAMES),
                 sub_agents=[],
             ),
         },
@@ -394,6 +404,21 @@ def _build_expense_info() -> types.evals.AgentInfo:
 
 
 def _build_router_info() -> types.evals.AgentInfo:
+    """Descriptor for the router — ONE direct-tools agent, five backbones.
+
+    Deliberately a single agent with no sub_agents. The router stopped delegating
+    on 2026-08-20 (docs/notes/router-transfer-streaming.md): ``transfer_to_agent``
+    never streamed the specialist's turn through the managed runtime, so the five
+    tier agents were collapsed into one agent that holds the MCP toolsets directly
+    and swaps its MODEL and INSTRUCTION per tier via ``TierRoutingLlm`` and
+    ``tier_instruction_provider`` (src/router/agents.py:298-313).
+
+    Keeping the old five-``sub_agents`` topology here described an architecture
+    that can no longer run, and the ``transfer_to_agent`` it implied was also the
+    thing that used to put a ``function_call`` in every trace by construction —
+    which is why removing it silently broke ``tool_use_quality_v1``. See
+    docs/notes/router-tool-use-quality.md.
+    """
     return types.evals.AgentInfo(
         name="router_agent",
         root_agent_id="router_agent",
@@ -401,47 +426,18 @@ def _build_router_info() -> types.evals.AgentInfo:
             "router_agent": types.evals.AgentConfig(
                 agent_id="router_agent",
                 agent_type="LlmAgent",
-                description="Routing coordinator that delegates by prompt complexity.",
-                instruction=(
-                    "Check complexity assessment and delegate: "
-                    "low → lite_agent, flash → flash_agent, "
-                    "sonnet → sonnet_agent, pro → pro_agent, opus → opus_agent."
+                description=(
+                    "Corporate travel and expense assistant with its own MCP tools. A "
+                    "complexity classifier picks one of five backbones per request; the "
+                    "agent itself is the same one every time and answers directly."
                 ),
-                sub_agents=["lite_agent", "flash_agent", "pro_agent", "sonnet_agent", "opus_agent"],
-            ),
-            "lite_agent": types.evals.AgentConfig(
-                agent_id="lite_agent",
-                agent_type="LlmAgent",
-                description="Handles trivial, single-intent lookups.",
-                instruction="Fast corporate assistant for simple queries.",
-                sub_agents=[],
-            ),
-            "flash_agent": types.evals.AgentConfig(
-                agent_id="flash_agent",
-                agent_type="LlmAgent",
-                description="Handles simple tasks with light reasoning.",
-                instruction="Capable assistant for straightforward requests.",
-                sub_agents=[],
-            ),
-            "pro_agent": types.evals.AgentConfig(
-                agent_id="pro_agent",
-                agent_type="LlmAgent",
-                description="Handles moderate tasks requiring reasoning — comparisons, multi-step lookups.",
-                instruction="Thorough assistant for moderately complex requests.",
-                sub_agents=[],
-            ),
-            "sonnet_agent": types.evals.AgentConfig(
-                agent_id="sonnet_agent",
-                agent_type="LlmAgent",
-                description="Handles complex, multi-intent requests requiring cross-domain analysis.",
-                instruction="Advanced assistant for complex requests.",
-                sub_agents=[],
-            ),
-            "opus_agent": types.evals.AgentConfig(
-                agent_id="opus_agent",
-                agent_type="LlmAgent",
-                description="Handles expert-level requests requiring deep multi-step planning.",
-                instruction="Expert assistant for complex, high-stakes requests.",
+                instruction=(
+                    "Fulfill the request DIRECTLY using your tools: search/book flights "
+                    "and hotels, check expense policy before submitting, submit expenses, "
+                    "and report past expenses. Ask for missing details when intent is "
+                    "unclear rather than guessing."
+                ),
+                tools=declared_tools(ALL_MCP_TOOL_NAMES),
                 sub_agents=[],
             ),
         },
@@ -472,6 +468,7 @@ def _build_standalone_info(agent_name: str) -> types.evals.AgentInfo:
                 agent_type="LlmAgent",
                 description=_STANDALONE_DESCRIPTIONS[agent_name],
                 instruction="Corporate assistant with access to travel and expense tools.",
+                tools=declared_tools(ALL_MCP_TOOL_NAMES),
                 sub_agents=[],
             ),
         },
