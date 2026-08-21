@@ -86,6 +86,43 @@ five-metric run. Any slice of 3+ includes the expense cases and scores normally.
    said nothing. `router_agent` now defaults to `ROUTER_ENGINE_ID`; an explicit
    `--agent-id` still pins every agent (the bake-off needs that).
 
+## Declaring `tools` moved the score — measured, and it should
+
+Same engines, same cases, ~1h apart on 2026-08-21:
+
+| agent | before (no `tools` declared) | after |
+| --- | --- | --- |
+| router (12 cases) | 0.42, 0.44, 0.48 | **0.29, 0.28** |
+| coordinator (49 cases) | 0.36, 0.38, 0.38, 0.39, 0.40, 0.42 | **0.35** |
+
+The coordinator barely moved (0.35 sits just under a 0.36-0.42 spread). The router
+dropped ~0.15 consistently across two runs, and the mechanism is the intended one:
+the judge can now see that `search_mcp_search_flights` was *available* and was not
+called, where before it could only infer an inventory from the trace. Only 5-8 of
+the router's 12 items call a tool on any given run — the tool-call rate is itself
+nondeterministic — so there is plenty for a now-better-informed judge to penalise.
+
+**Treat this as a level shift in `tool_use_quality_v1` dated 2026-08-21, and do not
+compare across it.** What is *not* affected:
+
+- The monitored `custom.googleapis.com/agent_eval/tool_use_accuracy` series.
+  `publish_offline_eval._inject_tool_use_accuracy` **overwrites** the batch's
+  tool-use score with the standalone `geap_tool_use` judge before publishing on both
+  publish paths, and that judge scores `(prompt, final-response-text)` — it never
+  reads `AgentConfig.tools`.
+- Anything reading the other five rubrics.
+
+What **is** affected: `src/doe/harvest.py` (`BATCH_METRICS`) and
+`src/doe/analyze.py` (`QUALITY_METRICS` includes `tool_use_quality`), so DOE
+main-effects and bake-off reports spanning this date mix two scales.
+
+Also observed in passing: the coordinator's `hallucination` read 0.42 on this run,
+continuing the drift recorded in
+[adk-2.7.1-dependency-refresh.md](./adk-2.7.1-dependency-refresh.md) (0.60 / 0.67 /
+0.62 post-upgrade vs a 0.73 pre-upgrade mean). Unrelated to this change — nothing
+here touches that metric — but it strengthens the case for the judge-drift
+investigation that note leaves open.
+
 ## Known defect deliberately NOT fixed here
 
 `ROUTER_EVAL_CASES[0]` is **under-specified relative to its own reference**: the
