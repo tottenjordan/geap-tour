@@ -710,6 +710,80 @@ class TestEvalConfigFiles:
         assert "user_simulator_config" in data
 
 
+class TestAdkEvalMetricCoverage:
+    """Every metric we declare must be one ADK can actually build an evaluator for.
+
+    A typo or a metric renamed upstream fails at eval time, deep inside an
+    `adk eval` run, rather than here. This validates each config against the real
+    `DEFAULT_METRIC_EVALUATOR_REGISTRY`.
+
+    It also pins the two metrics adopted 2026-08-21 after auditing what ADK 2.7.1
+    offers versus what we used (6 of 13):
+
+    * `per_turn_user_simulator_quality_v1` — grades the *simulated user*. Every
+      multi-turn score is only as trustworthy as the conversation that produced it,
+      so a drifting simulator would otherwise read as an agent regression.
+    * `rubric_based_multi_turn_trajectory_quality_v1` — grades the multi-turn
+      *path*. We already scored task success and tool use, but never how the agent
+      got there across turns.
+
+    See docs/notes/adk-eval-metric-coverage.md.
+    """
+
+    SCENARIO_CONFIGS = ("eval_config.json", "router_eval_config.json")
+
+    def _metrics(self, path):
+        from google.adk.evaluation.eval_config import (
+            get_eval_metrics_from_config,
+            get_evaluation_criteria_or_default,
+        )
+
+        return get_eval_metrics_from_config(get_evaluation_criteria_or_default(str(path)))
+
+    def test_every_declared_metric_has_an_evaluator(self):
+        from google.adk.evaluation.metric_evaluator_registry import (
+            DEFAULT_METRIC_EVALUATOR_REGISTRY as registry,
+        )
+
+        broken = []
+        for directory in (SCENARIOS_DIR, EVALSETS_DIR):
+            for path in sorted(directory.glob("*eval_config.json")):
+                for metric in self._metrics(path):
+                    try:
+                        registry.get_evaluator(metric)
+                    except Exception as exc:
+                        broken.append(f"{path.name}:{metric.metric_name}: {exc}")
+        assert not broken, "metrics ADK cannot evaluate:\n" + "\n".join(broken)
+
+    def test_declared_metrics_are_adk_prebuilt_names(self):
+        """Guards against a silent typo — an unknown name is simply ignored."""
+        from google.adk.evaluation.eval_metrics import PrebuiltMetrics
+
+        known = {m.value for m in PrebuiltMetrics}
+        for directory in (SCENARIOS_DIR, EVALSETS_DIR):
+            for path in sorted(directory.glob("*eval_config.json")):
+                with open(path) as fh:
+                    declared = set(json.load(fh)["criteria"])
+                unknown = declared - known
+                assert not unknown, f"{path.name} declares unknown metrics: {sorted(unknown)}"
+
+    def test_simulator_paths_grade_the_simulator_and_the_path(self):
+        for name in self.SCENARIO_CONFIGS:
+            with open(SCENARIOS_DIR / name) as fh:
+                criteria = json.load(fh)["criteria"]
+            assert "per_turn_user_simulator_quality_v1" in criteria, name
+            assert "rubric_based_multi_turn_trajectory_quality_v1" in criteria, name
+
+    def test_single_turn_configs_declare_no_multi_turn_metrics(self):
+        """`evalsets/` drives single-turn `adk eval` — multi-turn metrics there
+        would score nothing and there is no user simulator to grade."""
+        for path in sorted(EVALSETS_DIR.glob("*eval_config.json")):
+            with open(path) as fh:
+                declared = set(json.load(fh)["criteria"])
+            leaked = {d for d in declared if "multi_turn" in d or "user_simulator" in d}
+            assert not leaked, f"{path.name} declares {sorted(leaked)}"
+
+
 class TestScenarioFiles:
     @pytest.mark.parametrize("filename", SCENARIO_FILES)
     def test_scenario_parses(self, filename):
