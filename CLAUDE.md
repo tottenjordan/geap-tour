@@ -57,6 +57,7 @@ uv run python -m src.eval.dataset_manifest --update   # accept an intentional ch
 # Periodic-snapshot eval — offline bridge is the canonical source (native online path off by default; unblockable via ENABLE_SPAN_CONTENT_CAPTURE)
 uv run python -m src.eval.publish_offline_eval --latest       # bridge newest coordinator quality scores → agent_eval/* (no engine cost)
 uv run python -m src.eval.publish_offline_eval --run          # fresh coordinator batch, then publish
+uv run python -m src.eval.publish_offline_eval --run --no-faithfulness  # USE THIS FOR A SCHEDULED/CRON PUBLISH — republishing a healthy tool_faithfulness would overwrite the deliberate RED demo point
 uv run python -m src.eval.publish_router_efficiency --from-json <full_results.json>  # router efficiency → agent_router/* (native units)
 uv run python -m src.eval.verify_monitors --format json       # summarize all three surfaces: coordinator_quality + online_quality + router_efficiency
 

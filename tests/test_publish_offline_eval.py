@@ -261,6 +261,68 @@ def test_apply_standalone_judges_isolates_failures(monkeypatch):
     assert ran == ["tool_use", "faithfulness"]
 
 
+class TestFaithfulnessOptOut:
+    """A SCHEDULED publish must not republish faithfulness.
+
+    `demo_readiness` treats a RED faithfulness point as a deliberate demo
+    artefact; an hourly cron publishing a healthy score would silently erase it.
+    """
+
+    def _spy(self, monkeypatch):
+        ran = []
+        monkeypatch.setattr(
+            off, "_inject_policy_compliance", lambda b, agent_id=None: ran.append("policy")
+        )
+        monkeypatch.setattr(
+            off, "_inject_tool_use_accuracy", lambda b, agent_id=None: ran.append("tool_use")
+        )
+        monkeypatch.setattr(
+            off, "_inject_tool_faithfulness", lambda b, agent_id=None: ran.append("faithfulness")
+        )
+        return ran
+
+    def test_faithfulness_false_skips_only_that_judge(self, monkeypatch):
+        ran = self._spy(monkeypatch)
+        off._apply_standalone_judges({}, faithfulness=False)
+        assert ran == ["policy", "tool_use"]
+
+    def test_default_still_runs_faithfulness(self, monkeypatch):
+        """Opt-out, not opt-in — a bare manual run keeps its previous behaviour."""
+        ran = self._spy(monkeypatch)
+        off._apply_standalone_judges({})
+        assert "faithfulness" in ran
+
+    def test_the_skip_is_announced(self, monkeypatch, capsys):
+        """A silently-missing metric is how a monitoring gap starts."""
+        self._spy(monkeypatch)
+        off._apply_standalone_judges({}, faithfulness=False)
+        assert "skipped" in capsys.readouterr().out
+
+    def test_cli_flag_threads_through_to_run_fresh(self, monkeypatch):
+        seen = {}
+
+        def fake_run_fresh(agent_id=None, *, faithfulness=True):
+            seen["faithfulness"] = faithfulness
+            return {"agents": {}}
+
+        monkeypatch.setattr(off, "_run_fresh", fake_run_fresh)
+        monkeypatch.setattr(off, "publish_offline_scores", lambda *a, **k: {})
+        off.main(["--run", "--no-faithfulness", "--dry-run"])
+        assert seen["faithfulness"] is False
+
+    def test_cli_without_the_flag_keeps_faithfulness(self, monkeypatch):
+        seen = {}
+
+        def fake_run_fresh(agent_id=None, *, faithfulness=True):
+            seen["faithfulness"] = faithfulness
+            return {"agents": {}}
+
+        monkeypatch.setattr(off, "_run_fresh", fake_run_fresh)
+        monkeypatch.setattr(off, "publish_offline_scores", lambda *a, **k: {})
+        off.main(["--run", "--dry-run"])
+        assert seen["faithfulness"] is True
+
+
 # --------------------------------------------------------------------------- #
 # Tool-call faithfulness: grounded-judge score spliced from stream_query
 # trajectory (NOT the client.evals path the other two injectors use).
