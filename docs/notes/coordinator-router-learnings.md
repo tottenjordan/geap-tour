@@ -184,8 +184,18 @@ Run 3 is the neutrality check, and it is neutral.
 
 ## What did NOT transfer
 
-- **`min_instances`.** The router's Gemini-tier empties were containers hard-killed
-  mid-invocation at `min_instances=1`. The coordinator already runs at 4.
+- **`min_instances`.** Raising the router's floor 1→4 measurably moved its
+  Gemini-tier empty rate, so it stays as a fix — but read the original claim here
+  ("containers hard-killed mid-invocation at `min_instances=1`") as **superseded**.
+  It rested on failing traces lacking their enclosing `invoke_workflow`/`invoke_agent`
+  span, and that inference was falsified: the same empty reproduces **locally,
+  in-process**, where there is no container to kill. The empties that remained were
+  the 429/unbounded-payload issue
+  ([router-empty-responses-quota.md](router-empty-responses-quota.md), whose
+  falsified-hypotheses table is scoped to that residual). Either way the coordinator
+  already runs at 4, so nothing to port. Four separate causes produced this one
+  symptom — [empty-at-200-field-guide.md](empty-at-200-field-guide.md) tells them
+  apart and flags the span-shape trap.
 - **Tier model overrides.** Coordinator-irrelevant.
 - **The lazy-litellm import.** The coordinator never imported litellm at 168MB
   baseline; that was the router closing the gap *to* the coordinator.
