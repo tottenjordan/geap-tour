@@ -240,3 +240,60 @@ def test_flip_extra_allows_error_field_on_result():
     }
     result = t.EvaluationItemResult(**data)  # must not raise
     assert len(result.candidate_results or []) == 1
+
+
+class TestRetryCounters:
+    """Separate "empties that happened" from "empties that survived the retries".
+
+    `EVAL_EMPTY_RETRIES` defaults to 4 and (since the empty-turns fix) also retries
+    text-less turns, so the empty rate a run reports is already post-retry. When
+    sweeping a variable that might drive empties, retries can absorb the entire
+    effect and make the sweep read "no difference" while the raw defect scales
+    fine. See docs/notes/offline-eval-empty-turns.md.
+    """
+
+    def setup_method(self):
+        _sdk_patches.reset_retry_counters()
+
+    def test_starts_at_zero(self):
+        assert _sdk_patches.retry_counters() == {
+            "attempts": 0,
+            "empty_attempts": 0,
+            "exhausted": 0,
+        }
+
+    def test_first_try_success_records_one_attempt(self):
+        _run_with_empty_retry(
+            lambda: [{"content": {"parts": [{"text": "ok"}]}}], retries=3, sleep_fn=lambda a: None
+        )
+        counters = _sdk_patches.retry_counters()
+        assert counters["attempts"] == 1
+        assert counters["empty_attempts"] == 0
+        assert counters["exhausted"] == 0
+
+    def test_all_empty_records_every_attempt_and_one_exhaustion(self):
+        _run_with_empty_retry(list, retries=3, sleep_fn=lambda a: None)
+        assert _sdk_patches.retry_counters() == {
+            "attempts": 3,
+            "empty_attempts": 3,
+            "exhausted": 1,
+        }
+
+    def test_recovery_is_not_an_exhaustion(self):
+        results = [[], [{"content": {"parts": [{"text": "ok"}]}}]]
+        _run_with_empty_retry(lambda: results.pop(0), retries=3, sleep_fn=lambda a: None)
+        counters = _sdk_patches.retry_counters()
+        assert counters["attempts"] == 2
+        assert counters["empty_attempts"] == 1
+        assert counters["exhausted"] == 0
+
+    def test_counters_accumulate_across_calls(self):
+        for _ in range(2):
+            _run_with_empty_retry(list, retries=2, sleep_fn=lambda a: None)
+        assert _sdk_patches.retry_counters()["exhausted"] == 2
+        assert _sdk_patches.retry_counters()["attempts"] == 4
+
+    def test_reset_clears_them(self):
+        _run_with_empty_retry(list, retries=2, sleep_fn=lambda a: None)
+        _sdk_patches.reset_retry_counters()
+        assert _sdk_patches.retry_counters()["attempts"] == 0

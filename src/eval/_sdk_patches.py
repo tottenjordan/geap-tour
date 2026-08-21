@@ -48,6 +48,7 @@ Call `patch_evals_sdk()` once before running inference/evaluation. Optionally ca
 import contextlib
 import json
 import os
+import threading
 import time
 
 _PATCHED = False
@@ -58,6 +59,34 @@ _AGENT_MAX_WORKERS = int(os.environ.get("EVAL_AGENT_MAX_WORKERS", "4"))
 _EMPTY_RETRIES = int(os.environ.get("EVAL_EMPTY_RETRIES", "4"))
 # Base backoff (seconds) between empty-turn retries; grows linearly with attempt.
 _EMPTY_BACKOFF = float(os.environ.get("EVAL_EMPTY_BACKOFF", "2.0"))
+
+# Retry telemetry. The empty rate a run reports is already POST-retry, so when
+# sweeping a variable that might drive empties (concurrency, warmup, backbone) the
+# retries can absorb the whole effect and the sweep reads "no difference" while the
+# raw defect scales fine. These separate "empties that happened" (empty_attempts)
+# from "empties that survived" (exhausted). Incremented from SDK worker threads, so
+# guarded by a lock. See docs/notes/offline-eval-empty-turns.md.
+_RETRY_LOCK = threading.Lock()
+_RETRY_COUNTERS = {"attempts": 0, "empty_attempts": 0, "exhausted": 0}
+
+
+def retry_counters() -> dict[str, int]:
+    """Snapshot of the empty-turn retry telemetry."""
+    with _RETRY_LOCK:
+        return dict(_RETRY_COUNTERS)
+
+
+def reset_retry_counters() -> None:
+    """Zero the telemetry — call between sweep arms so counts don't accumulate."""
+    with _RETRY_LOCK:
+        for key in _RETRY_COUNTERS:
+            _RETRY_COUNTERS[key] = 0
+
+
+def _bump(**deltas: int) -> None:
+    with _RETRY_LOCK:
+        for key, delta in deltas.items():
+            _RETRY_COUNTERS[key] += delta
 
 
 def _is_empty_turn(result) -> bool:
@@ -98,10 +127,13 @@ def _run_with_empty_retry(fn, retries: int, sleep_fn) -> object:
     last = None
     for attempt in range(retries):
         last = fn()
+        _bump(attempts=1)
         if not _is_empty_turn(last):
             return last
+        _bump(empty_attempts=1)
         if attempt < retries - 1:
             sleep_fn(attempt)
+    _bump(exhausted=1)
     return last
 
 
