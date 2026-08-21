@@ -102,6 +102,11 @@ One structural caveat: `expense_sampler_config.json`'s criteria are
 **response-text** metrics. **No trajectory metric is scored**, so the corrected
 `tool_uses` do not directly reward calling `check_expense_policy` first; they make
 the corpus self-consistent and feed the optimizer's context, but the objective
-still only grades the final answer. Adding a trajectory criterion is the change that
-would make the ordering actually optimized-for — deliberately out of scope here,
-since it alters every optimizer's objective.
+still only grades the final answer.
+
+> **Followed up 2026-08-21 — see [trajectory-criterion.md](./trajectory-criterion.md).**
+> Trajectory is now scored in the **eval** run (`run_all_evals` Phase 4). Adding it to
+> the **optimizer** objective is deliberately deferred: the calibration found ordering
+> is already 100% correct on every turn that calls a tool, so there is no headroom on
+> the incumbent prompt, and the naming/args questions are unmeasured on the *local*
+> GEPA path. That note names the experiment that unblocks it.
