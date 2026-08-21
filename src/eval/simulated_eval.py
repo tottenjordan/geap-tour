@@ -21,7 +21,7 @@ def _patch_evals_extra_fields():
     Note: turn_index injection (Bug 2) was fixed in SDK 1.153.0.
     Tracked upstream: https://github.com/googleapis/python-aiplatform/issues/6785
     """
-    from vertexai._genai.types import evals as evals_types
+    from agentplatform._genai.types import evals as evals_types
 
     ct = evals_types.ConversationTurn
     ct.model_config["extra"] = "ignore"
@@ -67,7 +67,7 @@ def run_simulated_eval(
     _patch_evals_extra_fields()
 
     import vertexai
-    from vertexai import Client
+    from agentplatform import Client
 
     from src.config import GCP_PROJECT_ID, GCP_REGION, SIMULATOR_MODEL
     from src.eval.agent_eval_configs import build_agent_info, get_multi_turn_metrics
