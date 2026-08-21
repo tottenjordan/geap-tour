@@ -13,6 +13,8 @@ canned :class:`SearchMemoryResponse` objects.
 
 from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
+from google.adk.models.llm_request import LlmRequest
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai import types
 
 from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
@@ -52,27 +54,52 @@ class _FakeToolContext:
         return self._response
 
 
-class _FakeLlmRequest:
-    def __init__(self):
-        self.appended: list[str] = []
+def _request() -> LlmRequest:
+    """A **real** ``LlmRequest``, deliberately not a duck-typed fake.
 
-    def _append_dynamic_instructions(self, instructions):
-        self.appended.extend(instructions)
+    The previous fake implemented ``_append_dynamic_instructions`` itself, so it
+    kept passing when ADK 2.7.0 moved the preload render to
+    ``_insert_transient_user_content`` — a fake that mirrors the API it is meant
+    to be checking can never catch upstream drift. Both methods still exist on
+    ``LlmRequest`` in 2.7.1, which is exactly what made the divergence silent.
+    """
+    return LlmRequest(
+        model="gemini-2.5-flash",
+        contents=[types.Content(role="user", parts=[types.Part(text="hi")])],
+    )
+
+
+def _preloaded(req: LlmRequest) -> list[str]:
+    """Memory blocks the tool injected, read from *both* channels ADK has used.
+
+    Old (ADK <= 2.6.x): the dynamic-instruction list. New (>= 2.7.0): transient
+    user content. Reading both keeps this helper version-agnostic;
+    ``test_render_matches_stock_adk`` is what pins which channel is correct for
+    the installed ADK.
+    """
+    texts = list(getattr(req, "_dynamic_instructions", None) or [])
+    texts += [
+        part.text
+        for content in req.contents
+        for part in (content.parts or [])
+        if part.text and "<PAST_CONVERSATIONS>" in part.text
+    ]
+    return texts
 
 
 class TestCachingWithinInvocation:
     async def test_same_invocation_and_query_fetches_once(self):
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("what are my prefs?", "inv-1", _response("likes window seat"))
-        req1, req2 = _FakeLlmRequest(), _FakeLlmRequest()
+        req1, req2 = _request(), _request()
 
         await tool.process_llm_request(tool_context=ctx, llm_request=req1)
         await tool.process_llm_request(tool_context=ctx, llm_request=req2)
 
         assert ctx.calls == 1  # network retrieve collapsed across hops
-        assert req1.appended and req2.appended  # both hops still get the instruction
-        assert "likes window seat" in req1.appended[0]
-        assert "likes window seat" in req2.appended[0]
+        assert _preloaded(req1) and _preloaded(req2)  # both hops still get the instruction
+        assert "likes window seat" in _preloaded(req1)[0]
+        assert "likes window seat" in _preloaded(req2)[0]
 
     async def test_new_invocation_refetches(self):
         # Zero cross-invocation staleness: a new invocation_id always misses.
@@ -81,8 +108,8 @@ class TestCachingWithinInvocation:
         ctx_a = _FakeToolContext("what are my prefs?", "inv-1", resp)
         ctx_b = _FakeToolContext("what are my prefs?", "inv-2", resp)
 
-        await tool.process_llm_request(tool_context=ctx_a, llm_request=_FakeLlmRequest())
-        await tool.process_llm_request(tool_context=ctx_b, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx_a, llm_request=_request())
+        await tool.process_llm_request(tool_context=ctx_b, llm_request=_request())
 
         assert ctx_a.calls == 1
         assert ctx_b.calls == 1  # not served from ctx_a's cache
@@ -92,22 +119,53 @@ class TestCachingWithinInvocation:
         ctx1 = _FakeToolContext("prefs?", "inv-1", _response("a"))
         ctx2 = _FakeToolContext("bookings?", "inv-1", _response("b"))
 
-        await tool.process_llm_request(tool_context=ctx1, llm_request=_FakeLlmRequest())
-        await tool.process_llm_request(tool_context=ctx2, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx1, llm_request=_request())
+        await tool.process_llm_request(tool_context=ctx2, llm_request=_request())
 
         assert ctx1.calls == 1
         assert ctx2.calls == 1  # different query key → separate retrieve
 
 
 class TestRendering:
+    async def test_render_matches_stock_adk(self):
+        """Differential guard: our render must be byte-identical to ADK's own.
+
+        ``CachingPreloadMemoryTool`` only means to memoize the *retrieve*; the
+        render is a verbatim copy of the parent's, which ADK inlines into
+        ``process_llm_request`` with no hook to delegate to. So the copy can rot
+        silently — and it did: ADK 2.7.0 moved the memory block off
+        ``_append_dynamic_instructions`` (system-instruction channel) onto
+        ``_insert_transient_user_content`` (a user turn placed at the
+        current-turn boundary). Both methods still exist in 2.7.1, so the stale
+        copy kept "working" while putting the memories somewhere else in the
+        prompt entirely.
+
+        Comparing whole requests rather than asserting a specific channel means
+        the next upstream move fails here instead of quietly degrading recall.
+        """
+        resp = _response("prefers Delta", "stays at Marriott")
+        stock_req, cached_req = _request(), _request()
+
+        await PreloadMemoryTool().process_llm_request(
+            tool_context=_FakeToolContext("q", "inv-1", resp), llm_request=stock_req
+        )
+        await CachingPreloadMemoryTool().process_llm_request(
+            tool_context=_FakeToolContext("q", "inv-1", resp), llm_request=cached_req
+        )
+
+        assert cached_req.model_dump() == stock_req.model_dump()
+        # model_dump() skips pydantic private attrs, so check that channel too.
+        assert cached_req._dynamic_instructions == stock_req._dynamic_instructions
+        assert _preloaded(cached_req) == _preloaded(stock_req) != []
+
     async def test_renders_past_conversations_block(self):
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("q", "inv-1", _response("prefers Delta", "stays at Marriott"))
-        req = _FakeLlmRequest()
+        req = _request()
 
         await tool.process_llm_request(tool_context=ctx, llm_request=req)
 
-        si = req.appended[0]
+        si = _preloaded(req)[0]
         assert "<PAST_CONVERSATIONS>" in si
         assert "prefers Delta" in si
         assert "stays at Marriott" in si
@@ -117,34 +175,34 @@ class TestNoOpPaths:
     async def test_empty_user_content_does_not_fetch(self):
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext(None, "inv-1", _response("x"))
-        req = _FakeLlmRequest()
+        req = _request()
 
         await tool.process_llm_request(tool_context=ctx, llm_request=req)
 
         assert ctx.calls == 0
-        assert req.appended == []
+        assert _preloaded(req) == []
 
     async def test_empty_memories_cached_and_not_appended(self):
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("q", "inv-1", _response())  # no memories
-        req1, req2 = _FakeLlmRequest(), _FakeLlmRequest()
+        req1, req2 = _request(), _request()
 
         await tool.process_llm_request(tool_context=ctx, llm_request=req1)
         await tool.process_llm_request(tool_context=ctx, llm_request=req2)
 
         assert ctx.calls == 1  # empty result still cached → second hop no refetch
-        assert req1.appended == [] and req2.appended == []
+        assert _preloaded(req1) == [] and _preloaded(req2) == []
 
     async def test_search_failure_not_cached(self):
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("q", "inv-1", None, raises=True)
-        req1, req2 = _FakeLlmRequest(), _FakeLlmRequest()
+        req1, req2 = _request(), _request()
 
         await tool.process_llm_request(tool_context=ctx, llm_request=req1)
         await tool.process_llm_request(tool_context=ctx, llm_request=req2)
 
         assert ctx.calls == 2  # transient failure is retried, not cached
-        assert req1.appended == [] and req2.appended == []
+        assert _preloaded(req1) == [] and _preloaded(req2) == []
 
 
 class TestPreloadSpan:
@@ -163,8 +221,8 @@ class TestPreloadSpan:
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("prefs?", "inv-1", _response("likes window seat"))
 
-        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
-        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx, llm_request=_request())
+        await tool.process_llm_request(tool_context=ctx, llm_request=_request())
 
         spans = self._preload_spans(span_exporter)
         assert len(spans) == 2  # one span per hop, even when the retrieve is cached
@@ -177,7 +235,7 @@ class TestPreloadSpan:
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext("q", "inv-1", None, raises=True)
 
-        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx, llm_request=_request())
 
         span = self._preload_spans(span_exporter)[0]
         assert span.attributes["memory.error"] == "RuntimeError"
@@ -187,7 +245,7 @@ class TestPreloadSpan:
         tool = CachingPreloadMemoryTool()
         ctx = _FakeToolContext(None, "inv-1", _response("x"))
 
-        await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx, llm_request=_request())
 
         assert self._preload_spans(span_exporter) == []
 
@@ -198,10 +256,10 @@ class TestEviction:
         # Three distinct invocations → oldest evicted, cache never exceeds maxsize.
         for i in range(3):
             ctx = _FakeToolContext("q", f"inv-{i}", _response("m"))
-            await tool.process_llm_request(tool_context=ctx, llm_request=_FakeLlmRequest())
+            await tool.process_llm_request(tool_context=ctx, llm_request=_request())
         assert tool.cache_size <= 2
 
         # inv-0 was evicted → re-querying it misses (refetches), proving eviction.
         ctx0 = _FakeToolContext("q", "inv-0", _response("m"))
-        await tool.process_llm_request(tool_context=ctx0, llm_request=_FakeLlmRequest())
+        await tool.process_llm_request(tool_context=ctx0, llm_request=_request())
         assert ctx0.calls == 1

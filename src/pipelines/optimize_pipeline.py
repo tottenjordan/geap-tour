@@ -34,7 +34,8 @@ from src.pipelines import components as c
 # engine).
 #
 # Two env vars mirror the deployed-engine config (deploy_agents._build_config):
-#   * GOOGLE_GENAI_USE_VERTEXAI=1 — use Vertex, not the Developer API.
+#   * GOOGLE_GENAI_USE_ENTERPRISE=1 (+ the deprecated GOOGLE_GENAI_USE_VERTEXAI=1
+#     for older readers) — use Vertex, not the Developer API.
 #   * GOOGLE_CLOUD_PROJECT=<hybrid-vertex> — a Vertex Pipelines custom job's
 #     metadata-server project is the managed *tenant* project (…-tp), NOT ours,
 #     so predict calls land there and 403 with PERMISSION_DENIED on
@@ -52,6 +53,7 @@ _RUNTIME_ENV = {
     "SEARCH_MCP_URL": SEARCH_MCP_URL,
     "BOOKING_MCP_URL": BOOKING_MCP_URL,
     "EXPENSE_MCP_URL": EXPENSE_MCP_URL,
+    "GOOGLE_GENAI_USE_ENTERPRISE": "1",
     "GOOGLE_GENAI_USE_VERTEXAI": "1",
     "GOOGLE_CLOUD_PROJECT": GCP_PROJECT_ID,
 }

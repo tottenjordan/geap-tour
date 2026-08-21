@@ -26,9 +26,14 @@ Notes / scope:
 - Only *successful* retrieves are cached (including an empty-memories result, which
   is a valid answer). A transient ``search_memory`` exception is **not** cached, so
   a later hop retries — matching the parent's per-hop give-up-then-retry behavior.
-- The render step (turning memories into the ``<PAST_CONVERSATIONS>`` dynamic
-  instruction) mirrors ADK's ``PreloadMemoryTool`` and runs fresh every hop off the
-  cached response; only the network retrieve is memoized.
+- The render step (turning memories into the ``<PAST_CONVERSATIONS>`` block) is a
+  verbatim copy of ADK's ``PreloadMemoryTool``, which inlines it into
+  ``process_llm_request`` with no hook to delegate to. It runs fresh every hop off
+  the cached response; only the network retrieve is memoized. Because it is a copy
+  it can rot silently — ADK 2.7.0 moved the block from the system-instruction
+  channel to a transient user turn while leaving *both* methods on ``LlmRequest`` —
+  so ``test_render_matches_stock_adk`` diffs a whole ``LlmRequest`` against the
+  stock tool. Keep that test passing when bumping ADK.
 - No lock: under asyncio two concurrent invocations that miss the same key could
   double-fetch. That is harmless (same result) and rare, so the single-threaded
   simplicity is preferred over per-key locking.
@@ -42,6 +47,7 @@ from typing import TYPE_CHECKING, override
 
 from google.adk.tools import _memory_entry_utils
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+from google.genai import types
 
 from src.observability.tracing import set_span_attributes, traced
 
@@ -144,10 +150,18 @@ class CachingPreloadMemoryTool(PreloadMemoryTool):
         if not memory_text_lines:
             return
         full_memory_text = "\n".join(memory_text_lines)
-        si = f"""The following content is from your previous conversations with the user.
+        memory_context = f"""The following content is from your previous conversations with the user.
 They may be useful for answering the user's current query.
 <PAST_CONVERSATIONS>
 {full_memory_text}
 </PAST_CONVERSATIONS>
 """
-        llm_request._append_dynamic_instructions([si])
+        # ADK >= 2.7.0 places the memory block as a transient *user* turn at the
+        # current-turn boundary, not in the system-instruction channel it used
+        # through 2.6.x (`_append_dynamic_instructions`). Both methods still
+        # exist, so calling the old one is a silent downgrade rather than an
+        # error — `test_render_matches_stock_adk` diffs a whole LlmRequest
+        # against the stock tool so the next upstream move fails loudly.
+        llm_request._insert_transient_user_content(
+            [types.Content(role="user", parts=[types.Part.from_text(text=memory_context)])]
+        )

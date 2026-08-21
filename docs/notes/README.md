@@ -155,6 +155,15 @@ file; keep this index short (< 200 lines).
   3–5s/turn. Ships opt-in `COORDINATOR_THINKING_BUDGET` / `COORDINATOR_MAX_OUTPUT_TOKENS`
   knobs (regional-Gemini path only, default unset = no change) + the live A/B to
   validate before changing the served default; memory-preload cache is a follow-up.
+- [ADK 2.6.3 → 2.7.1 + dependency refresh](./adk-2.7.1-dependency-refresh.md) — the
+  upgrade and what it actually risked: ADK 2.7.0 moved `PreloadMemoryTool`'s render
+  from `_append_dynamic_instructions` to `_insert_transient_user_content` while
+  leaving **both** methods on `LlmRequest`, so our caching subclass's verbatim copy
+  degraded **silently** — and the old test's duck-typed fake could never have caught
+  it (now a differential diff against the stock tool). Also: `GOOGLE_GENAI_USE_VERTEXAI`
+  → `GOOGLE_GENAI_USE_ENTERPRISE`, a transitively-dropped `google-cloud-trace` that
+  had to be declared, the 11/11 private-API audit, which packages upstream caps, and
+  the `--all-groups` trap that silently collects 39 fewer tests.
 - [`vertexai.Client` → `agentplatform.Client`](./agentplatform-client-migration.md)
   — the deprecation swap, and why it isn't a rename: `agentplatform._genai` is a
   **separate copy** (`agentplatform.types is vertexai.types` → False), so `Client`,

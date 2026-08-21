@@ -14,7 +14,7 @@ dependencies = [
     "litellm>=1.85.7",
     "pandas>=3.0.5",
     "a2a-sdk>=1",
-    "google-adk[agent-identity,eval]==2.6.3",
+    "google-adk[agent-identity,eval]==2.7.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
     "matplotlib>=3.11.1",
     "paperbanana>=0.3.0",
@@ -22,6 +22,7 @@ dependencies = [
     "opentelemetry-instrumentation-google-genai>=0.7b1",
     "opentelemetry-instrumentation-grpc>=0.63b1",
     "opentelemetry-instrumentation-httpx>=0.63b1",
+    "google-cloud-trace>=1.20.0",
 ]
 
 [build-system]
@@ -62,6 +63,15 @@ ignore = ["E501"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.rules]
+# `pyDOE3` / `kfp` live in the optional `doe` / `pipelines` dependency groups, so
+# `src/doe/design.py` and `src/pipelines/*` carry `# ty: ignore[unresolved-import]`.
+# Whether that ignore is "used" depends entirely on which groups are synced: it is
+# load-bearing on a default `uv sync` and dead under `uv sync --all-groups`. Making
+# the gate's exit code depend on the caller's group selection is worse than losing
+# this lint, so the rule is off. See docs/notes/adk-2.7.1-dependency-refresh.md.
+unused-ignore-comment = "ignore"
 
 [dependency-groups]
 analytics = [
