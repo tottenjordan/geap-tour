@@ -61,13 +61,30 @@ _EMPTY_BACKOFF = float(os.environ.get("EVAL_EMPTY_BACKOFF", "2.0"))
 
 
 def _is_empty_turn(result) -> bool:
-    """True when an agent run returned no content events (an empty turn).
+    """True when an agent run produced no answer — nothing an eval can score.
 
     The SDK's per-item inference returns a list of content events on success or a
-    ``{"error": ...}`` dict on failure. An empty list means the engine's stream
-    completed without yielding any content — the transient drop we retry on.
+    ``{"error": ...}`` dict on failure. Two shapes count as empty:
+
+    * **No events at all** — the engine's stream completed without yielding
+      anything (the original transient drop).
+    * **Events but no final text** — the turn ended on a `function_call` with no
+      synthesized answer. This is *not* harmless: our parser stores ``""`` as the
+      response, and the rubric judges then grade an empty string. Measured on the
+      coordinator's 49-case batch, such items average **0.06** on
+      ``hallucination_v1`` against 0.66-0.82 for items that produced text — the
+      judge renders the raw ``function_call`` as a sentence and labels it
+      contradictory. Their prevalence is what swings the run mean (11/30 such
+      items ⇒ 0.42 overall; 2/47 ⇒ 0.81), so this looked like model or judge
+      drift when it is an infra-empty problem. Same principle ``RetryingLlm``
+      already applies to a silent turn on the serving path.
+
+    An ``{"error": ...}`` dict is still *not* retried — that is a labelled
+    failure, not a transient one. See docs/notes/offline-eval-empty-turns.md.
     """
-    return isinstance(result, list) and len(result) == 0
+    if not isinstance(result, list):
+        return False
+    return not _extract_final_text(result).strip()
 
 
 def _run_with_empty_retry(fn, retries: int, sleep_fn) -> object:

@@ -142,6 +142,13 @@ hardest during one: always gate on `uv sync --all-groups && uv run pytest`.
 
 ### One rubric metric moved — `hallucination`
 
+> **RESOLVED 2026-08-21 — it was not judge drift.** The `hallucination` movement
+> below is explained by the run's *empty-response rate*: an item with no final text
+> scores ~0.06 while items that answer score 0.66-0.82, and the runs in this table
+> differed in how many turns came back empty. See
+> [offline-eval-empty-turns.md](./offline-eval-empty-turns.md). Do not pursue the
+> aiplatform 1.163 → 1.165 judge-template hypothesis suggested below.
+
 Five 49-case coordinator batch evals on the same probe engine, three before the
 upgrade and (so far) three after:
 

@@ -187,6 +187,49 @@ class TestAgentConfigsDeclareTools:
                         )
 
 
+class TestEmptyResponseReporting:
+    """A run's empty rate moves every rubric mean, so it must be visible.
+
+    Measured on the coordinator's 49 cases: items with no final text average 0.06
+    on `hallucination_v1` vs 0.66-0.82 for items that produced text, so an 11/30
+    empty share reported 0.42 while a 2/47 share reported 0.81 — the same agent.
+    See docs/notes/offline-eval-empty-turns.md.
+    """
+
+    def _df(self, *responses):
+        import pandas as pd
+
+        return pd.DataFrame({"response": list(responses)})
+
+    def test_counts_blank_and_error_shaped_responses(self):
+        from src.eval.multi_agent_batch_eval import count_empty_response_items
+
+        df = self._df("A real answer.", "", "   ", '{"error": "Failed to parse"}')
+        assert count_empty_response_items(df) == (3, 4)
+
+    def test_no_empties_is_zero(self):
+        from src.eval.multi_agent_batch_eval import count_empty_response_items
+
+        assert count_empty_response_items(self._df("one", "two")) == (0, 2)
+
+    def test_missing_column_or_empty_frame(self):
+        import pandas as pd
+
+        from src.eval.multi_agent_batch_eval import count_empty_response_items
+
+        assert count_empty_response_items(pd.DataFrame({"other": ["x"]})) == (0, 1)
+        assert count_empty_response_items(None) == (0, 0)
+
+    def test_matches_the_online_monitor_definition(self):
+        """Offline and online must agree on what 'infra empty' means."""
+        from src.eval.multi_agent_batch_eval import count_empty_response_items
+        from src.eval.online_monitor import is_infra_empty
+
+        samples = ["ok", "", '{"error": "x"}', "  "]
+        expected = sum(1 for s in samples if is_infra_empty(s))
+        assert count_empty_response_items(self._df(*samples)) == (expected, len(samples))
+
+
 class TestPerAgentEngineRouting:
     """The router and the coordinator are separate deployments.
 

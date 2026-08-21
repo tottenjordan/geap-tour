@@ -90,6 +90,39 @@ def test_is_empty_turn():
     assert _is_empty_turn(None) is False
 
 
+def test_turn_with_events_but_no_final_text_is_empty():
+    """A turn that ends on a tool call with no answer has nothing to score.
+
+    Measured on the coordinator's 49-case batch: items whose extracted final text
+    is "" score a mean hallucination of **0.06** (vs 0.66-0.82 for items with
+    text), because the judge is handed an empty response and grades the
+    stringified `function_call` as a contradictory sentence. Their prevalence
+    swings the run mean — 11/30 such items scored 0.42 overall, 2/47 scored 0.81.
+    Retrying them is the same principle `RetryingLlm` already applies to a silent
+    turn on the serving path. See docs/notes/offline-eval-empty-turns.md.
+    """
+    tool_only = [
+        {"content": {"parts": [{"function_call": {"name": "search_flights", "args": {}}}]}},
+        {"content": {"parts": [{"function_response": {"name": "search_flights"}}]}},
+    ]
+    assert _is_empty_turn(tool_only) is True
+
+
+def test_turn_with_a_tool_call_and_an_answer_is_not_empty():
+    """The normal shape — tool hop then a synthesized answer — is never retried."""
+    complete = [
+        {"content": {"parts": [{"function_call": {"name": "search_flights", "args": {}}}]}},
+        {"content": {"parts": [{"function_response": {"name": "search_flights"}}]}},
+        {"content": {"parts": [{"text": "Found FL001 at $450."}]}},
+    ]
+    assert _is_empty_turn(complete) is False
+
+
+def test_blank_and_malformed_events_are_empty():
+    assert _is_empty_turn([{"content": {"parts": [{"text": "   "}]}}]) is True
+    assert _is_empty_turn([{}, {"content": None}]) is True
+
+
 def test_run_with_empty_retry_retries_until_content():
     """An empty turn is retried; the first non-empty result is returned."""
     results = [[], [], [{"content": {"parts": [{"text": "ok"}]}}]]
