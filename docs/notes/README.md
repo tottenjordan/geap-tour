@@ -7,12 +7,10 @@ file; keep this index short (< 200 lines).
 ## Index
 
 - [Dependency management & the internal registry gotcha](./dependency-management.md)
-  — why `uv lock` here resolves from PyPI, and the inaccessible Artifact Foundry
-  mirror.
+  — why `uv lock` here resolves from PyPI, and the inaccessible Artifact Foundry mirror.
 - [Type-checking (ty) baseline](./type-checking-baseline.md) — why a clean
-  `uv run ty check src/` still reports ~69 diagnostics (untyped Vertex/ADK SDK
-  surface, intentional monkeypatches, optional imports), what was safely fixed,
-  and the rule for triaging new ones.
+  `uv run ty check src/` still reports diagnostics (untyped Vertex/ADK surface,
+  intentional monkeypatches, optional imports) and the rule for triaging new ones.
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
   DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas
   (env-injection, import-time config, exit-handler cleanup).
@@ -22,11 +20,9 @@ file; keep this index short (< 200 lines).
   quality (`agent_eval/*`, 1-5) via `publish_offline_eval` and router efficiency
   (`agent_router/*`, native units) via `publish_router_efficiency`.
 - [Evaluation robustness — assessment + roadmap](./evaluation-robustness-roadmap.md)
-  — grounded audit of the eval surface (G1–G6: judge non-determinism, train/eval
-  contamination, no statistical rigor, static thresholds, coverage holes, correctness
-  nits) with a P0/P1/P2 roadmap. **P0 shipped:** shared deterministic+retry judge
-  client, a held-out eval split with a contamination guard test, and the CLI
-  threshold-default fix.
+  — grounded audit of the eval surface (G1–G6) with a P0/P1/P2 roadmap. **P0
+  shipped:** deterministic+retry judge client, a held-out split with a contamination
+  guard, and the CLI threshold-default fix.
 - [Online quality monitor (`agent_online_eval/*`)](./online-quality-monitor.md) —
   continuous client-side eval: scores sampled live `stream_query` traffic with the
   same rubrics as the offline bridge and publishes a third monitored surface
@@ -120,6 +116,11 @@ file; keep this index short (< 200 lines).
   impossible delegation; the declared inventory was 7 of the real 10. Also fixed
   two GEPA prompts (owner decision), chiefly `expense_agent` refusing a submission
   its own eval case requires. All pinned by guard tests.
+- [ADK eval metrics: what we use and what we don't](./adk-eval-metric-coverage.md)
+  — the 2.6.3 → 2.7.1 upgrade added **no** eval metrics (`PrebuiltMetrics` is
+  byte-identical), so the question is coverage: we used 6 of 13. Adopts
+  `per_turn_user_simulator_quality_v1` (grades the *simulated user*) and
+  `rubric_based_multi_turn_trajectory_quality_v1` (grades the multi-turn *path*).
 - [Scoring the tool trajectory](./trajectory-criterion.md) — wires up
   `run_trajectory_eval`, which was finished, tested and called by nothing because it
   was pinned at zero **three** different ways: registry-prefixed names vs bare
