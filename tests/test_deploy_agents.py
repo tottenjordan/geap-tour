@@ -292,11 +292,16 @@ class TestLitellmMemoryHeadroom:
     def _model(self, model):
         return types.SimpleNamespace(name="a", model=model, sub_agents=[])
 
-    def test_a_gemini_only_agent_keeps_the_platform_default(self):
-        assert "resource_limits" not in _build_config(self._model("gemini-2.5-flash"))
+    def test_a_gemini_only_agent_also_gets_headroom(self):
+        """This was the bug. A Gemini-only coordinator was believed safe on the 4Gi
+        default; it was dropping ~15% of turns (180 empty attempts per 147 items)
+        until it was raised to 16Gi, which took it to 0/147 with 0 empty attempts.
+        See docs/notes/empty-at-200-field-guide.md cause 5."""
+        config = _build_config(self._model("gemini-2.5-flash"))
+        assert config["resource_limits"] == {"cpu": "4", "memory": da.LITELLM_MEMORY}
 
-    def test_a_bare_agent_without_a_model_keeps_the_platform_default(self):
-        assert "resource_limits" not in _build_config(_fake_agent())
+    def test_a_bare_agent_without_a_model_also_gets_headroom(self):
+        assert "resource_limits" in _build_config(_fake_agent())
 
     def test_a_claude_backbone_gets_headroom(self):
         config = _build_config(self._model("vertex_ai/claude-sonnet-5"))
@@ -326,7 +331,10 @@ class TestLitellmMemoryHeadroom:
             default_model="gemini-2.5-flash-lite",
             importer=lambda: None,
         )
-        assert "resource_limits" not in _build_config(self._model(dispatcher))
+        assert _build_config(self._model(dispatcher))["resource_limits"] == {
+            "cpu": "4",
+            "memory": da.LITELLM_MEMORY,
+        }
 
     def test_a_claude_sub_agent_pulls_headroom_up_to_the_parent(self):
         parent = types.SimpleNamespace(

@@ -12,8 +12,7 @@ file; keep this index short (< 200 lines).
   `uv run ty check src/` still reports diagnostics (untyped Vertex/ADK surface,
   intentional monkeypatches, optional imports) and the rule for triaging new ones.
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
-  DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas
-  (env-injection, import-time config, exit-handler cleanup).
+  DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas.
 - [Offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) — why the
   native Online Evaluators are platform-blocked (`INSUFFICIENT_DATA`) and how the
   offline bridge became the canonical source for two honest surfaces: coordinator
@@ -56,8 +55,11 @@ file; keep this index short (< 200 lines).
   tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
   platform-wide" claim is falsified — see the note below.)
 - [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) — **start here** for
-  any zero-character HTTP 200. Five distinct causes, the signature that separates
-  each, and the trap that a missing enclosing span does *not* prove a container kill.
+  any zero-character HTTP 200. Five causes and the signature separating each. Cause 5
+  is now resolved: the 4Gi platform default OOM-kills **Gemini-only** engines too, not
+  just LiteLlm ones — 15% empty → **0%** at 16Gi, after concurrency, recycling, the
+  SDK parser, sessions, Model Armor and the preload cache were each measured and
+  refuted. If no client-side lever moves an empty rate, check `resourceLimits` first.
 - [Router empty responses: an oversized tool payload burning the quota](./router-empty-responses-quota.md)
   — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED`, driven
   by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools

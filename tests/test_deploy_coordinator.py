@@ -15,7 +15,7 @@ def test_main_prints_resource_marker(capsys):
     resource = "projects/p/locations/global/reasoningEngines/123"
     calls = {}
 
-    def fake_deploy(agent, display_name=None, *, min_instances=None):
+    def fake_deploy(agent, display_name=None, *, min_instances=None, memory=None):
         calls["agent"] = agent
         calls["display_name"] = display_name
         calls["min_instances"] = min_instances
@@ -45,14 +45,14 @@ def test_main_update_flag_calls_update_agent(capsys):
     resource = "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
     calls = {}
 
-    def fake_update(agent, engine_id, display_name=None, *, min_instances=None):
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None, memory=None):
         calls["agent"] = agent
         calls["engine_id"] = engine_id
         calls["display_name"] = display_name
         calls["min_instances"] = min_instances
         return resource
 
-    def fake_deploy(agent, display_name=None, *, min_instances=None):
+    def fake_deploy(agent, display_name=None, *, min_instances=None, memory=None):
         calls["deploy_called"] = True
         return "should-not-be-used"
 
@@ -79,9 +79,10 @@ def test_main_update_threads_min_instances(capsys):
     # through update_agent into the deploy config.
     calls = {}
 
-    def fake_update(agent, engine_id, display_name=None, *, min_instances=None):
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None, memory=None):
         calls["engine_id"] = engine_id
         calls["min_instances"] = min_instances
+        calls["memory"] = memory
         return "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
 
     rc = dc.main(
@@ -110,3 +111,32 @@ def test_parse_resource_from_output_reads_last_marker():
 
 def test_parse_resource_returns_none_when_absent():
     assert dc.parse_resource_from_output("no marker here\njust logs\n") is None
+
+
+def test_main_threads_the_memory_override():
+    """The 4Gi platform default OOM-kills workers on every agent in this repo, so
+    the probe path must be able to state a limit explicitly. See
+    docs/notes/empty-at-200-field-guide.md cause 5."""
+    calls = {}
+
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None, memory=None):
+        calls["memory"] = memory
+        return "projects/p/locations/us-central1/reasoningEngines/4380288848559603712"
+
+    dc.main(
+        ["--update", "4380288848559603712", "--memory", "16Gi"],
+        update_fn=fake_update,
+        agent=object(),
+    )
+    assert calls["memory"] == "16Gi"
+
+
+def test_memory_defaults_to_none_so_auto_memory_decides():
+    calls = {}
+
+    def fake_update(agent, engine_id, display_name=None, *, min_instances=None, memory=None):
+        calls["memory"] = memory
+        return "projects/p/locations/us-central1/reasoningEngines/x"
+
+    dc.main(["--update", "x"], update_fn=fake_update, agent=object())
+    assert calls["memory"] is None

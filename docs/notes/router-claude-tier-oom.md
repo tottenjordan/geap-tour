@@ -1,5 +1,11 @@
 # The Claude tiers were OOM-killed: 4Gi is not enough for a LiteLlm engine
 
+> **Generalised 2026-08-21:** this is **not** LiteLlm-specific. A Gemini-only
+> coordinator on the same 4Gi default was dropping ~15% of turns for the same reason,
+> and went to 0% at 16Gi. `_auto_memory()` now applies the limit to every deployed
+> agent rather than only when `needs_litellm()` fires. See
+> [empty-at-200-field-guide.md](./empty-at-200-field-guide.md) cause 5.
+
 **Status:** root-caused and **fixed live**. Router `6134089059699523584` went from
 **8/8 empty** on Claude-tier probes to **0/8**, measured 2026-08-21 on the same
 probe set minutes apart with no code change between the two runs — only the

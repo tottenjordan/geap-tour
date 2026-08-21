@@ -73,6 +73,12 @@ def main(
         help="Update this existing engine in place (new revision) instead of creating one",
     )
     parser.add_argument(
+        "--memory",
+        default=None,
+        metavar="LIMIT",
+        help='Container memory limit, e.g. "16Gi" (default: derived by _auto_memory)',
+    )
+    parser.add_argument(
         "--min-instances",
         type=int,
         default=None,
@@ -88,12 +94,18 @@ def main(
         if update_fn is None:
             from src.deploy.deploy_agents import update_agent as update_fn
         resource = update_fn(
-            agent, args.update, args.display_name, min_instances=args.min_instances
+            agent,
+            args.update,
+            args.display_name,
+            min_instances=args.min_instances,
+            memory=args.memory,
         )
     else:
         if deploy_fn is None:
             from src.deploy.deploy_agents import deploy_agent as deploy_fn
-        resource = deploy_fn(agent, args.display_name, min_instances=args.min_instances)
+        resource = deploy_fn(
+            agent, args.display_name, min_instances=args.min_instances, memory=args.memory
+        )
     print(f"{RESOURCE_MARKER}{resource}")
     return 0
 
