@@ -56,12 +56,8 @@ file; keep this index short (< 200 lines).
   tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
   platform-wide" claim is falsified — see the note below.)
 - [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) — **start here** for
-  any zero-character HTTP 200. A lookup layer over the four notes below: four
-  distinct causes (container recycle at `min_instances=1`, a 429 from an unbounded
-  tool payload, an OOM SIGKILL at 4Gi on LiteLlm tiers, and ADK stripping Anthropic's
-  tool-call ids), the signature that separates each, and how to tell the two
-  "the worker died" cases apart. Also reconciles the two sentences that read as a
-  contradiction — both were unscoped, neither was wrong.
+  any zero-character HTTP 200. Five distinct causes, the signature that separates
+  each, and the trap that a missing enclosing span does *not* prove a container kill.
 - [Router empty responses: an oversized tool payload burning the quota](./router-empty-responses-quota.md)
   — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED`, driven
   by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools
@@ -142,6 +138,8 @@ file; keep this index short (< 200 lines).
   0.38 → **0.93** and decoupled hallucination from the empty rate. Also: answer-less
   turns are now retried and every run reports its empty rate. Corrects two wrong
   guesses (aiplatform judge drift; PR #66's `AgentConfig.tools`).
+  A 441-item sweep then showed the residual ~14% empty rate is **flat across
+  concurrency 1/4/8** — a steady-state engine defect, not contention.
 - [Router `tool_use_quality_v1`: "no function_call events found"](./router-tool-use-quality.md)
   — the metric grades the `AgentData` **events**, not the response text, so a run
   where nothing calls a tool is unscorable and came back silently reporting five

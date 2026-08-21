@@ -1,21 +1,21 @@
 # Empty-at-200: which one is it?
 
-*Field guide, 2026-08-21. A lookup layer over four completed investigations — it
-adds no new evidence, it just says which note you want.*
+*Field guide, 2026-08-21. A lookup layer over five investigations — it adds no new
+evidence, it just says which note you want.*
 
 **Empty-at-200** is a *symptom*, not a cause: the engine returns HTTP 200, the
 stream yields events, and the text is zero characters. There is no traceback and no
-error in the response. Four separate things have produced it on this project —
-three confirmed causes plus one contributing factor whose mechanism was never
-established — and **they are indistinguishable from the client**. Each needed a
-different lever, so "we already fixed the empty streams" is never a complete
-statement. Ask *which one*.
+error in the response. **Five** separate things have produced it on this project —
+three confirmed causes, one contributing factor whose mechanism was never
+established, and one steady-state residue that responds to no client-side lever —
+and they are indistinguishable from the client. Each needed a different response, so
+"we already fixed the empty streams" is never a complete statement. Ask *which one*.
 
-## The four
+## The first four
 
 | # | Cause | Distinguishing signature | Fix | Note |
 | --- | --- | --- | --- | --- |
-| 1 | Replica recycling / cold replicas at `min_instances=1` — **contributing factor, mechanism never proven** | many distinct worker PIDs and a fresh `service.instance.id` per request, across **all** tiers; trace loses its enclosing span (but see the warning below — that alone proves nothing) | `--min-instances 4`, which moved the rate | [coordinator-router-learnings.md](./coordinator-router-learnings.md) (superseded claim) + [router-empty-responses-quota.md](./router-empty-responses-quota.md) (falsification) |
+| 1 | Replica recycling / cold replicas at `min_instances=1` — **contributing factor, mechanism never proven; and see cause 5** | many distinct worker PIDs and a fresh `service.instance.id` per request, across **all** tiers; trace loses its enclosing span (but see the warning below — that alone proves nothing) | `--min-instances 4`, which moved the rate | [coordinator-router-learnings.md](./coordinator-router-learnings.md) (superseded claim) + [router-empty-responses-quota.md](./router-empty-responses-quota.md) (falsification) |
 | 2 | HTTP 429 `RESOURCE_EXHAUSTED` from an unbounded tool payload | `generate_content` span with `error.type=ClientError`, `input_tokens=0`, `finish_reasons=[]`; 215 of 219 project 429s attributed to engine `6134…`; router 17.2K input tokens/hop vs coordinator 1.85K | cap the MCP payload + retry/label 429s in `TierRoutingLlm` | [router-empty-responses-quota.md](./router-empty-responses-quota.md) |
 | 3 | OOM `SIGKILL` at the default 4Gi on a LiteLlm/Claude tier | missing enclosing span **plus** a fresh worker booting ~5.6s *into* the LiteLLM call, no traceback; litellm is +140MB resident / +334MB peak per worker | `resource_limits` 16Gi (now derived by `deploy_agents._auto_memory()`) | [router-claude-tier-oom.md](./router-claude-tier-oom.md) |
 | 4 | ADK strips the `adk-*` tool-call ids Anthropic pairs results by | Claude tier **only**, **multi-step** turns only, **mixed-tier** session only; `AnthropicError: 'tool_call_id'` | `restore_tool_call_ids()` in `RetryingLlm` | [router-empty-stream-retry.md](./router-empty-stream-retry.md) |
@@ -40,6 +40,23 @@ Treat the span shape as a **hint that needs a second, independent signal**:
 | a fresh worker booting **mid-call** (~5.6s into the LiteLLM call), no traceback, PID never logs again | a real kill — cause 3 |
 | the fix moving the number (8/8 empty → 0/8 on 16Gi) | the kill was memory pressure |
 | reproduces in-process with no runtime at all | **not** a kill; look at the model call itself — cause 2 or 4 |
+
+## Cause 5 — a steady-state per-request rate that is nobody's fault above
+
+*Added 2026-08-21.* After the four causes above were fixed, the coordinator still
+drops **~14% of turns** on a warm `min_instances=4` engine. A 9-run, 441-item sweep
+(`src/eval/sweep_empty_rate.py`) shows it is **flat across client concurrency 1/4/8**
+(14% / 15% / 12%, overlapping intervals) — so it is not scale-out contention, and a
+fully serial run still loses 14%. Failures are scattered across items, not
+contiguous, so it is per-request rather than one replica dying.
+
+Retries hide most of it: ~159 empty *attempts* per 147 items collapse to ~20
+survivors. Whatever the reported rate, the underlying rate is ~8x higher.
+
+Distinguishing signature: **it does not respond to any client-side lever.** If
+throttling, warming and serialising all fail to move the rate, you are looking at
+this one, not at causes 1-4. Full write-up and the open router-vs-coordinator
+experiment: [offline-eval-empty-turns.md](./offline-eval-empty-turns.md).
 
 ## Telling 1 from 3 — both look like "the worker died"
 
