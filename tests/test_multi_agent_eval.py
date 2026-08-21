@@ -187,6 +187,79 @@ class TestAgentConfigsDeclareTools:
                         )
 
 
+class TestToolCallPreflight:
+    """``tool_use_quality_v1`` needs at least one tool event in the whole run.
+
+    It is scored from the ``AgentData`` events, not the response text. When every
+    item is tool-free the service cannot compute it at all and errors, and the
+    harness used to silently report five metrics instead of six with no
+    explanation. Reproduced deterministically with ``--limit 1``, whose single
+    case ("Find flights from SFO to JFK") makes the router ask "When would you
+    like to travel?" rather than search. See docs/notes/router-tool-use-quality.md.
+    """
+
+    @staticmethod
+    def _agent_data(*part_dicts):
+        return {"turns": [{"turn_index": 0, "events": [{"content": {"parts": list(part_dicts)}}]}]}
+
+    def _df(self, *rows):
+        import pandas as pd
+
+        return pd.DataFrame({"agent_data": list(rows)})
+
+    def test_counts_items_that_made_tool_calls(self):
+        from src.eval.multi_agent_batch_eval import count_tool_call_items
+
+        df = self._df(
+            self._agent_data({"function_call": {"name": "search_mcp_search_flights"}}),
+            self._agent_data({"text": "When would you like to travel?"}),
+        )
+        assert count_tool_call_items(df) == (1, 2)
+
+    def test_transfers_count_as_tool_calls(self):
+        """The metric counts any function_call — including a delegation."""
+        from src.eval.multi_agent_batch_eval import count_tool_call_items
+
+        df = self._df(self._agent_data({"function_call": {"name": "transfer_to_agent"}}))
+        assert count_tool_call_items(df) == (1, 1)
+
+    def test_function_response_alone_counts(self):
+        from src.eval.multi_agent_batch_eval import count_tool_call_items
+
+        df = self._df(self._agent_data({"function_response": {"name": "search_mcp_search_hotels"}}))
+        assert count_tool_call_items(df) == (1, 1)
+
+    def test_json_encoded_agent_data_is_parsed(self):
+        """The patched parser stores a JSON string on the error path."""
+        from src.eval.multi_agent_batch_eval import count_tool_call_items
+
+        df = self._df(
+            json.dumps(self._agent_data({"function_call": {"name": "expense_mcp_submit_expense"}})),
+            json.dumps({"error": "Failed to parse agent run response"}),
+        )
+        assert count_tool_call_items(df) == (1, 2)
+
+    def test_missing_column_or_empty_frame_is_zero(self):
+        import pandas as pd
+
+        from src.eval.multi_agent_batch_eval import count_tool_call_items
+
+        assert count_tool_call_items(pd.DataFrame({"response": ["hi"]})) == (0, 1)
+        assert count_tool_call_items(None) == (0, 0)
+
+    def test_metric_dropped_only_when_nothing_called_a_tool(self):
+        from agentplatform import types
+
+        from src.eval.multi_agent_batch_eval import drop_tool_use_metric_if_unscorable
+
+        metrics = [
+            types.RubricMetric.FINAL_RESPONSE_QUALITY,
+            types.RubricMetric.TOOL_USE_QUALITY,
+        ]
+        assert len(drop_tool_use_metric_if_unscorable(metrics, 0, 4)) == 1
+        assert len(drop_tool_use_metric_if_unscorable(metrics, 1, 4)) == 2
+
+
 class TestEvalCasesPerAgent:
     def test_coordinator_has_cases(self):
         from src.eval.agent_eval_configs import get_eval_cases

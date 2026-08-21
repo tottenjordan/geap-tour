@@ -47,6 +47,74 @@ patch_evals_sdk()
 GCS_EVAL_DEST = f"gs://{GCP_STAGING_BUCKET}/eval-results/"
 MAX_POLL_SECONDS = 1200
 
+# The dataframe column the evals SDK stores parsed AgentData under
+# (``agentplatform._genai._evals_constant.AGENT_DATA``). Hard-coded rather than
+# imported so a private-constant rename degrades to "0 tool calls found" — a
+# visible message — instead of an ImportError at module load.
+_AGENT_DATA_COLUMN = "agent_data"
+
+
+def _agent_data_events(cell) -> list[dict]:
+    """Flatten one ``agent_data`` cell into a ``stream_query``-shaped event list.
+
+    Accepts the dict our patched parser builds
+    (:func:`src.eval._sdk_patches._patch_single_turn_parser`) or the JSON string
+    it stores on the error path. Returns ``[]`` for anything unparseable, so a
+    malformed row is counted as tool-free rather than crashing the run.
+    """
+    if isinstance(cell, str):
+        try:
+            cell = json.loads(cell)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(cell, dict):
+        return []
+    return [
+        event
+        for turn in cell.get("turns") or []
+        for event in (turn or {}).get("events") or []
+        if isinstance(event, dict)
+    ]
+
+
+def count_tool_call_items(inference_df) -> tuple[int, int]:
+    """``(items with >=1 tool event, total items)`` in an inference dataframe.
+
+    ``tool_use_quality_v1`` is scored from the ``AgentData`` events, not the
+    response text, and needs at least one ``function_call``/``function_response``
+    *somewhere in the run*. Counting here turns an opaque downstream service
+    error into a number we can report. Transfers count — the metric sees any
+    function call — so this deliberately passes ``include_transfers=True``.
+    """
+    if inference_df is None or not len(inference_df):
+        return 0, 0
+    total = len(inference_df)
+    if _AGENT_DATA_COLUMN not in getattr(inference_df, "columns", []):
+        return 0, total
+
+    from src.eval.trajectory_eval import extract_trajectory, returned_tool_names
+
+    with_calls = 0
+    for cell in inference_df[_AGENT_DATA_COLUMN]:
+        events = _agent_data_events(cell)
+        if extract_trajectory(events, include_transfers=True) or returned_tool_names(events):
+            with_calls += 1
+    return with_calls, total
+
+
+def drop_tool_use_metric_if_unscorable(metrics: list, with_calls: int, total: int) -> list:
+    """Remove ``TOOL_USE_QUALITY`` when no item in the run called a tool.
+
+    Without this the eval service rejects the metric ("requires tool calls in the
+    evaluation trace, but no function_call/function_response events were found")
+    and the harness quietly reports one metric fewer, giving no clue why. One
+    tool-using item anywhere in the run is enough to score it, so this only fires
+    at exactly zero.
+    """
+    if with_calls or not total:
+        return metrics
+    return [m for m in metrics if getattr(m, "name", str(m)) != "TOOL_USE_QUALITY"]
+
 
 def _resolve_agent_resource_name(agent_id: str) -> str:
     if agent_id.startswith("projects/"):
@@ -133,6 +201,22 @@ def _run_single_agent_eval(
     )
     elapsed = time.time() - t0
     print(f"  Inference complete in {elapsed:.1f}s")
+
+    # TOOL_USE_QUALITY is scored from the AgentData events, not the response text.
+    # If nothing in the run called a tool the service rejects the metric and the
+    # run silently comes back with one metric fewer — so say so, and say the count
+    # even when it is fine so a low score is interpretable.
+    with_calls, total_items = count_tool_call_items(
+        getattr(inference_result, "eval_dataset_df", None)
+    )
+    print(f"  Tool calls: {with_calls}/{total_items} items invoked at least one tool")
+    if total_items and not with_calls:
+        print(
+            "  tool_use_quality: SKIPPED — no item made a tool call, so the metric "
+            "cannot be scored (it grades the trace, not the answer). "
+            "See docs/notes/router-tool-use-quality.md"
+        )
+    metrics = drop_tool_use_metric_if_unscorable(metrics, with_calls, total_items)
 
     # Run evaluation
     print("  Running evaluation...")
