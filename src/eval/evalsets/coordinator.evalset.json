@@ -62,7 +62,7 @@
         "user_content": {"parts": [{"text": "Submit a $45 meals expense for lunch meeting, user ID EMP001"}], "role": "user"},
         "final_response": {"parts": [{"text": "Your $45 meals expense for lunch meeting has been submitted and approved."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 45, "description": "lunch meeting"}}]
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "meals", "amount": 45}}, {"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 45, "description": "lunch meeting"}}]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
@@ -150,7 +150,7 @@
         "user_content": {"parts": [{"text": "Submit a $500 entertainment expense for team event, user ID EMP002"}], "role": "user"},
         "final_response": {"parts": [{"text": "The $500 entertainment expense exceeds the policy limit of $150. It has been flagged for review."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}, {"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
@@ -167,13 +167,13 @@
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}
     },
     {
-      "eval_id": "multi_intent_travel_expense",
+      "eval_id": "expense_submit_low_amount",
       "conversation": [{
         "user_content": {"parts": [{"text": "Submit a $30 meal receipt for user EMP001"}], "role": "user"},
         "final_response": {"parts": [{"text": "Your $30 meal expense for EMP001 has been submitted and approved, within the $75 policy limit."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [
-            {"name": "search_flights", "args": {"destination": "ORD"}},
+            {"name": "check_expense_policy", "args": {"category": "meals", "amount": 30}},
             {"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 30}}
           ]
         }

@@ -68,12 +68,12 @@
       "session_input": {"app_name": "flash_agent_opt", "user_id": "eval_user"}
     },
     {
-      "eval_id": "expense_over_limit_no_submit",
+      "eval_id": "expense_over_limit_submit_and_flag",
       "conversation": [
         {
           "user_content": {"parts": [{"text": "Submit a $500 entertainment expense for team event, user ID EMP002"}], "role": "user"},
-          "final_response": {"parts": [{"text": "I checked the entertainment policy — $500 exceeds the $150 limit by $350.\n\nThis expense cannot be auto-submitted. It requires manager review. Please get manager approval before resubmitting."}], "role": "model"},
-          "intermediate_data": {"tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}]}
+          "final_response": {"parts": [{"text": "I checked the entertainment policy — $500 exceeds the $150 limit by $350.\n\nThe expense has been submitted and recorded with status pending_review; it now requires manager approval."}], "role": "model"},
+          "intermediate_data": {"tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}, {"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]}
         }
       ],
       "session_input": {"app_name": "flash_agent_opt", "user_id": "eval_user"}

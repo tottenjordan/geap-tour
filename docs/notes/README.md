@@ -72,26 +72,15 @@ file; keep this index short (< 200 lines).
   agent must absorb and re-emit; fixed by capping the tool payload and retrying +
   labelling 429s instead of returning silence. Includes the falsified hypotheses.
 - [The residual empty-at-200: wrapping LiteLlm strips Anthropic's tool-call ids](./router-empty-stream-retry.md)
-  — the leftover 14% was **not** platform-level: `TierRoutingLlm`/`RetryingLlm`
-  hide `LiteLlm` from ADK's `isinstance` check, so ADK strips the `adk-` tool-call
-  ids Anthropic pairs results by and a Claude-tier turn dies on
-  `AnthropicError: 'tool_call_id'` → empty stream (lite/flash/pro 20/20 clean,
-  sonnet-band 4/8 empty). Precondition is a **mixed-tier session** — Claude's own
-  `toolu_*` ids survive, so the stripped id must come from an earlier *Gemini* hop;
-  proved by the no-engine A/B `src.eval.spike_tool_call_ids`. Also retries a
-  genuinely silent turn. Ships `src.eval.verify_router_health` (per-tier breakdown,
-  Wilson CI, silent vs labelled counted apart) — the tier breakdown is what found it.
-  **Real, but not the dominant cause — see the next note.**
+  — the leftover 14% was **not** platform-level: `TierRoutingLlm`/`RetryingLlm` hide
+  `LiteLlm` from ADK's `isinstance` check, so ADK strips the `adk-` tool-call ids
+  Anthropic pairs results by and a multi-step, mixed-tier Claude turn dies on
+  `AnthropicError: 'tool_call_id'`. Fixed by `restore_tool_call_ids()`.
 - [The Claude tiers were OOM-killed: 4Gi is not enough for a LiteLlm engine](./router-claude-tier-oom.md)
-  — after the tool-call-id fix shipped the Claude tiers still failed **100%**,
-  tool-free prompts included. A trace missing its enclosing `invoke_agent` span,
-  no traceback, and a fresh worker booting 5.6s into the LiteLLM call = a SIGKILL:
-  litellm (+140MB resident, +334MB peak) in every worker overruns the Agent Runtime
-  default 4Gi. Raising `resource_limits` to 16Gi in place took the same probes from
-  8/8 empty to **0/8**. `deploy_agents._auto_memory()` now derives the limit from
-  the agent's own backbones so it can't silently revert; Gemini-only engines keep
-  the default. Retroactively explains the 2026-08-13 "LiteLlm-wrapped engines
-  crash" outage.
+  — a trace missing its enclosing `invoke_agent` span, no traceback, and a fresh
+  worker booting 5.6s into the LiteLLM call = a SIGKILL: litellm (+140MB resident)
+  overruns the Agent Runtime default. 16Gi took the probes 8/8 empty to **0/8**;
+  `_auto_memory()` now derives the limit so it cannot silently revert.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
@@ -125,6 +114,11 @@ file; keep this index short (< 200 lines).
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
   defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.
+- [GEPA sampler cases: what the optimizer was being taught](./gepa-sampler-case-audit.md)
+  — swept all 13 evalsets. One case (`expense_over_limit_no_submit`) taught
+  refuse-to-submit against a server that always records over-limit expenses as
+  `pending_review`; 11 expected `submit_expense` with no policy check first; one
+  expected a `search_flights` its prompt never asks for. Fixed and pinned.
 - [The "hallucination drift" was the judge being told the agent has no tools](./offline-eval-empty-turns.md)
   — an eval item with no final response text scores **0.06** on `hallucination_v1`
   vs 0.66-0.82 for items that answered, so the metric largely tracks the run's
@@ -153,16 +147,11 @@ file; keep this index short (< 200 lines).
   label-gated rubric eval (Tier 2) against the shared deployed engine; honest
   limitation that it scores the deployed engine, not the PR diff.
 - [Agent Registry MCP resolution — two failure surfaces](./agent-registry-mcp-resolution.md)
-  — the deployed coordinator fell back to direct Cloud Run URLs because it ran under
-  a per-engine `AGENT_IDENTITY` that lacked `agentregistry.mcpServers.get` (a 403
-  wrong-principal IAM denial surfaced by the loud fallback — NOT a platform block, and
-  not fixed by granting the RE service agent). **Remediated (2026-08-15):** granted
-  `roles/agentregistry.viewer` to the engine's `principal://<effectiveIdentity>` and
-  recycled its cached toolsets with an in-place `--update` (toolsets resolve once per
-  container; a *recreate* needs a fresh grant — see "Step 0b" in
-  `setup_governance_policies.sh`). The fallback is now loud, the MCP servers are
-  stateless (kills "Session terminated"), and `verify_mcp_tools` detects tool-less
-  toolsets.
+  — the coordinator fell back to direct Cloud Run URLs because its per-engine
+  `AGENT_IDENTITY` lacked `agentregistry.mcpServers.get` (a 403 wrong-principal
+  denial, not a platform block). Remediated by granting `roles/agentregistry.viewer`
+  to the engine's own principal and recycling cached toolsets with an in-place
+  `--update`; "Session terminated" fixed separately by `stateless_http`.
 - [Agent Engine `stream_query` SSE-parse skew + raw-SSE fallback](./agent-engine-sse-stream-parse.md)
   — a recycled engine streams NDJSON via `:streamQuery?alt=sse`, but the installed
   (latest) `google-api-core` ships an **array-only** REST parser, so `stream_query`
