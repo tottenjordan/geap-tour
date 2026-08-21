@@ -6,6 +6,11 @@ existing verifiers (does NOT reimplement them):
 
 * **mcp_tools** — the three toolsets resolve their real tools
   (:func:`src.eval.verify_mcp_tools.run_checks`). *critical*
+* **engine_config** — the deployed engine's serving config matches the baseline
+  (:func:`src.deploy.verify_engine_config.check_engine`). *critical* — every other
+  check here is behavioural and can pass while the engine is misconfigured in a way
+  that drops traffic (a 4Gi container) or serves the wrong models (regressed router
+  tiers). Read-only control-plane GET, so it is free to run every time.
 * **engine_live** — the probe engine returns a non-empty response, retried past
   cold-start (reuses :func:`src.eval.tool_faithfulness.capture_interaction`). This
   is the direct guard for the empty-at-200 cold-start failure documented in
@@ -133,7 +138,34 @@ def check_recall(
         from src.eval.verify_cross_session_recall import run_cross_session_recall as recall_fn
     result = recall_fn(user_id, engine_id=engine_id)
     ok = bool(result.get("recalled"))
-    return ok, "recalled" if ok else "no recall"
+    # The judge's reason makes a red row actionable — "no recall" alone doesn't say
+    # whether memory is empty, the stream came back blank, or the judge itself failed.
+    return ok, "recalled" if ok else f"no recall: {result.get('reason', 'unknown')}"
+
+
+def check_engine_config(
+    *, engine_id: str, check_fn: Callable[..., dict] | None = None
+) -> tuple[bool, str]:
+    """The deployed engine's serving config matches the baseline.
+
+    A pure control-plane GET (no inference, no cost), which is why it can run on
+    every readiness check. It catches the class of failure that leaves the engine
+    *serving* but wrong — a 4Gi container OOM-killing workers, router tiers
+    regressed to Gemini-3 by a plain ``--update`` — where every behavioural check
+    above can still come back green.
+    """
+    if check_fn is None:
+        from src.deploy.verify_engine_config import check_engine as check_fn
+    result = check_fn(engine_id)
+    if result.get("error"):
+        return False, f"unreachable: {result['error']}"
+    findings = result.get("findings") or []
+    crit = [f for f in findings if not f.ok and f.severity == "critical"]
+    adv = [f for f in findings if not f.ok and f.severity == "advisory"]
+    detail = f"{len(crit)} critical, {len(adv)} advisory"
+    if crit:
+        detail += f" ({', '.join(f.name for f in crit)})"
+    return not crit, detail
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +175,11 @@ def build_default_checks(*, engine_id: str, user_id: str, deep: bool = False) ->
     """Assemble the real check list (each entry: name, critical, run thunk)."""
     checks = [
         {"name": "mcp_tools", "critical": True, "run": lambda: check_mcp_tools()},
+        {
+            "name": "engine_config",
+            "critical": True,
+            "run": lambda: check_engine_config(engine_id=engine_id),
+        },
         {
             "name": "engine_live",
             "critical": True,

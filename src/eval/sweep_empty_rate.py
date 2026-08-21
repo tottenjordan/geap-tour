@@ -45,6 +45,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from src.eval.stats import wilson_ci
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -66,17 +68,6 @@ def arm_order(workers: Sequence[int], repeats: int) -> list[int]:
     return order
 
 
-def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
-    """Wilson score interval — honest at small n and near 0, unlike normal-approx."""
-    if not total:
-        return (0.0, 0.0)
-    p = successes / total
-    denom = 1 + z**2 / total
-    centre = (p + z**2 / (2 * total)) / denom
-    margin = z * ((p * (1 - p) / total + z**2 / (4 * total**2)) ** 0.5) / denom
-    return (max(0.0, centre - margin), min(1.0, centre + margin))
-
-
 def summarize(results: list[dict]) -> dict[int, dict]:
     """Aggregate per-arm: pooled rate + interval, and the per-run rates behind it."""
     out: dict[int, dict] = {}
@@ -85,7 +76,7 @@ def summarize(results: list[dict]) -> dict[int, dict]:
         empty = sum(r["empty"] for r in runs)
         total = sum(r["n"] for r in runs)
         rates = [r["empty"] / r["n"] for r in runs if r["n"]]
-        low, high = wilson_interval(empty, total)
+        low, high = wilson_ci(empty, total)
         out[workers] = {
             "runs": len(runs),
             "empty": empty,

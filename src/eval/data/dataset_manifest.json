@@ -1,0 +1,52 @@
+{
+  "datasets": {
+    "src/agents/coordinator/coordinator_eval_set.evalset.json": {
+      "checksum": "sha256:39a5b38f62545b0059e189db48f09d6adae3f6864576e36410a451f4cdbd59b1",
+      "n_cases": 20,
+      "role": "development",
+      "version": "1.0.0"
+    },
+    "src/agents/expense_agent_opt/expense_eval_set.evalset.json": {
+      "checksum": "sha256:fdbe0cddce39bec5fd317b71a75a15fe594a4143aab02524cc5c82ee3c0a6c9f",
+      "n_cases": 7,
+      "role": "development",
+      "version": "1.0.0"
+    },
+    "src/agents/travel_agent_opt/travel_eval_set.evalset.json": {
+      "checksum": "sha256:83478dc1ee84b424a64e6075f071e707f9772b13953cc1d42929ab13140415dc",
+      "n_cases": 7,
+      "role": "development",
+      "version": "1.0.0"
+    },
+    "src/eval/evalsets/coordinator.evalset.json": {
+      "checksum": "sha256:c31115113df733252b9c9bea6c9426cf5b0c1588b926ab6e27c709ccd5c9a0e2",
+      "n_cases": 17,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "src/eval/evalsets/expense_agent.evalset.json": {
+      "checksum": "sha256:57d460e4535be4d82fce1417558efae33928581f44b5bbac1341ad7a8e8dc5e3",
+      "n_cases": 10,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "src/eval/evalsets/router_agent.evalset.json": {
+      "checksum": "sha256:8e97dd150b7ffedea48d5f0eea30598a5ff5e3624a794bbca5def2494dc01b9e",
+      "n_cases": 27,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "src/eval/evalsets/travel_agent.evalset.json": {
+      "checksum": "sha256:71a466d8fd7eed521efef1e539eb7703c0f7f8064508dae523edd8c53a49b137",
+      "n_cases": 10,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "src/router/router_eval_set.evalset.json": {
+      "checksum": "sha256:9793e7c6f3479b61f96e8d04c332cbb934d2a54d4b9dba84ba99023dfb2a859a",
+      "n_cases": 21,
+      "role": "development",
+      "version": "1.0.0"
+    }
+  }
+}

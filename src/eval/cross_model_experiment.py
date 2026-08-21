@@ -43,6 +43,39 @@ EXPERIMENT_AGENTS = {
 
 TIERS = ["low", "medium", "high"]
 
+# Which env var supplies each agent's engine, so a preflight failure can name the
+# variable to fix rather than just the agent.
+ENGINE_ENV_VARS = {
+    "lite_agent": "LITE_ENGINE_ID",
+    "flash_agent": "FLASH_ENGINE_ID",
+    "pro_agent": "PRO_ENGINE_ID",
+    "sonnet_agent": "SONNET_ENGINE_ID",
+    "opus_agent": "OPUS_ENGINE_ID",
+}
+
+
+def preflight_engines(agents: list[str], *, exists_fn=None) -> list[str]:
+    """Return the configured-but-dead engines among ``agents``, as readable lines.
+
+    An **unset** id is already handled downstream as a deliberate skip. This
+    catches the other case: an id that is *set* but names an engine that no longer
+    exists. String-formatting it into a resource name always succeeds, so without
+    this the run proceeds and fails deep inside an eval — after paying for it.
+
+    This is real: at the time of writing all five tier ids in ``.env`` named
+    deleted engines.
+    """
+    if exists_fn is None:
+        from src.deploy.verify_engine_config import engine_exists as exists_fn
+
+    dead = []
+    for agent in agents:
+        engine_id = EXPERIMENT_AGENTS.get(agent, "")
+        if engine_id and not exists_fn(engine_id):
+            var = ENGINE_ENV_VARS.get(agent, "?")
+            dead.append(f"{agent}: {var}={engine_id} does not resolve to a live engine")
+    return dead
+
 
 def _resolve_agent_resource(engine_id: str) -> str:
     if engine_id.startswith("projects/"):
@@ -151,12 +184,27 @@ def run_single_eval(
 def run_experiment(
     tiers: list[str] | None = None,
     agents: list[str] | None = None,
+    *,
+    exists_fn=None,
 ) -> dict:
-    """Run cross-model experiment. Returns consolidated results."""
+    """Run cross-model experiment. Returns consolidated results.
+
+    Raises ``RuntimeError`` before spending anything if a configured engine id
+    names an engine that no longer exists — see :func:`preflight_engines`.
+    """
     if tiers is None:
         tiers = TIERS
     if agents is None:
         agents = list(EXPERIMENT_AGENTS.keys())
+
+    dead = preflight_engines(agents, exists_fn=exists_fn)
+    if dead:
+        raise RuntimeError(
+            "Cannot run: configured engine ids do not exist.\n  "
+            + "\n  ".join(dead)
+            + "\nRedeploy the tier agents (deploy_agents lite,flash,pro,sonnet,opus) "
+            "or unset the stale vars in .env."
+        )
 
     run_id = f"cross_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
