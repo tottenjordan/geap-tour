@@ -31,7 +31,7 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
 
 
 def run_all_evals(
-    agent_id: str = AGENT_ENGINE_ID,
+    agent_id: str | None = None,
     skip_traffic: bool = False,
     batch_only: bool = False,
     monitors_only: bool = False,
@@ -41,7 +41,11 @@ def run_all_evals(
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     output_dir = Path(EVAL_OUTPUT_DIR) / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent_resource_name = _resolve_agent_resource_name(agent_id)
+    # Single-engine phases (traffic, simulated eval, monitors) target one
+    # deployment. The batch phase is the exception — it spans agents, so it gets
+    # ``agent_id`` verbatim (None = per-agent defaults, e.g. router_agent to the
+    # router engine instead of the coordinator).
+    agent_resource_name = _resolve_agent_resource_name(agent_id or AGENT_ENGINE_ID)
 
     print("=" * 70)
     print("  GEAP COMPREHENSIVE EVALUATION PIPELINE")
@@ -374,7 +378,11 @@ def _generate_report(output_dir: Path, results: dict):
 
 def main():
     parser = argparse.ArgumentParser(description="Run all GEAP evaluations")
-    parser.add_argument("--agent-id", default=AGENT_ENGINE_ID, help="Agent Engine ID")
+    parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="Pin every phase to this Agent Engine ID (default: per-agent for batch evals)",
+    )
     parser.add_argument("--threshold", type=float, default=3.0, help="Score threshold")
     parser.add_argument("--skip-traffic", action="store_true", help="Skip traffic generation")
     parser.add_argument("--batch-only", action="store_true", help="Only run batch evals")

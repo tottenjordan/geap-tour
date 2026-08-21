@@ -1,5 +1,9 @@
 # Coordinator `tool_use` scores ~0.27 — root-cause finding (rubric fix shipped)
 
+> **See also:** [router-tool-use-quality.md](./router-tool-use-quality.md) — the same
+> metric on the router, where it errors out entirely instead of scoring low, and the
+> explanation of what `tool_use_quality_v1` actually reads (the `AgentData` events).
+
 **Verdict: mis-rubric + measurement-artifact, NOT an agent defect.** The
 coordinator's tools work; the metric is measuring the wrong thing. This note
 records the investigation and the fix that shipped for cause #1 (the mis-rubric);

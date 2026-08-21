@@ -125,6 +125,14 @@ file; keep this index short (< 200 lines).
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
   defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.
+- [Router `tool_use_quality_v1`: "no function_call events found"](./router-tool-use-quality.md)
+  — the metric grades the `AgentData` **events**, not the response text, so a run
+  where nothing calls a tool is unscorable and used to come back silently reporting
+  five metrics instead of six. A regression: it scored 0.542 on 2026-08-12, when
+  `transfer_to_agent` still put a `function_call` in every trace by construction.
+  Ships a legible `Tool calls: N/M` preflight, a router descriptor that matches the
+  direct-tools agent, the never-populated `AgentConfig.tools`, and per-agent engine
+  resolution (a bare run scored router cases against a *coordinator*).
 - [Model Armor Security dashboard](./model-armor-security-dashboard.md) — what feeds
   the console Security-tab Model Armor dashboard, the no-preview path we chose (floor
   settings inspect-only + Cloud Logging + template logging), and two honesty caveats
