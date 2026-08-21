@@ -187,6 +187,53 @@ class TestAgentConfigsDeclareTools:
                         )
 
 
+class TestAgentInfoAlignment:
+    """The judge must be told what tools the agent has — without a phantom candidate.
+
+    `agent_data.agents` was `None` on every batch item because the batch path
+    passes a resource-name string and never an ``AgentInfo``, so the judge was
+    told the agent had no tools and marked legitimate `function_call`s
+    contradictory. Passing ``agent_info`` fixes that, but if its ``name`` differs
+    from the dataset's ``candidate_name`` the SDK auto-builds a SECOND
+    ``inference_configs`` entry and the service runs a whole extra inference pass
+    under that name — a phantom series with its own (degenerate) scores. Aligning
+    the two keeps one candidate. See docs/notes/offline-eval-empty-turns.md.
+    """
+
+    def test_name_is_aligned_to_the_dataset_candidate(self):
+        from src.eval.multi_agent_batch_eval import _agent_info_for
+
+        info = _agent_info_for("coordinator_agent", "agent_engine_0")
+        assert info is not None
+        assert info.name == "agent_engine_0"
+
+    def test_tools_and_topology_survive_the_rename(self):
+        """Only the candidate label changes — the declared inventory must not."""
+        from src.eval.multi_agent_batch_eval import _agent_info_for
+
+        info = _agent_info_for("coordinator_agent", "agent_engine_0")
+        cfg = info.agents["coordinator_agent"]
+        assert cfg.tools
+        assert info.root_agent_id == "coordinator_agent"
+
+    def test_router_info_is_available_too(self):
+        from src.eval.multi_agent_batch_eval import _agent_info_for
+
+        assert _agent_info_for("router_agent", "agent_engine_0").name == "agent_engine_0"
+
+    def test_missing_candidate_name_returns_none(self):
+        """No candidate name means we cannot align — skip rather than risk a phantom."""
+        from src.eval.multi_agent_batch_eval import _agent_info_for
+
+        assert _agent_info_for("coordinator_agent", None) is None
+
+    def test_unknown_agent_degrades_to_none(self):
+        """A descriptor failure must not break the eval run."""
+        from src.eval.multi_agent_batch_eval import _agent_info_for
+
+        assert _agent_info_for("no_such_agent", "agent_engine_0") is None
+
+
 class TestEmptyResponseReporting:
     """A run's empty rate moves every rubric mean, so it must be visible.
 

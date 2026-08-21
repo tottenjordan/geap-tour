@@ -144,6 +144,39 @@ def drop_tool_use_metric_if_unscorable(metrics: list, with_calls: int, total: in
     return [m for m in metrics if getattr(m, "name", str(m)) != "TOOL_USE_QUALITY"]
 
 
+def _agent_info_for(agent_name: str, candidate_name: str | None):
+    """``AgentInfo`` for the eval service, renamed to match the dataset candidate.
+
+    Without this the batch path never hands the service an ``AgentInfo``, so
+    ``agent_data.agents`` is ``None`` and the judge is explicitly told the agent
+    has no tools — it then grades a legitimate ``function_call`` as a
+    contradictory sentence. Measured on 8 coordinator cases, supplying it moved
+    ``tool_use_quality_v1`` from **0.417 to 0.889**.
+
+    The rename is the load-bearing part. ``_get_candidate_name`` only *warns* on a
+    mismatch, but the auto-built ``inference_configs`` keys off
+    ``agent_info.name``, so a name the dataset doesn't know adds a second
+    candidate and the service runs an **extra inference pass** under it — a
+    phantom series with its own scores that would corrupt harvest/publish key
+    matching. Aligning the two keeps exactly one candidate.
+
+    Returns ``None`` when there is no candidate name to align to, or when the
+    descriptor cannot be built — a missing inventory is a worse score, not a
+    broken run. See docs/notes/offline-eval-empty-turns.md.
+    """
+    if not candidate_name:
+        return None
+    try:
+        from src.eval.agent_eval_configs import build_agent_info
+
+        info = build_agent_info(agent_name)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"  agent_info unavailable for {agent_name} ({e}) — judge will infer tools")
+        return None
+    info.name = candidate_name
+    return info
+
+
 def _resolve_agent_resource_name(agent_id: str) -> str:
     if agent_id.startswith("projects/"):
         return agent_id
@@ -284,14 +317,29 @@ def _run_single_agent_eval(
     # Run evaluation
     print("  Running evaluation...")
     ensure_eval_experiment(client=client)
-    evaluation_run = client.evals.create_evaluation_run(
-        dataset=inference_result,
-        agent=agent_resource_name,
-        metrics=metrics,
-        dest=GCS_EVAL_DEST,
-        display_name=eval_run_display_name(agent_name, "batch"),
-        labels=eval_run_labels(agent_name, "batch"),
-    )
+    # Tell the judge what tools the agent has. Without this agent_data.agents is
+    # None and it grades legitimate function_calls as contradictory. Name-aligned
+    # to the dataset candidate so the SDK does not spin up a second candidate.
+    agent_info = _agent_info_for(agent_name, getattr(inference_result, "candidate_name", None))
+    if agent_info is not None:
+        n_tools = sum(
+            len(t.function_declarations or [])
+            for cfg in agent_info.agents.values()
+            for t in (cfg.tools or [])
+        )
+        print(f"  Declared {n_tools} tools to the judge (candidate '{agent_info.name}')")
+
+    run_kwargs = {
+        "dataset": inference_result,
+        "agent": agent_resource_name,
+        "metrics": metrics,
+        "dest": GCS_EVAL_DEST,
+        "display_name": eval_run_display_name(agent_name, "batch"),
+        "labels": eval_run_labels(agent_name, "batch"),
+    }
+    if agent_info is not None:
+        run_kwargs["agent_info"] = agent_info
+    evaluation_run = client.evals.create_evaluation_run(**run_kwargs)
 
     print(f"  Eval run: {evaluation_run.name}")
     print("  Polling", end="", flush=True)
