@@ -148,9 +148,19 @@ alert floors (`quality_alerts.py:112-152`).
    low-agreement online panel is visible. This closes the "single managed
    autorater … online_monitor.py" gap flagged in P0; faithfulness stays
    single-judge for now (grounded-trajectory judge; panel is future work).
-5. **Confidence intervals + sample-size floors.** Bootstrap CI on each aggregate;
-   refuse pass/fail (or mark `low_confidence`) when `n < floor`; add a binomial
-   significance test to the pairwise win-rate. Surfaces in `verify_monitors`.
+5. **Confidence intervals + sample-size floors.** ✅ **implemented**
+   (`src/eval/stats.py`, `tests/test_stats.py`). One shared stats module — a
+   percentile `bootstrap_mean_ci`, an `is_low_confidence` / `confidence_label`
+   sample floor (`MIN_SAMPLES = 8`), `wilson_ci` for proportions, and
+   `binomial_two_sided_p` / `win_rate_significance` for the pairwise sign test.
+   Wired into all four consumers: `verify_monitors` (per-metric `ci` +
+   `low_confidence`), `multi_agent_batch_eval._annotate_low_confidence` (tags every
+   metric graded over too few items), `online_monitor` (per-rubric `ci` +
+   `low_confidence`), and `pairwise_eval` (a `significance` block, so a majority
+   over a handful of cases can no longer read as a verdict). Renderers print
+   `⚠ low_confidence` rather than hiding it. `wilson_ci` is also what
+   `verify_router_health` and `sweep_empty_rate` report empty rates with — the one
+   implementation, not a copy.
 6. **Human-label calibration set.** ✅ **implemented** (`src/eval/calibration.py`,
    `src/eval/data/policy_calibration_gold.json`, `tests/test_calibration.py`). A
    32-case gold set of `(prompt, response, human_score)` policy-compliance triples;
@@ -168,20 +178,31 @@ alert floors (`quality_alerts.py:112-152`).
 7. **Expand + version datasets.** Grow adversarial + multi-turn + a long-context
    stress set; add `dataset_version` + checksum + a committed generation/curation
    script; split a frozen *regression* set from a *development* set (G2).
-8. **Statistical alert baselining.** Replace static floors with rolling-baseline +
-   z-score / regression-vs-last-good-release; and **label infra-empty separately**
-   from quality-low in the online monitor so a helpfulness alert means quality
-   (G4, G5).
+8. **Statistical alert baselining.** ✅ **implemented** (`src/eval/baseline.py`,
+   `docs/notes/online-infra-empty-and-baseline-alerts.md`) — a rolling-baseline
+   z-score anomaly block in `verify_monitors` alongside the static floor, and
+   infra-empty responses partitioned out of the quality mean into their own
+   `agent_online_eval/infra_empty_rate` ceiling, so a helpfulness alert means
+   quality and not an empty stream (G4, G5).
 9. **Wire multi-turn + a smoke online-monitor into advisory CI** so multi-turn and
-   empty-stream regressions are caught per-PR (G5), and **replace the substring
-   recall check with a judge** over multiple recall probes.
+   empty-stream regressions are caught per-PR (G5). ⏳ *open.*
+   The second half — **replace the substring recall check with a judge** — is
+   ✅ **done**: `verify_cross_session_recall.evaluate_recall` now grounds a
+   deterministic judge on the facts Memory Bank actually holds. The substring check
+   it replaced could not tell recall from its opposite ("I have no **window** seat
+   preference on file" contained `window`, so it *passed*) on a check marked
+   critical in `demo_readiness --deep`. Fails closed on an empty stream, a judge
+   error, or an unparseable verdict; signals are now diagnostics, never the verdict.
+   Still open within this item: running the judge over *multiple* recall probes
+   rather than one.
 10. **Tool-call faithfulness (hallucinated-action detection).** ✅ **implemented**
     (`src/eval/tool_faithfulness.py`, `tests/test_tool_faithfulness.py`) — a
     grounded judge compares completion claims against the real `stream_query`
     trajectory and flags fabricated actions; published on both offline
     (`agent_eval/tool_faithfulness`) and online (`agent_online_eval/*`) surfaces at
-    the shared 3.0 floor (G7). **Honest limit:** coordinator-level accuracy is
-    gated on the Branch-A/B trajectory-visibility spike, not yet run live.
+    the shared 3.0 floor (G7). The Branch-A/B trajectory-visibility fork it depended
+    on was **resolved live 2026-08-18 → Branch A**: the coordinator surfaces nested
+    domain MCP calls client-side, so faithfulness is action-level as designed.
 
 ## Honest caveats
 - Rubric scoring needs a **deployed engine** (no local inference path — memory
