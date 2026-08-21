@@ -125,6 +125,14 @@ file; keep this index short (< 200 lines).
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
   defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.
+- [The "hallucination drift" was empty turns, not drift](./offline-eval-empty-turns.md)
+  — an eval item with no final response text scores **0.06** on `hallucination_v1`
+  vs 0.66-0.82 for items that answered, so the metric largely tracks the run's
+  infra-empty rate (11/30 empty ⇒ 0.42; 2/47 ⇒ 0.81 — same agent, same cases).
+  Retries now cover "events but no final text", and every run prints its empty
+  rate. Corrects two earlier guesses (aiplatform judge drift; PR #66's
+  `AgentConfig.tools`, which never reaches the batch path at all) and records the
+  measured 0.42 → 0.94 tool-use gain still available from passing `agent_info`.
 - [Router `tool_use_quality_v1`: "no function_call events found"](./router-tool-use-quality.md)
   — the metric grades the `AgentData` **events**, not the response text, so a run
   where nothing calls a tool is unscorable and used to come back silently reporting

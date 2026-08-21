@@ -53,6 +53,9 @@ MAX_POLL_SECONDS = 1200
 # imported so a private-constant rename degrades to "0 tool calls found" — a
 # visible message — instead of an ImportError at module load.
 _AGENT_DATA_COLUMN = "agent_data"
+# The column holding the extracted final response text
+# (``agentplatform._genai._evals_constant.RESPONSE``).
+_RESPONSE_COLUMN = "response"
 
 
 def _agent_data_events(cell) -> list[dict]:
@@ -76,6 +79,30 @@ def _agent_data_events(cell) -> list[dict]:
         for event in (turn or {}).get("events") or []
         if isinstance(event, dict)
     ]
+
+
+def count_empty_response_items(inference_df) -> tuple[int, int]:
+    """``(items whose final response is empty, total items)``.
+
+    An item that ends on a tool call with no synthesized answer has nothing for a
+    rubric to grade, and the judges do not treat it as "no data" — they grade the
+    empty string. Measured on the coordinator's 49-case batch, such items average
+    **0.06** on ``hallucination_v1`` vs 0.66-0.82 for items that produced text, so
+    their prevalence alone moves the run mean (11/30 ⇒ 0.42 overall; 2/47 ⇒ 0.81).
+
+    Reporting the rate keeps an infra failure from reading as a quality
+    regression — the offline counterpart of ``agent_online_eval/infra_empty_rate``
+    (:func:`src.eval.online_monitor.is_infra_empty`, which this mirrors).
+    """
+    if inference_df is None or not len(inference_df):
+        return 0, 0
+    total = len(inference_df)
+    if _RESPONSE_COLUMN not in getattr(inference_df, "columns", []):
+        return 0, total
+
+    from src.eval.online_monitor import is_infra_empty
+
+    return sum(1 for cell in inference_df[_RESPONSE_COLUMN] if is_infra_empty(cell)), total
 
 
 def count_tool_call_items(inference_df) -> tuple[int, int]:
@@ -228,9 +255,23 @@ def _run_single_agent_eval(
     # If nothing in the run called a tool the service rejects the metric and the
     # run silently comes back with one metric fewer — so say so, and say the count
     # even when it is fine so a low score is interpretable.
-    with_calls, total_items = count_tool_call_items(
-        getattr(inference_result, "eval_dataset_df", None)
-    )
+    inference_df = getattr(inference_result, "eval_dataset_df", None)
+
+    # An item with no final text has nothing for a rubric to grade, and the judges
+    # grade the empty string rather than skipping it — so a run's empty rate moves
+    # every rubric mean. Reported so an infra failure can't read as a quality
+    # regression (the offline twin of agent_online_eval/infra_empty_rate).
+    n_empty, n_total = count_empty_response_items(inference_df)
+    if n_total:
+        pct = 100.0 * n_empty / n_total
+        print(f"  Empty responses: {n_empty}/{n_total} ({pct:.0f}%) — these depress every rubric")
+        if pct >= 20:
+            print(
+                "    WARNING: a high empty rate means these scores measure infra "
+                "health, not answer quality. See docs/notes/offline-eval-empty-turns.md"
+            )
+
+    with_calls, total_items = count_tool_call_items(inference_df)
     print(f"  Tool calls: {with_calls}/{total_items} items invoked at least one tool")
     if total_items and not with_calls:
         print(
@@ -345,6 +386,11 @@ def _run_single_agent_eval(
         "status": "PASSED" if all_pass else "FAILED",
         "test_cases": len(cases),
         "inference_seconds": round(elapsed, 1),
+        # Infra health for this run. A rubric mean is only comparable to another
+        # run's at a similar empty rate — see docs/notes/offline-eval-empty-turns.md.
+        "empty_responses": n_empty,
+        "empty_rate": round(n_empty / n_total, 4) if n_total else 0.0,
+        "tool_call_items": with_calls,
         "metrics": metric_results,
         "summary_raw": raw_metrics,
         "evaluation_run_name": getattr(evaluation_run, "name", None),
