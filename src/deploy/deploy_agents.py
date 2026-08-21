@@ -108,6 +108,12 @@ REQUIREMENTS = [
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENV_FILE = os.path.join(PROJECT_ROOT, ".env")
 
+# Container limits applied to a LiteLlm-backed engine. The Agent Runtime default
+# (cpu 4 / memory 4Gi) OOM-kills a Claude worker mid-call — see _auto_memory for
+# the measurement. cpu must be one of 1/2/4/6/8 and memory must end in "Gi".
+LITELLM_CPU = "4"
+LITELLM_MEMORY = "16Gi"
+
 
 ENABLE_AGENT_IDENTITY = os.environ.get("ENABLE_AGENT_IDENTITY", "0") in ("1", "true")
 ENABLE_AGENT_GATEWAY = os.environ.get("ENABLE_AGENT_GATEWAY", "0") in ("1", "true")
@@ -286,8 +292,60 @@ def _tagged_display_name(agent, tag: str | None = None) -> str:
     return f"{agent.name}_{tag}" if tag else agent.name
 
 
+def _model_ids(agent) -> list[str]:
+    """Every backbone model id reachable from ``agent``, as plain strings.
+
+    Handles the three shapes a deployable agent's ``model`` takes here: a bare
+    id string, a wrapper exposing ``.model`` (``RetryingLlm``, ``LiteLlm``,
+    ``Gemini``), and the router's :class:`~src.router.tier_routing_llm.TierRoutingLlm`,
+    whose real backbones live in its ``_tier_models`` tuple rather than in
+    ``.model`` (that attribute only names the default tier).
+    """
+    ids: list[str] = []
+    for node in [agent, *(getattr(agent, "sub_agents", None) or [])]:
+        model = getattr(node, "model", None)
+        if isinstance(model, str):
+            ids.append(model)
+        elif model is not None:
+            ids.extend(getattr(model, "_tier_models", None) or ())
+            nested = getattr(model, "model", None)
+            if isinstance(nested, str):
+                ids.append(nested)
+    return [model_id for model_id in ids if model_id]
+
+
+def _auto_memory(agent) -> str | None:
+    """The memory limit this agent needs, or None to keep the platform default.
+
+    A **LiteLlm-backed** engine (any Claude tier or backbone) does not fit in the
+    Agent Runtime default of 4Gi. Measured on router ``6134089059699523584``
+    (2026-08-21): every Claude-tier turn came back HTTP 200 with zero characters.
+    The logs showed the tier dispatch, then ``LiteLLM completion() … provider =
+    vertex_ai``, then a *fresh worker booting* ~5.6s later — no traceback, no
+    error, and a Cloud Trace missing its enclosing ``invoke_agent`` span. An
+    exception closes and exports its spans; only a SIGKILL loses them, so the
+    worker was killed mid-call. The container runs several worker processes and
+    each one that touches Claude pulls in litellm (~140MB resident, ~334MB peak
+    on a full turn) on top of ADK, the MCP toolsets and the model clients.
+
+    Raising the limit to 16Gi took the identical probe set from 8/8 empty to
+    0/8 (lite/flash/pro/sonnet all answering, sonnet returning 7-11k characters).
+    Gemini-only engines never load litellm, so they keep the platform default and
+    nothing about them changes. See docs/notes/router-empty-stream-retry.md.
+    """
+    from src.router.tier_routing_llm import needs_litellm
+
+    if any(needs_litellm(model_id) for model_id in _model_ids(agent)):
+        return LITELLM_MEMORY
+    return None
+
+
 def _build_config(
-    agent, display_name: str | None = None, *, min_instances: int | None = None
+    agent,
+    display_name: str | None = None,
+    *,
+    min_instances: int | None = None,
+    memory: str | None = None,
 ) -> dict:
     """Build the deployment config dict used for both create and update.
 
@@ -295,6 +353,11 @@ def _build_config(
     the engine never scales to zero. The default (None) preserves scale-to-zero;
     a floor of 1 avoids the idle cold-start/error-shaped-stream wedge that a demo
     engine can fall into when left idle (see the pre-demo readiness runbook).
+
+    ``memory`` overrides the container memory limit. Left unset, a LiteLlm-backed
+    agent is given :data:`LITELLM_MEMORY` automatically (see :func:`_auto_memory`
+    — the default 4Gi gets its workers OOM-killed mid-call) and a Gemini-only
+    agent keeps the platform default.
     """
     env_vars = {
         **OTEL_ENV_VARS,
@@ -372,6 +435,12 @@ def _build_config(
         config["min_instances"] = int(min_instances)
         print(f"  Keep-warm: min_instances={int(min_instances)}")
 
+    limit = memory or _auto_memory(agent)
+    if limit:
+        config["resource_limits"] = {"cpu": LITELLM_CPU, "memory": limit}
+        reason = "explicit" if memory else "auto: LiteLlm backbone needs >4Gi"
+        print(f"  Memory: {limit} ({reason})")
+
     if ENABLE_AGENT_IDENTITY:
         config["identity_type"] = "AGENT_IDENTITY"
         print("  Identity: AGENT_IDENTITY (SPIFFE-based)")
@@ -400,12 +469,16 @@ def _get_client():
 
 
 def deploy_agent(
-    agent, display_name: str | None = None, *, min_instances: int | None = None
+    agent,
+    display_name: str | None = None,
+    *,
+    min_instances: int | None = None,
+    memory: str | None = None,
 ) -> str:
     """Create a new agent on Agent Runtime."""
     os.chdir(PROJECT_ROOT)
     print(f"\n--- Creating {agent.name} ---")
-    config = _build_config(agent, display_name, min_instances=min_instances)
+    config = _build_config(agent, display_name, min_instances=min_instances, memory=memory)
 
     remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
@@ -414,7 +487,12 @@ def deploy_agent(
 
 
 def update_agent(
-    agent, engine_id: str, display_name: str | None = None, *, min_instances: int | None = None
+    agent,
+    engine_id: str,
+    display_name: str | None = None,
+    *,
+    min_instances: int | None = None,
+    memory: str | None = None,
 ) -> str:
     """Update an existing agent on Agent Runtime."""
     os.chdir(PROJECT_ROOT)
@@ -422,7 +500,7 @@ def update_agent(
     if not engine_id.startswith("projects/"):
         engine_id = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{engine_id}"
     print(f"\n--- Updating {agent.name} ({engine_id.split('/')[-1]}) ---")
-    config = _build_config(agent, display_name, min_instances=min_instances)
+    config = _build_config(agent, display_name, min_instances=min_instances, memory=memory)
 
     remote = _get_client().agent_engines.update(
         name=engine_id,
@@ -522,6 +600,7 @@ def run_deploy(
     tag: str | None = None,
     *,
     min_instances: int | None = None,
+    memory: str | None = None,
 ) -> dict[str, str]:
     """Deploy or update agents and return a map of name → resource name.
 
@@ -536,6 +615,10 @@ def run_deploy(
              to every agent in this batch. None (default) preserves each
              engine's existing scaling (scale-to-zero on create); a floor of
              1-2 avoids idle cold-start / empty-at-200 streams.
+        memory: Container memory limit (e.g. "16Gi") applied to every agent in
+             this batch. None (default) lets each agent pick its own — see
+             :func:`_auto_memory`, which gives a LiteLlm-backed engine the
+             headroom the 4Gi platform default does not provide.
     """
     vertexai.init(
         project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
@@ -561,10 +644,12 @@ def run_deploy(
                 print(f"  No engine ID for {name} — set {entry['env_var']} in .env")
                 continue
             deployed[agent.name] = update_agent(
-                agent, engine_id, display_name, min_instances=min_instances
+                agent, engine_id, display_name, min_instances=min_instances, memory=memory
             )
         else:
-            resource_name = deploy_agent(agent, display_name, min_instances=min_instances)
+            resource_name = deploy_agent(
+                agent, display_name, min_instances=min_instances, memory=memory
+            )
             deployed[agent.name] = resource_name
             _update_env_file(entry["env_var"], resource_name)
             # Durable fix: the coordinator IS the default engine. Keep
@@ -600,6 +685,14 @@ if __name__ == "__main__":
         "scales to zero — avoids idle cold-start / empty-at-200 streams "
         "(e.g. --min-instances 1). Default: unset (preserves existing scaling).",
     )
+    parser.add_argument(
+        "--memory",
+        default=None,
+        help=f"Container memory limit, e.g. --memory 32Gi. Default: unset, which "
+        f"gives a LiteLlm-backed (Claude) engine {LITELLM_MEMORY} — the 4Gi "
+        f"platform default OOM-kills its workers mid-call (empty-at-200) — and "
+        f"leaves a Gemini-only engine on the platform default.",
+    )
     args = parser.parse_args()
 
     deployed = run_deploy(
@@ -607,6 +700,7 @@ if __name__ == "__main__":
         update=args.update,
         tag=args.tag,
         min_instances=args.min_instances,
+        memory=args.memory,
     )
     print("\n=== Agent Resource Names ===")
     for name, resource in deployed.items():
