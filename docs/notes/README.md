@@ -155,6 +155,15 @@ file; keep this index short (< 200 lines).
   3–5s/turn. Ships opt-in `COORDINATOR_THINKING_BUDGET` / `COORDINATOR_MAX_OUTPUT_TOKENS`
   knobs (regional-Gemini path only, default unset = no change) + the live A/B to
   validate before changing the served default; memory-preload cache is a follow-up.
+- [`vertexai.Client` → `agentplatform.Client`](./agentplatform-client-migration.md)
+  — the deprecation swap, and why it isn't a rename: `agentplatform._genai` is a
+  **separate copy** (`agentplatform.types is vertexai.types` → False), so `Client`,
+  `types`, and the `_sdk_patches` targets must move as one unit or the patches
+  silently no-op back to ~0 rubric scores. Ships in the same
+  `google-cloud-aiplatform` dist (no dependency change); `vertexai.init` /
+  `agent_engines` deliberately left alone. Honest limit: 50/50 engine-log
+  occurrences are ADK's, and ADK 2.7.1 doesn't fix them — includes the 2.6.3 → 2.7.1
+  upgrade findings as seed for a future plan.
 - [The google-genai AFC warning](./genai-afc-warning.md) — google-genai defaults
   automatic function calling **on**, so every call took the AFC branch and the
   router logged an `AFC is enabled` INFO per request plus a WARNING per worker
