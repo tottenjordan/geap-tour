@@ -1,0 +1,147 @@
+name: Monitoring Publish
+
+# Scheduled publish of the coordinator's quality metrics to Cloud Monitoring.
+#
+# WHY THIS IS A WORKFLOW AND NOT A LOCAL CRON: the alerting this repo builds
+# (agent_eval/* floors, infra_empty_rate, and the rolling-baseline z-score
+# detection in src/eval/baseline.py) is inert until the series actually have
+# points — and the baseline needs n >= 5 before it can call an anomaly at all.
+# An in-session scheduler only fires while somebody's REPL is open and idle, so
+# it silently stops publishing the moment the terminal closes. That is the exact
+# looks-like-it-is-running-but-is-not failure this repo keeps getting bitten by.
+#
+# COST: each run is a full coordinator batch eval plus two standalone judges
+# (~5 min, billable Vertex inference + judge calls). Hourly is chosen to fill the
+# 5-point baseline within a working day. Once the baseline is established, dial
+# this back — '23 */3 * * *' (8/day) is plenty for drift detection.
+#
+# --no-faithfulness IS LOAD-BEARING, DO NOT REMOVE IT. demo_readiness treats a
+# RED tool_faithfulness publish as a deliberate demo regression point; a healthy
+# hourly republish would silently erase it. tests/test_monitoring_publish.py
+# fails the build if the flag goes missing.
+
+on:
+  schedule:
+    # Hourly at :23 UTC. Deliberately off :00 — GitHub delays scheduled runs
+    # under load, and the top of the hour is the most contended slot there is.
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      skip_online:
+        description: 'Skip the online-quality monitor (offline bridge only)'
+        required: false
+        default: 'false'
+
+concurrency:
+  # A run takes ~5 min; never let a slow one overlap the next tick and double-publish.
+  group: monitoring-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish quality metrics
+    # Skips cleanly (never fails) when WIF isn't configured — forks, unset repos.
+    if: ${{ vars.WIF_PROVIDER != '' && vars.AGENT_ENGINE_ID != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      # Cheap control-plane GET. If the engine is misconfigured (e.g. back on a
+      # 4Gi container dropping turns), the scores below describe a broken engine
+      # and the published points would poison the baseline. Advisory, but it puts
+      # the reason in the log next to the numbers.
+      - name: Verify engine config
+        id: engine_config
+        continue-on-error: true
+        run: |
+          uv run python -m src.deploy.verify_engine_config \
+            --engine-id "${{ vars.AGENT_ENGINE_ID }}" --role coordinator
+
+      - name: Publish offline quality (agent_eval/*)
+        id: offline
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.publish_offline_eval --run \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --no-faithfulness
+
+      - name: Publish online quality (agent_online_eval/*)
+        id: online
+        if: ${{ inputs.skip_online != 'true' }}
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.online_monitor \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}"
+
+      - name: Summarize monitored surfaces
+        if: always()
+        run: |
+          uv run python -m src.eval.verify_monitors --format json > monitors.json || true
+          uv run python - <<'PY'
+          import json, os, pathlib
+
+          lines = ["# Monitoring Publish", ""]
+          lines += [
+              "| Step | Result |",
+              "|---|---|",
+              f"| engine config | ${{ steps.engine_config.outcome }} |",
+              f"| offline quality | ${{ steps.offline.outcome }} |",
+              f"| online quality | ${{ steps.online.outcome }} |",
+              "",
+          ]
+          path = pathlib.Path("monitors.json")
+          if path.exists() and path.stat().st_size:
+              data = json.loads(path.read_text())
+              lines += ["| Surface | Status | Metric | n | avg | baseline |",
+                        "|---|---|---|---|---|---|"]
+              for surface in ("coordinator_quality", "online_quality", "router_efficiency"):
+                  block = data.get(surface) or {}
+                  metrics = block.get("metrics") or {}
+                  if not metrics:
+                      lines.append(f"| {surface} | {block.get('status')} | — | — | — | — |")
+                      continue
+                  for name, m in sorted(metrics.items()):
+                      base = (m.get("baseline") or {}).get("status", "?")
+                      flag = " ⚠" if m.get("out_of_bounds") else ""
+                      lines.append(
+                          f"| {surface} | {block.get('status')} | {name}{flag} | "
+                          f"{m.get('eval_count')} | {m.get('avg_score')} | {base} |"
+                      )
+              lines += ["", "_Anomaly detection stays inert until `baseline` leaves "
+                        "`insufficient_history` (needs n >= 5)._"]
+          else:
+              lines.append("verify_monitors produced no output — see the step logs.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      # The publish steps are continue-on-error so one failing surface never hides
+      # the other's result in the summary — but the JOB must still go red, or a
+      # permanently-broken publish looks green forever in the Actions list.
+      - name: Fail if every publish failed
+        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' }}
+        run: |
+          echo "::error::No monitoring surface published — the series will go stale."
+          exit 1
