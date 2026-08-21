@@ -211,3 +211,75 @@ judge was penalising an agent it had been told had no tools.
 
 **Since shipped** — the phantom candidate is avoided by aligning `agent_info.name`
 to the dataset's candidate name. See the section above for the measured result.
+
+## The residual rate: measured, and it is NOT concurrency
+
+*Swept 2026-08-21 with `src/eval/sweep_empty_rate.py` — 9 inference-only runs, 441
+items, on the warm probe engine.*
+
+After the retry and partitioning fixes above, the coordinator still showed a
+**4-27% empty rate that swung wildly between runs**. Before chasing it, two things
+were established cheaply:
+
+- **Not agent/case behaviour.** Two runs shared only **2** of their 13 and 6 empty
+  cases. If the agent were declining particular prompts the same cases would fail
+  every time.
+- **Not a guardrail block.** `armor/config.py:input_guardrail_callback` returns a
+  `Content` carrying `REJECTION_MESSAGE`, so a blocked prompt is non-empty and is
+  never counted.
+
+The leading hypothesis was scale-out contention — `EvalTask`/`run_inference` fan out,
+and cold replicas are a documented empty-at-200 trigger. **It is wrong.**
+
+| workers | empty/total | rate | 95% CI |
+| --- | --- | --- | --- |
+| 1 (fully serial) | 20/147 | **14%** | 9-20% |
+| 4 (our default) | 22/147 | **15%** | 10-22% |
+| 8 | 17/147 | **12%** | 7-18% |
+
+Flat, with near-identical intervals. **A fully serial run on a warm
+`min_instances=4` engine still drops ~14% of turns.** Concurrency is not the lever;
+throttling and warming will not fix this.
+
+### Retries are masking an order of magnitude
+
+The rate above is *post-retry*, and the telemetry added for this sweep shows how much
+work that is doing:
+
+| workers | empty attempts | survived (exhausted) |
+| --- | --- | --- |
+| 1 | 159 | 19 |
+| 4 | 180 | 22 |
+| 8 | 136 | 15 |
+
+Roughly **one empty attempt per item**, collapsing ~8x to the surviving rate. The
+underlying failure is far more common than any reported number suggests — which is
+also why the sweep needed this instrumentation: without it, retries could have
+absorbed a real concurrency effect and the sweep would have read "flat" for the wrong
+reason.
+
+### Shape of the failures
+
+`empty_indices` per run are mostly **scattered**, with occasional short clusters
+(`[3,4,5,8,…]`, `[27,28,29,…]`). So this is predominantly per-request, not one
+replica dying and taking a contiguous block with it. Run-level overdispersion is
+nonetheless real and large — the workers=4 arm alone spanned 8%, 4% and **33%**.
+
+### Where that leaves it
+
+A steady-state, per-request, ~14%-surviving (~100%-attempted) empty-at-200 rate on a
+warm managed engine, invariant to client concurrency. That is engine-side behaviour
+this repo cannot fix from the client; the honest levers are:
+
+1. **Retries** — already the thing keeping it usable; raising `EVAL_EMPTY_RETRIES`
+   above 4 would cut the residual further at the cost of latency.
+2. **A gate** — `demo_readiness` should assert an empty-rate ceiling so nobody demos
+   into a bad engine.
+3. **Escalation** — with the sweep table above as evidence.
+
+**Open, and worth one cheap experiment:** the *router* (`6134…`) showed **0/12** on
+the same day. Both engines run `min_instances=4` and both hold Memory Bank tools; the
+obvious differences are backbone (`gemini-2.5-flash` vs the lite tier) and the
+coordinator's `ENABLE_MEMORY_PRELOAD_CACHE`. Running the same sweep against the
+router, and against the coordinator with the preload cache off, would isolate that —
+and unlike concurrency, those are knobs we control.
