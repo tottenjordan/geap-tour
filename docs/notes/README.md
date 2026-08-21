@@ -120,6 +120,15 @@ file; keep this index short (< 200 lines).
   impossible delegation; the declared inventory was 7 of the real 10. Also fixed
   two GEPA prompts (owner decision), chiefly `expense_agent` refusing a submission
   its own eval case requires. All pinned by guard tests.
+- [Scoring the tool trajectory](./trajectory-criterion.md) — wires up
+  `run_trajectory_eval`, which was finished, tested and called by nothing because it
+  was pinned at zero **three** different ways: registry-prefixed names vs bare
+  references (0% raw → 68% normalized), `EvalTask`'s concurrent fan-out plus an API
+  that *rejects* an empty `predicted_trajectory` (`failure/mean 1.0`, all `nan`), and
+  args compared against names-only references. Now 1.0/1.0/1.0 with empties
+  partitioned out. The headline: ordering is **100% correct on every turn that calls
+  a tool** — the rest is the infra-empty problem. Optimizer criterion deliberately
+  deferred, with the unblocking experiment named.
 - [GEPA sampler cases: what the optimizer was being taught](./gepa-sampler-case-audit.md)
   — the data behind that prompt defect. Swept all 13 evalsets: one case
   (`expense_over_limit_no_submit`) taught refuse-to-submit against a server that

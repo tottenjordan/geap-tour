@@ -30,6 +30,30 @@ from __future__ import annotations
 TRAJECTORY_METRICS = ("trajectory_exact_match", "trajectory_precision", "trajectory_recall")
 
 
+def normalize_tool_name(name: str | None) -> str | None:
+    """Strip the Agent Registry ``<domain>_mcp_`` prefix, if it is a real one.
+
+    Runtime ``function_call`` events name tools as ``booking_mcp_book_flight``
+    when :func:`src.registry.get_mcp_tools` resolves through Agent Registry, and
+    as bare ``book_flight`` when it falls back to the direct Cloud Run URL. The
+    curated references were authored against the fallback form, which was the
+    normal path until the 2026-08-15 IAM remediation. Trajectory scoring compares
+    names *literally*, so both sides must be in one form.
+
+    Only strips when the domain is a real server (``verify_mcp_tools.EXPECTED_TOOLS``)
+    **and** the remainder is one of that domain's tools — a normalizer that guesses
+    would silently rename an unrelated tool. Anything else is returned unchanged.
+    """
+    if not name:
+        return name
+    from src.eval.verify_mcp_tools import EXPECTED_TOOLS
+
+    domain, sep, tool = name.partition("_mcp_")
+    if sep and tool in EXPECTED_TOOLS.get(domain, ()):
+        return tool
+    return name
+
+
 def extract_trajectory(events, *, include_transfers: bool = False) -> list[dict]:
     """Ordered ``[{"tool_name", "tool_input"}]`` from ``stream_query`` events.
 
@@ -110,25 +134,65 @@ def _final_text(events) -> str:
 class CoordinatorRunnable:
     """``EvalTask`` runnable wrapping a deployed coordinator engine.
 
-    Vertex ``EvalTask`` invokes ``runnable.query(input=<prompt>)`` and reads
+    Vertex ``EvalTask`` invokes ``runnable.query(input=<prompt>)`` (it matches the
+    runtime-checkable ``reasoning_engines.Queryable`` protocol) and reads
     ``response`` and ``predicted_trajectory`` from the returned dict.
+
+    Two robustness measures, both learned the hard way:
+
+    * **Raw-SSE fallback.** A recycled engine streams NDJSON that the installed
+      ``google-api-core`` array-only parser rejects; every other stream consumer in
+      this repo already falls back to :mod:`src.eval.raw_stream` and this one did
+      not (memory ``agent-engine-sse-parse-skew``).
+    * **Empty-turn retry.** ``EvalTask`` fans the dataset out concurrently, which is
+      exactly the pattern that makes a warm-but-busy engine return empty-at-200
+      turns (``_sdk_patches`` throttles the batch path for the same reason). An
+      empty trajectory is not merely a zero here — the evaluation API rejects it
+      with "Required field is not set", which turns *every* metric into ``nan``.
+
+    Tool names are normalized (:func:`normalize_tool_name`) because the reference
+    trajectories are bare and the runtime emits registry-prefixed names.
     """
 
     def __init__(
-        self, engine, *, user_id: str = "trajectory-eval", include_transfers: bool = False
+        self,
+        engine,
+        *,
+        user_id: str = "trajectory-eval",
+        include_transfers: bool = False,
+        empty_retries: int = 2,
     ):
         self._engine = engine
         self._user_id = user_id
         self._include_transfers = include_transfers
+        self._empty_retries = max(1, empty_retries)
+
+    def _stream(self, prompt: str) -> list[dict]:
+        """One ``stream_query`` pass with the SSE-parse-skew fallback."""
+        from src.eval import raw_stream
+
+        try:
+            return list(self._engine.stream_query(user_id=self._user_id, message=prompt))
+        except ValueError as exc:
+            resource = raw_stream.agent_resource_name(self._engine)
+            if not raw_stream.is_sse_parse_skew(exc) or not resource:
+                raise
+            sid = raw_stream.create_session(resource, self._user_id)
+            return raw_stream.stream_query_events(
+                resource, message=prompt, user_id=self._user_id, session_id=sid
+            )
 
     def query(self, input: str = "", **kwargs) -> dict:  # SDK invokes query(input=<prompt>)
-        events = list(self._engine.stream_query(user_id=self._user_id, message=input))
-        return {
-            "response": _final_text(events),
-            "predicted_trajectory": extract_trajectory(
-                events, include_transfers=self._include_transfers
-            ),
-        }
+        trajectory: list[dict] = []
+        events: list[dict] = []
+        for _ in range(self._empty_retries):
+            events = self._stream(input)
+            trajectory = extract_trajectory(events, include_transfers=self._include_transfers)
+            if trajectory:
+                break
+        for call in trajectory:
+            call["tool_name"] = normalize_tool_name(call["tool_name"])
+        return {"response": _final_text(events), "predicted_trajectory": trajectory}
 
 
 def _reference_trajectory(case: dict) -> list[dict]:
@@ -146,11 +210,22 @@ def run_trajectory_eval(
 ) -> dict:
     """Score the coordinator's tool-call trajectories deterministically.
 
-    Filters ``cases`` to those carrying a ``reference_trajectory``, builds an
-    ``EvalTask`` dataset (``prompt`` + materialized ``reference_trajectory``),
-    runs it against a :class:`CoordinatorRunnable` over ``engine``, and returns
-    ``{"scored_cases": int, "metrics": {<name>: <mean>}}``. A clean no-op
-    (no EvalTask constructed) when no case has a reference trajectory.
+    Filters ``cases`` to those carrying a ``reference_trajectory``, generates each
+    prediction **here** (serially, via :class:`CoordinatorRunnable`), drops the turns
+    that produced no tool call at all, and scores the rest with ``EvalTask`` in
+    bring-your-own-response mode. Returns
+    ``{"scored_cases", "empty_trajectories", "metrics"}``. A clean no-op (no
+    ``EvalTask`` constructed) when nothing is left to score.
+
+    **Why not hand the runnable to ``EvalTask``** (which it supports): it fans the
+    dataset out concurrently, which is the documented trigger for empty-at-200 turns
+    on a busy engine, and the evaluation API rejects an empty ``predicted_trajectory``
+    with "Required field is not set" rather than scoring it 0 — one empty row is
+    enough to turn *every* metric into ``nan``. Measured 2026-08-21: handing over the
+    runnable produced ``failure/mean 1.0`` and all-``nan`` metrics. Generating serially
+    and partitioning the empties out mirrors what the batch eval does with
+    ``infra_empty_rate`` (docs/notes/offline-eval-empty-turns.md), and keeps an infra
+    failure from being reported as a trajectory score.
 
     ``eval_task_cls`` and ``runnable`` are injectable for offline wiring tests.
     """
@@ -159,15 +234,42 @@ def run_trajectory_eval(
 
         cases = get_eval_cases("coordinator_agent")
 
-    scored = [c for c in cases if c.get("reference_trajectory")]
-    if not scored:
-        return {"scored_cases": 0, "metrics": {}}
+    with_reference = [c for c in cases if c.get("reference_trajectory")]
+    if not with_reference:
+        return {"scored_cases": 0, "empty_trajectories": 0, "metrics": {}}
+
+    runner = runnable or CoordinatorRunnable(engine)
+    rows = []
+    empty = 0
+    for case in with_reference:
+        predicted = (runner.query(input=case["prompt"]) or {}).get("predicted_trajectory") or []
+        if not predicted:
+            empty += 1
+            continue
+        rows.append(
+            {
+                "prompt": case["prompt"],
+                "reference_trajectory": _reference_trajectory(case),
+                # Args are blanked on BOTH sides. The metrics compare the whole
+                # {tool_name, tool_input} dict, and `reference_trajectory` is a list
+                # of tool *names* by design — so leaving real args on the predicted
+                # side scores every row 0 (measured 2026-08-21: exact_match /
+                # precision / recall all 0.00 with args, on turns whose tool
+                # sequence was in fact correct). This is deliberately a name-and-
+                # order metric; argument fidelity is covered by tool_faithfulness
+                # and the geap_tool_use rubric.
+                "predicted_trajectory": [
+                    {"tool_name": call["tool_name"], "tool_input": {}} for call in predicted
+                ],
+            }
+        )
+
+    if not rows:
+        return {"scored_cases": 0, "empty_trajectories": empty, "metrics": {}}
 
     import pandas as pd
 
-    dataset = pd.DataFrame(
-        [{"prompt": c["prompt"], "reference_trajectory": _reference_trajectory(c)} for c in scored]
-    )
+    dataset = pd.DataFrame(rows)
 
     if eval_task_cls is None:
         from vertexai.preview.evaluation import EvalTask
@@ -175,8 +277,10 @@ def run_trajectory_eval(
         eval_task_cls = EvalTask
 
     task = eval_task_cls(dataset=dataset, metrics=list(TRAJECTORY_METRICS), experiment=experiment)
-    result = task.evaluate(runnable=runnable or CoordinatorRunnable(engine))
+    # No `runnable=` — the predictions are already in the dataset (BYOR mode).
+    result = task.evaluate()
     return {
-        "scored_cases": len(scored),
+        "scored_cases": len(rows),
+        "empty_trajectories": empty,
         "metrics": dict(getattr(result, "summary_metrics", {}) or {}),
     }

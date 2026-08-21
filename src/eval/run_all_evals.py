@@ -64,7 +64,7 @@ def run_all_evals(
     }
 
     # --- Phase 1: Setup ---
-    print("[Phase 1/7] SETUP")
+    print("[Phase 1/8] SETUP")
     try:
         from src.eval.manage_monitors import list_monitors
 
@@ -80,7 +80,7 @@ def run_all_evals(
 
     # --- Phase 2: Traffic Generation ---
     if not skip_traffic and not batch_only:
-        print("[Phase 2/7] TRAFFIC GENERATION")
+        print("[Phase 2/8] TRAFFIC GENERATION")
         try:
             from src.traffic.generate_traffic import generate_traffic
 
@@ -92,11 +92,11 @@ def run_all_evals(
             print("  Continuing with batch evals...")
         print()
     else:
-        print("[Phase 2/7] TRAFFIC GENERATION (skipped)")
+        print("[Phase 2/8] TRAFFIC GENERATION (skipped)")
         print()
 
     # --- Phase 3: Batch Evaluations ---
-    print("[Phase 3/7] BATCH EVALUATIONS")
+    print("[Phase 3/8] BATCH EVALUATIONS")
     try:
         from src.eval.multi_agent_batch_eval import run_multi_agent_batch_eval
 
@@ -111,13 +111,43 @@ def run_all_evals(
         results["batch"] = {"status": "error", "error": str(e)}
     print()
 
+    # --- Phase 4: Trajectory Evaluation ---
+    # Deterministic counterpart to the LLM-judged rubrics: does the agent call the
+    # right tools, in the right order? Only cases carrying a reference_trajectory
+    # are scored (38 of 49), so the count is printed beside the means.
+    print("[Phase 4/8] TRAJECTORY EVALUATION")
+    try:
+        from vertexai import agent_engines
+
+        from src.eval.trajectory_eval import run_trajectory_eval
+
+        traj = run_trajectory_eval(agent_engines.get(agent_resource_name))
+        results["trajectory"] = traj
+        n = traj.get("scored_cases", 0)
+        empty = traj.get("empty_trajectories", 0)
+        if empty:
+            # An empty turn is an infra failure, not a wrong path — it is counted
+            # apart so it can't read as a trajectory score.
+            print(f"  Empty turns: {empty} (no tool call at all — excluded from the mean)")
+        if not n:
+            print("  Nothing scorable — skipped.")
+        else:
+            print(f"  Scored {n} case(s) with a reference trajectory:")
+            for name, value in sorted((traj.get("metrics") or {}).items()):
+                if isinstance(value, int | float):
+                    print(f"    {name:<44} {value:.2f}")
+    except Exception as e:
+        print(f"  Trajectory eval failed: {e}")
+        results["trajectory"] = {"status": "error", "error": str(e)}
+    print()
+
     if batch_only:
         _run_publish_phase(results)
         _generate_report(output_dir, results)
         return results
 
-    # --- Phase 4: Simulated Evaluations ---
-    print("[Phase 4/7] SIMULATED EVALUATIONS")
+    # --- Phase 5: Simulated Evaluations ---
+    print("[Phase 5/8] SIMULATED EVALUATIONS")
     sim_results = {}
     for agent_name in ["coordinator_agent", "travel_agent"]:
         try:
@@ -140,8 +170,8 @@ def run_all_evals(
         json.dump(sim_results, f, indent=2, default=str)
     print()
 
-    # --- Phase 5: Complexity Evaluation ---
-    print("[Phase 5/7] COMPLEXITY EVALUATION")
+    # --- Phase 6: Complexity Evaluation ---
+    print("[Phase 6/8] COMPLEXITY EVALUATION")
     try:
         from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
         from src.eval.complexity_metrics import (
@@ -168,10 +198,10 @@ def run_all_evals(
         results["complexity"] = {"error": str(e)}
     print()
 
-    # --- Phase 6: Publish offline eval scores to agent_eval/* ---
+    # --- Phase 7: Publish offline eval scores to agent_eval/* ---
     _run_publish_phase(results)
 
-    # --- Phase 7: Monitor Verification ---
+    # --- Phase 8: Monitor Verification ---
     _run_monitors_phase(agent_resource_name, output_dir, results)
 
     # --- Generate Report ---
@@ -190,7 +220,7 @@ def _run_publish_phase(results: dict):
     publish is guarded so a failure never aborts the run; ``verify_monitors``
     (next phase) then reads the freshly-written points.
     """
-    print("[Phase 6/7] PUBLISH OFFLINE EVAL SCORES")
+    print("[Phase 7/8] PUBLISH OFFLINE EVAL SCORES")
     # Splice the standalone-judge scores (delegation-aware tool_use + policy)
     # into the batch before publishing, so the canonical path reports the same
     # corrected tool_use_accuracy as the `publish_offline_eval --run` CLI. Each
@@ -232,7 +262,7 @@ def _run_publish_phase(results: dict):
 
 def _run_monitors_phase(agent_resource_name: str, output_dir: Path, results: dict):
     """Run monitor verification phase."""
-    print("[Phase 7/7] MONITOR VERIFICATION")
+    print("[Phase 8/8] MONITOR VERIFICATION")
     try:
         from src.eval.verify_monitors import generate_markdown_report, verify_monitor_results
 
