@@ -64,6 +64,27 @@ file; keep this index short (< 200 lines).
   by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools
   agent must absorb and re-emit; fixed by capping the tool payload and retrying +
   labelling 429s instead of returning silence. Includes the falsified hypotheses.
+- [The residual empty-at-200: wrapping LiteLlm strips Anthropic's tool-call ids](./router-empty-stream-retry.md)
+  — the leftover 14% was **not** platform-level: `TierRoutingLlm`/`RetryingLlm`
+  hide `LiteLlm` from ADK's `isinstance` check, so ADK strips the `adk-` tool-call
+  ids Anthropic pairs results by and a Claude-tier turn dies on
+  `AnthropicError: 'tool_call_id'` → empty stream (lite/flash/pro 20/20 clean,
+  sonnet-band 4/8 empty). Precondition is a **mixed-tier session** — Claude's own
+  `toolu_*` ids survive, so the stripped id must come from an earlier *Gemini* hop;
+  proved by the no-engine A/B `src.eval.spike_tool_call_ids`. Also retries a
+  genuinely silent turn. Ships `src.eval.verify_router_health` (per-tier breakdown,
+  Wilson CI, silent vs labelled counted apart) — the tier breakdown is what found it.
+  **Real, but not the dominant cause — see the next note.**
+- [The Claude tiers were OOM-killed: 4Gi is not enough for a LiteLlm engine](./router-claude-tier-oom.md)
+  — after the tool-call-id fix shipped the Claude tiers still failed **100%**,
+  tool-free prompts included. A trace missing its enclosing `invoke_agent` span,
+  no traceback, and a fresh worker booting 5.6s into the LiteLLM call = a SIGKILL:
+  litellm (+140MB resident, +334MB peak) in every worker overruns the Agent Runtime
+  default 4Gi. Raising `resource_limits` to 16Gi in place took the same probes from
+  8/8 empty to **0/8**. `deploy_agents._auto_memory()` now derives the limit from
+  the agent's own backbones so it can't silently revert; Gemini-only engines keep
+  the default. Retroactively explains the 2026-08-13 "LiteLlm-wrapped engines
+  crash" outage.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
