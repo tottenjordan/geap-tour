@@ -1,7 +1,25 @@
-# The "hallucination drift" was empty turns, not drift
+# The "hallucination drift" was the judge being told the agent has no tools
 
 *Investigated 2026-08-21. Supersedes the judge-drift hypothesis left open in
 [adk-2.7.1-dependency-refresh.md](./adk-2.7.1-dependency-refresh.md).*
+
+**Answer up front.** Two defects, found in that order:
+
+1. Turns that end on a `function_call` with no synthesized answer were never
+   retried, so they reached the judges as an empty response.
+2. **The bigger one:** `agent_data.agents` was `None` on every batch item, so the
+   judge was explicitly told the agent had **no tools** — and graded a real tool
+   call as a *contradictory* statement. That, not the emptiness itself, is what
+   drove those items to 0.
+
+Fixing (1) took `hallucination_v1` 0.42 → 0.66. Fixing (2) took it to **0.90-0.93**
+and `tool_use_quality_v1` from a years-long 0.33-0.42 to **0.93** — and decoupled
+hallucination from the empty rate entirely. Neither was model regression, judge
+drift, or a rubric-template change.
+
+The sections below are in discovery order; the empty-rate analysis is still correct
+and still worth reading, but read the [SHIPPED](#shipped-and-it-was-the-bigger-lever-tell-the-judge-what-tools-exist)
+section for the dominant cause.
 
 ## The claim that started it
 
@@ -115,7 +133,67 @@ Coordinator `hallucination_v1` across all recorded runs:
 A two- or three-run comparison cannot resolve a 0.1 shift here. Compare empty rates
 before comparing means.
 
-## Open, and worth doing: tell the judge what tools exist
+## SHIPPED, and it was the bigger lever: tell the judge what tools exist
+
+*Added 2026-08-21, after the retry fix above.*
+
+The empty-response penalty turned out to be **mostly a symptom of a second
+defect**, not of the emptiness itself. Re-read the judge's rationale:
+
+> *"The context explicitly states that the agent **has no tools**, meaning it
+> cannot execute any function calls, including the one presented."*
+
+The item scored 0 not merely because the response was empty, but because the
+rendered `function_call` was judged **contradictory against a declared inventory of
+nothing**. `agent_data.agents` was `None` on every batch item, because
+`build_agent_info()` was wired only into `simulated_eval` — the batch path passed a
+resource-name string to `run_inference` and never an `AgentInfo`.
+
+`_agent_info_for()` now supplies it, and the result is that hallucination
+**decouples from the empty rate**:
+
+| run | empty rate | `hallucination_v1` | `tool_use_quality_v1` |
+| --- | --- | --- | --- |
+| before, coordinator | 4% | 0.80 | 0.42 |
+| before, coordinator | 22% | 0.66 | 0.38 |
+| **after, coordinator** | **27%** | **0.93** | **0.93** |
+| **after, coordinator** | **12%** | **0.90** | **0.94** |
+| before, router | 0-8% | 0.74-0.89 | 0.28-0.48 |
+| **after, router** | **0%** | **0.90** | **0.62** |
+
+A 27% empty rate now scores 0.93 where 22% previously scored 0.66. All six
+coordinator rubrics pass simultaneously for the first time in the recorded history.
+
+`tool_use_quality_v1` moving 0.33-0.42 → 0.93 resolves the long-standing
+false-negative in
+[coordinator-tool-use-quality.md](./coordinator-tool-use-quality.md) at the root:
+the judge was penalising an agent it had been told owned no tools. The router
+crosses its 0.60 threshold for the first time.
+
+Only the two inventory-dependent metrics moved. `instruction_following`
+(0.63-0.64), `final_response_match` (0.76) and `safety` (1.00) stayed in their
+existing bands — the effect is targeted, not blanket inflation.
+
+### The rename is the load-bearing detail
+
+Passing `agent_info` naively adds a **phantom second candidate**. `_get_candidate_name`
+only *warns* on a name mismatch, but the auto-built `inference_configs` keys off
+`agent_info.name`, so a name the dataset doesn't know makes the service run an
+**extra inference pass** under it — a second series (`coordinator_agent/*` beside
+`agent_engine_0/*`) with its own scores, measured at 1.0 across the board in one
+run and 0.45 hallucination in another. `_agent_info_for` sets
+`info.name = dataset.candidate_name`, which keeps exactly one candidate.
+
+### Level shift — do not compare across it
+
+`tool_use_quality_v1` and `hallucination_v1` both step up on 2026-08-21. The
+monitored `agent_eval/tool_use_accuracy` series is unaffected
+(`publish_offline_eval` overwrites it with the standalone `geap_tool_use` judge),
+but `src/doe/harvest.py` and `analyze.py` read the raw batch metrics, so DOE and
+bake-off reports spanning this date mix two scales. The new numbers are the correct
+ones — the old ones were measured against a false premise.
+
+## Original write-up: the option as it looked before shipping
 
 `agent_data.agents` being `None` is a real defect independent of the empties — the
 judge is explicitly told the agent has no tools. Passing
@@ -131,9 +209,5 @@ That is a large, well-founded correction to the long-standing ~0.33-0.42 tool-us
 score ([coordinator-tool-use-quality.md](./coordinator-tool-use-quality.md)) — the
 judge was penalising an agent it had been told had no tools.
 
-**Not shipped here**, because passing `agent_info` also makes the service emit a
-*second* candidate series (`coordinator_agent/*` alongside `agent_engine_0/*`) whose
-scores are degenerate — 1.0 across the board in one run, 0.45 hallucination in
-another. That would corrupt `harvest`/`publish` key matching. Landing it needs the
-phantom candidate handled first, and its own before/after, since it moves
-`tool_use_quality` by ~0.5.
+**Since shipped** — the phantom candidate is avoided by aligning `agent_info.name`
+to the dataset's candidate name. See the section above for the measured result.
