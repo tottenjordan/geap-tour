@@ -52,12 +52,20 @@ server*, not from the router's own traffic rate:
 
 ### Hypotheses that were falsified along the way
 
-Recorded so nobody re-runs them:
+Recorded so nobody re-runs them.
+
+**Read the scope before quoting a row.** Every hypothesis below was tested *after*
+`min_instances` was already **4 on both engines**, so each row falsifies that
+hypothesis as the cause of the **residual** empties — the ones still present once
+the earlier fixes had landed. None of them says the phenomenon never occurred. Two
+rows in particular are easy to over-read; see
+[empty-at-200-field-guide.md](./empty-at-200-field-guide.md) for the four causes
+side by side.
 
 | Hypothesis | Verdict |
 | --- | --- |
-| `min_instances=1` cold starts | **False.** Router and coordinator specs are identical (min=4, max=0, concurrency=0) and the empty rate did not move. |
-| Managed-runtime worker churn / container kills | **False.** Coordinator 1.13 vs router 1.24 traces per worker — no meaningful difference — and the defect reproduces locally in-process. |
+| `min_instances=1` cold starts | **False** *for the residual empties.* Router and coordinator specs are identical (min=4, max=0, concurrency=0) and the empty rate did not move. Raising the floor 1→4 earlier did **move** the rate (it is part of the ~40% → ~14% drop) so it stays as a fix, but its stated mechanism — container kills, inferred from traces missing their enclosing span — was itself falsified by the in-process repro. Contributing factor, unproven mechanism; this row is about what remained after it. |
+| Managed-runtime worker churn / container kills | **False** *as the cause of the residual empties.* Coordinator 1.13 vs router 1.24 traces per worker — no meaningful difference — and the defect reproduces locally in-process. This does **not** contradict the genuine SIGKILLs in [router-claude-tier-oom.md](./router-claude-tier-oom.md): that is the kernel OOM-killer, on LiteLlm-backed tiers only, found later. |
 | SDK SSE parse skew (`agent-engine-sse-parse-skew`) | **False.** The raw-SSE client sees the same zero characters. |
 | `litellm` memory footprint on the router workers | **False.** Real (308MB vs 168MB) and worth fixing on its own, but not the cause. |
 | Cold-start import time | **False.** 6.15s router vs 5.36s coordinator. |

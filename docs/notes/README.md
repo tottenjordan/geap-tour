@@ -59,6 +59,13 @@ file; keep this index short (< 200 lines).
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
   tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
   platform-wide" claim is falsified — see the note below.)
+- [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) — **start here** for
+  any zero-character HTTP 200. A lookup layer over the four notes below: four
+  distinct causes (container recycle at `min_instances=1`, a 429 from an unbounded
+  tool payload, an OOM SIGKILL at 4Gi on LiteLlm tiers, and ADK stripping Anthropic's
+  tool-call ids), the signature that separates each, and how to tell the two
+  "the worker died" cases apart. Also reconciles the two sentences that read as a
+  contradiction — both were unscoped, neither was wrong.
 - [Router empty responses: an oversized tool payload burning the quota](./router-empty-responses-quota.md)
   — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED`, driven
   by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools
