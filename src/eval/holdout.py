@@ -25,7 +25,11 @@ HOLDOUT_EVAL_IDS: dict[str, tuple[str, ...]] = {
         "expense_policy_over_limit",
         "expense_submit_within",
         "flight_search_no_results",
-        "multi_intent_travel_expense",
+        # Renamed 2026-08-21: the case was expense-only (its prompt asks only to
+        # submit a receipt) but still carried a leftover search_flights expectation
+        # from when it was genuinely multi-intent. See
+        # docs/notes/gepa-sampler-case-audit.md.
+        "expense_submit_low_amount",
     ),
     "travel": (
         "hotel_search_basic",

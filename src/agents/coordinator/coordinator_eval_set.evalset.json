@@ -403,6 +403,13 @@
           "intermediate_data": {
             "tool_uses": [
               {
+                "name": "check_expense_policy",
+                "args": {
+                  "category": "entertainment",
+                  "amount": 500
+                }
+              },
+              {
                 "name": "submit_expense",
                 "args": {
                   "user_id": "EMP002",
@@ -577,7 +584,7 @@
           "final_response": {
             "parts": [
               {
-                "text": "Yes. A $75 meal expense is within policy — it meets the $75 meals limit exactly."
+                "text": "Yes. A $75 meal expense is within policy \u2014 it meets the $75 meals limit exactly."
               }
             ],
             "role": "model"
@@ -622,6 +629,13 @@
           },
           "intermediate_data": {
             "tool_uses": [
+              {
+                "name": "check_expense_policy",
+                "args": {
+                  "category": "meals",
+                  "amount": 200
+                }
+              },
               {
                 "name": "submit_expense",
                 "args": {

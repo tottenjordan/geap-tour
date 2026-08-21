@@ -139,6 +139,13 @@
           "intermediate_data": {
             "tool_uses": [
               {
+                "name": "check_expense_policy",
+                "args": {
+                  "category": "meals",
+                  "amount": 30
+                }
+              },
+              {
                 "name": "submit_expense",
                 "args": {
                   "user_id": "EMP001",
@@ -305,6 +312,13 @@
                 "args": {
                   "flight_id": "FL001",
                   "passenger_name": "Alice Johnson"
+                }
+              },
+              {
+                "name": "check_expense_policy",
+                "args": {
+                  "category": "meals",
+                  "amount": 45
                 }
               },
               {

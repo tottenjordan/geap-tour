@@ -18,7 +18,7 @@
         "user_content": {"parts": [{"text": "Submit a $45 meals expense for lunch meeting, user ID EMP001"}], "role": "user"},
         "final_response": {"parts": [{"text": "Your $45 meals expense for lunch meeting has been submitted and approved. It's within the $75 meal policy limit."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 45, "description": "lunch meeting"}}]
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "meals", "amount": 45}}, {"name": "submit_expense", "args": {"user_id": "EMP001", "category": "meals", "amount": 45, "description": "lunch meeting"}}]
         }
       }],
       "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
@@ -29,7 +29,7 @@
         "user_content": {"parts": [{"text": "Submit a $500 entertainment expense for team event, user ID EMP002"}], "role": "user"},
         "final_response": {"parts": [{"text": "The $500 entertainment expense exceeds the $150 policy limit. It has been submitted but flagged for manager review."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]
+          "tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}, {"name": "submit_expense", "args": {"user_id": "EMP002", "category": "entertainment", "amount": 500, "description": "team event"}}]
         }
       }],
       "session_input": {"app_name": "expense_agent_opt", "user_id": "eval_user"}
