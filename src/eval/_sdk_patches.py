@@ -1,4 +1,13 @@
-"""Runtime patches for the Vertex AI evals SDK (vertexai._genai).
+"""Runtime patches for the Vertex AI evals SDK (agentplatform._genai).
+
+These target ``agentplatform._genai`` because that is where the ``Client`` this
+repo constructs lives. ``agentplatform._genai`` is a **separate copy** of the SDK
+internals, not an alias for ``vertexai._genai`` (``agentplatform.types is
+vertexai.types`` is False, and the two ``_evals_common`` modules differ by ~1300
+lines), so patching the wrong package is a silent no-op that costs every metric.
+Verified 2026-08-21 that the copy carries all four bugs below unchanged — e.g.
+``_process_single_turn_agent_response`` still does
+``resp_item[-1]["content"]["parts"][0]["text"]``.
 
 Four independent issues surface when evaluating agents that run on Gemini 3.x
 (thought-signature function calls) on a deployed Agent Engine:
@@ -82,7 +91,7 @@ def _run_with_empty_retry(fn, retries: int, sleep_fn) -> object:
 def _flip_extra_to_ignore() -> int:
     """Flip extra='forbid' -> 'ignore' on all pydantic models in the eval types."""
     import pydantic
-    from vertexai._genai import types as t
+    from agentplatform._genai import types as t
 
     models = [
         getattr(t, name)
@@ -120,7 +129,7 @@ def _extract_final_text(resp_item: list) -> str:
 
 def _patch_single_turn_parser() -> None:
     """Replace the response parser with a text-part-scanning version."""
-    from vertexai._genai import _evals_common as ec
+    from agentplatform._genai import _evals_common as ec
 
     types = ec.types
     genai_types = ec.genai_types
@@ -188,14 +197,14 @@ def _patch_single_turn_parser() -> None:
 
 def _throttle_agent_concurrency() -> None:
     """Cap the agent inference worker pool (SDK default AGENT_MAX_WORKERS=20)."""
-    from vertexai._genai import _evals_common as ec
+    from agentplatform._genai import _evals_common as ec
 
     ec.AGENT_MAX_WORKERS = _AGENT_MAX_WORKERS  # ty: ignore[invalid-assignment]
 
 
 def _patch_retry_on_empty() -> None:
     """Wrap agent-engine inference to retry empty turns (SDK retries only errors)."""
-    from vertexai._genai import _evals_common as ec
+    from agentplatform._genai import _evals_common as ec
 
     orig = ec._execute_agent_run_with_retry
 

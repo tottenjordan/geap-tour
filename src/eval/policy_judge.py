@@ -150,12 +150,12 @@ def run_policy_compliance_eval(
     aggregated by median, and the result additionally carries a ``reliability``
     block (inter-rater agreement) — no single autorater decides the verdict.
     """
-    from vertexai import types
+    from agentplatform import types
 
     selected = select_policy_cases(cases if cases is not None else EVAL_CASES)
 
     if client is None:
-        from vertexai import Client
+        from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 

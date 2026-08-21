@@ -229,7 +229,7 @@ def run_pairwise_eval(
     config = config or PairwiseConfig()
 
     if client is None:
-        from vertexai import Client
+        from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 

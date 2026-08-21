@@ -53,7 +53,7 @@ def test_extract_final_text_handles_empty_list():
 def test_patched_parser_recovers_text_instead_of_error_stub():
     """The patched parser returns real text where the original raised KeyError."""
     patch_evals_sdk()
-    from vertexai._genai import _evals_common as ec
+    from agentplatform._genai import _evals_common as ec
 
     resp = [
         {
@@ -136,7 +136,7 @@ def test_run_with_empty_retry_returns_error_without_retry():
 def test_throttle_lowers_agent_max_workers():
     """Patching drops the SDK's agent fan-out from 20 to the configured cap."""
     patch_evals_sdk()
-    from vertexai._genai import _evals_common as ec
+    from agentplatform._genai import _evals_common as ec
 
     assert ec.AGENT_MAX_WORKERS == _sdk_patches._AGENT_MAX_WORKERS
     assert ec.AGENT_MAX_WORKERS < 20
@@ -194,7 +194,7 @@ def test_warm_agent_engine_counts_content_and_swallows_errors():
 def test_flip_extra_allows_error_field_on_result():
     """EvaluationItemResult loads candidate results carrying an error object."""
     patch_evals_sdk()
-    from vertexai._genai import types as t
+    from agentplatform._genai import types as t
 
     data = {
         "candidateResults": [

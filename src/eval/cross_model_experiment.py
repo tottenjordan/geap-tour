@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 import vertexai
-from vertexai import Client, types
+from agentplatform import Client, types
 
 from src.config import EVAL_OUTPUT_DIR, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
 from src.eval.agent_eval_configs import get_metrics

@@ -19,7 +19,7 @@ from datetime import datetime
 
 import pandas as pd
 import vertexai
-from vertexai import Client, types
+from agentplatform import Client, types
 
 from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
 from src.eval.eval_experiment import (

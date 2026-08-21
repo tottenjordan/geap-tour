@@ -3,7 +3,7 @@
 import statistics
 import time
 
-from vertexai import types as vtx_types
+from agentplatform import types as vtx_types
 
 from src.router.complexity import classify_complexity, score_to_model_tier
 from src.router.cost_tracker import estimate_cost

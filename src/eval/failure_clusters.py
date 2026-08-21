@@ -12,7 +12,7 @@ import sys
 import time
 
 import vertexai
-from vertexai import Client, types
+from agentplatform import Client, types
 
 from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET
 

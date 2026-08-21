@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 import vertexai
-from vertexai import Client, types
+from agentplatform import Client, types
 
 from src.config import (
     AGENT_ENGINE_ID,

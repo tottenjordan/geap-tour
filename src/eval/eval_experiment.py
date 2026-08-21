@@ -94,9 +94,9 @@ def ensure_eval_experiment(client=None, *, metadata: dict | None = None) -> str 
     """
     try:
         if client is None:
-            import vertexai
+            import agentplatform
 
-            client = vertexai.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+            client = agentplatform.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
 
         existing = _find_existing_experiment(client)
         if existing is not None:

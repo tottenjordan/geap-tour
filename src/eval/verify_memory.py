@@ -59,9 +59,9 @@ def _engine_resource_name(engine_id: str) -> str:
 
 def _default_client():
     """Lazily construct a Vertex client (kept out of import time)."""
-    import vertexai
+    import agentplatform
 
-    return vertexai.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+    return agentplatform.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
 
 
 def fetch_memories(
