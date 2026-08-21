@@ -363,16 +363,23 @@ class TestLazyTierAgents:
 
 
 class TestRouterImportFootprint:
-    """The router's serving import must stay as light as the coordinator's.
+    """The router must load ``litellm`` at **import**, not on the request path.
 
-    ``litellm`` costs ~140MB resident (router 308MB vs coordinator 168MB, the
-    whole gap). Every worker process in the container pays it at import, even
-    though only the sonnet/opus tiers need it. Keeping it out of the import path
-    lets a Gemini-tier worker run at coordinator-parity footprint and defers the
-    cost to the first Claude-tier turn that actually lands on that worker.
+    This test used to assert the opposite. Keeping litellm out of the import path
+    did save ~140MB resident (router 308MB vs coordinator 168MB) on a worker that
+    only ever served Gemini — but ADK imports litellm lazily from *inside* its call
+    path, so the cost simply moved into the first Claude request. On the deployed
+    runtime that killed the worker mid-invocation: measured 2026-08-20, **every**
+    sonnet-routed prompt came back HTTP 200 with one event and zero characters,
+    tool-free prompts included, with no traceback and a trace truncated before
+    ``call_llm`` (an exception closes and exports its spans; a SIGKILL does not).
+
+    So the footprint the router must hold is the one that can actually answer.
+    See ``src.router.tier_routing_llm.prewarm_litellm`` and
+    docs/notes/router-empty-stream-retry.md.
     """
 
-    def test_importing_router_does_not_load_litellm(self):
+    def test_importing_router_preloads_litellm(self):
         import subprocess
         import sys
 
@@ -387,6 +394,8 @@ class TestRouterImportFootprint:
             timeout=600,
         )
         assert result.returncode == 0, result.stderr[-2000:]
-        assert result.stdout.strip().splitlines()[-1] == "False", (
-            "importing the router pulled in litellm (~140MB); tier backbones must resolve lazily"
+        assert result.stdout.strip().splitlines()[-1] == "True", (
+            "the router must preload litellm at import — deferring it to the first "
+            "Claude turn imports ~140MB inside a live request and the managed "
+            "runtime hard-kills the worker (empty-at-200)"
         )

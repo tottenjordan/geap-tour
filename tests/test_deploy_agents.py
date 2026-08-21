@@ -76,7 +76,7 @@ def test_run_deploy_forwards_min_instances_on_update(monkeypatch, tmp_path):
     monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
     captured = {}
 
-    def _fake_build_config(agent, display_name=None, *, min_instances=None):
+    def _fake_build_config(agent, display_name=None, *, min_instances=None, memory=None):
         captured["min_instances"] = min_instances
         return {"display_name": display_name or agent.name}
 
@@ -91,7 +91,7 @@ def test_run_deploy_min_instances_defaults_to_none(monkeypatch, tmp_path):
     monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
     captured = {}
 
-    def _fake_build_config(agent, display_name=None, *, min_instances=None):
+    def _fake_build_config(agent, display_name=None, *, min_instances=None, memory=None):
         captured["min_instances"] = min_instances
         return {"display_name": display_name or agent.name}
 
@@ -275,3 +275,86 @@ def test_build_app_enables_tracing_when_span_content_capture_opted_in(monkeypatc
     da._build_app(_memory_agent())
 
     assert _CapturingAdkApp.last_kwargs.get("enable_tracing") is True
+
+
+class TestLitellmMemoryHeadroom:
+    """A LiteLlm-backed engine needs more than the platform's default 4Gi.
+
+    Measured on router ``6134089059699523584`` (2026-08-21): every Claude-tier
+    turn returned HTTP 200 with **zero characters**. Logs showed the dispatch, a
+    ``LiteLLM completion() … provider = vertex_ai`` line, then a fresh worker
+    booting ~5.6s later — no traceback, and the trace lost its enclosing
+    ``invoke_agent`` span (only a SIGKILL loses an open span). Raising the limit
+    to 16Gi took the same probes from 8/8 empty to 0/8. Gemini-only engines are
+    unaffected and keep the platform default, so nothing regresses for them.
+    """
+
+    def _model(self, model):
+        return types.SimpleNamespace(name="a", model=model, sub_agents=[])
+
+    def test_a_gemini_only_agent_keeps_the_platform_default(self):
+        assert "resource_limits" not in _build_config(self._model("gemini-2.5-flash"))
+
+    def test_a_bare_agent_without_a_model_keeps_the_platform_default(self):
+        assert "resource_limits" not in _build_config(_fake_agent())
+
+    def test_a_claude_backbone_gets_headroom(self):
+        config = _build_config(self._model("vertex_ai/claude-sonnet-5"))
+        assert config["resource_limits"] == {"cpu": "4", "memory": da.LITELLM_MEMORY}
+
+    def test_a_wrapped_claude_backbone_is_detected_through_the_wrapper(self):
+        """The real coordinator's model is a RetryingLlm, not a bare string."""
+        wrapper = types.SimpleNamespace(model="vertex_ai/claude-sonnet-5")
+        assert "resource_limits" in _build_config(self._model(wrapper))
+
+    def test_a_tier_dispatcher_is_detected_through_its_tier_list(self):
+        """The router's model is one TierRoutingLlm naming all five tiers."""
+        from src.router.tier_routing_llm import TierRoutingLlm
+
+        dispatcher = TierRoutingLlm(
+            ["gemini-2.5-flash-lite", "claude-sonnet-4-6"],
+            default_model="gemini-2.5-flash-lite",
+            importer=lambda: None,
+        )
+        assert "resource_limits" in _build_config(self._model(dispatcher))
+
+    def test_a_gemini_only_tier_dispatcher_keeps_the_platform_default(self):
+        from src.router.tier_routing_llm import TierRoutingLlm
+
+        dispatcher = TierRoutingLlm(
+            ["gemini-2.5-flash-lite", "gemini-2.5-pro"],
+            default_model="gemini-2.5-flash-lite",
+            importer=lambda: None,
+        )
+        assert "resource_limits" not in _build_config(self._model(dispatcher))
+
+    def test_a_claude_sub_agent_pulls_headroom_up_to_the_parent(self):
+        parent = types.SimpleNamespace(
+            name="p",
+            model="gemini-2.5-flash",
+            sub_agents=[self._model("vertex_ai/claude-opus-4-6")],
+        )
+        assert "resource_limits" in _build_config(parent)
+
+    def test_an_explicit_memory_override_wins(self):
+        config = _build_config(self._model("gemini-2.5-flash"), memory="8Gi")
+        assert config["resource_limits"] == {"cpu": "4", "memory": "8Gi"}
+
+    def test_an_explicit_override_also_beats_the_auto_value(self):
+        config = _build_config(self._model("vertex_ai/claude-sonnet-5"), memory="32Gi")
+        assert config["resource_limits"]["memory"] == "32Gi"
+
+
+def test_run_deploy_forwards_memory_on_update(monkeypatch, tmp_path):
+    """--memory threads through run_deploy → update_agent → config."""
+    _stub_deploy(monkeypatch, tmp_path, "router_agent", "router")
+    monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
+    captured = {}
+
+    def _fake_build_config(agent, display_name=None, *, min_instances=None, memory=None):
+        captured["memory"] = memory
+        return {"display_name": display_name or agent.name}
+
+    monkeypatch.setattr(da, "_build_config", _fake_build_config)
+    da.run_deploy(agent_set="router", update=True, memory="16Gi")
+    assert captured["memory"] == "16Gi"
