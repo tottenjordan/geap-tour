@@ -68,15 +68,19 @@ a repo-wide grep guard over `src/`, an assertion that
 
 ## This does NOT quiet the deployed engines
 
-A census of the last 2 days of engine logs found **50/50 occurrences come from ADK,
-not from us**:
+A census of the engine logs found **every occurrence comes from ADK, not from us** —
+re-run *after* this migration landed and still 200/200:
 
 ```
-$ gcloud logging read 'textPayload:"The vertexai.Client class is deprecated"' --freshness=2d
-[409] WARNING: .../google/adk/sessions/vertex_ai_session_service.py:534: FutureWarning: …
-   32  reasoning_engine 6134089059699523584   (router)
-   18  reasoning_engine 5638288480409747456
+$ gcloud logging read 'textPayload:"The vertexai.Client class is deprecated"' --freshness=1d
+  164  .../google/adk/sessions/vertex_ai_session_service.py:527   # ADK 2.6.3 (our exact pin)
+   36  .../google/adk/sessions/vertex_ai_session_service.py:534   # ADK 2.7.x, engine 5638288480409747456
+# by engine: 212 router 6134089059699523584 + 88 probe 4380288848559603712 (both :527)
 ```
+
+The line number tells you the ADK version: 2.6.3 builds `vertexai.Client` at
+`vertex_ai_session_service.py:523,527`, 2.7.1 at `:530,534`. Both our live engines
+are on the 2.6.3 exact pin (`deploy_agents.REQUIREMENTS`, `pyproject.toml`).
 
 ADK constructs `vertexai.Client` in `sessions/vertex_ai_session_service.py` and
 `memory/vertex_ai_memory_bank_service.py` — both instantiated by
