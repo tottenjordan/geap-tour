@@ -100,6 +100,45 @@ def test_run_deploy_min_instances_defaults_to_none(monkeypatch, tmp_path):
     assert captured["min_instances"] is None
 
 
+class TestKeepWarmFloorOnCreateOnly:
+    """Create picks a floor; update preserves one. The asymmetry is the point.
+
+    An update that substituted the default would silently downgrade our served
+    engines (they run 4) on every routine ``--update``.
+    """
+
+    def _capture(self, monkeypatch, tmp_path):
+        _stub_deploy(monkeypatch, tmp_path, "router_agent", "router")
+        monkeypatch.setitem(da.AGENT_SETS["router"], "engine_id", "123")
+        captured = {}
+
+        def _fake_build_config(agent, display_name=None, *, min_instances=None, memory=None):
+            captured["min_instances"] = min_instances
+            return {"display_name": display_name or agent.name}
+
+        monkeypatch.setattr(da, "_build_config", _fake_build_config)
+        return captured
+
+    def test_create_applies_the_default_floor(self, monkeypatch, tmp_path):
+        captured = self._capture(monkeypatch, tmp_path)
+        da.run_deploy(agent_set="router", update=False)
+        assert captured["min_instances"] == da.DEFAULT_MIN_INSTANCES
+
+    def test_update_leaves_the_existing_floor_alone(self, monkeypatch, tmp_path):
+        captured = self._capture(monkeypatch, tmp_path)
+        da.run_deploy(agent_set="router", update=True)
+        assert captured["min_instances"] is None
+
+    def test_an_explicit_floor_wins_on_create(self, monkeypatch, tmp_path):
+        captured = self._capture(monkeypatch, tmp_path)
+        da.run_deploy(agent_set="router", update=False, min_instances=4)
+        assert captured["min_instances"] == 4
+
+    def test_the_default_floor_is_never_scale_to_zero(self):
+        """The one value we know is wrong. A regression to 0 must fail here."""
+        assert da.DEFAULT_MIN_INSTANCES >= 1
+
+
 def test_tagged_display_name_appends_suffix():
     """--tag suffixes the agent's display name for console grouping."""
     assert _tagged_display_name(_fake_agent(), "demo1") == "coordinator_agent_demo1"
