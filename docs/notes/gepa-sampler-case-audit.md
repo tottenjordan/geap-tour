@@ -1,10 +1,9 @@
 # GEPA sampler cases: what the optimizer was being taught
 
-*Audited 2026-08-21. Follow-up to the prompt audit
-(`docs/notes/prompt-architecture-audit.md`, PR #69 — plain reference, not a link,
-because that note lands in a separate PR), which found `expense_agent`'s GEPA prompt
-instructing the agent to refuse an over-limit submission and flagged that
-re-optimizing would reintroduce it.*
+*Audited 2026-08-21. Follow-up to
+[prompt-architecture-audit.md](./prompt-architecture-audit.md), which found
+`expense_agent`'s GEPA prompt instructing the agent to refuse an over-limit
+submission and flagged that re-optimizing would reintroduce it.*
 
 GEPA can only learn what the cases show it, so a prompt defect is usually a data
 defect. All **13** evalsets were swept — the 9 optimizer training sets

@@ -37,6 +37,7 @@ class TestAgentCard:
             "booking",
             "expense_policy_check",
             "expense_submission",
+            "expense_history",
         }
         assert set(SKILL_IDS) == ids
 

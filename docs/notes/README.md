@@ -114,30 +114,29 @@ file; keep this index short (< 200 lines).
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
   defect. Recommends a `policy_judge`-style standalone scorer; no fix shipped.
+- [Prompt audit: do our prompts describe the system we ship?](./prompt-architecture-audit.md)
+  — `geap_tool_use`, which overwrites the monitored `tool_use_accuracy`, still
+  described a delegating multi-agent system and spent 1 of 4 criteria on
+  impossible delegation; the declared inventory was 7 of the real 10. Also fixed
+  two GEPA prompts (owner decision), chiefly `expense_agent` refusing a submission
+  its own eval case requires. All pinned by guard tests.
 - [GEPA sampler cases: what the optimizer was being taught](./gepa-sampler-case-audit.md)
-  — swept all 13 evalsets. One case (`expense_over_limit_no_submit`) taught
-  refuse-to-submit against a server that always records over-limit expenses as
-  `pending_review`; 11 expected `submit_expense` with no policy check first; one
-  expected a `search_flights` its prompt never asks for. Fixed and pinned.
+  — the data behind that prompt defect. Swept all 13 evalsets: one case
+  (`expense_over_limit_no_submit`) taught refuse-to-submit against a server that
+  always records over-limit expenses as `pending_review`; 11 expected
+  `submit_expense` with no policy check first; one expected a `search_flights` its
+  prompt never asks for.
 - [The "hallucination drift" was the judge being told the agent has no tools](./offline-eval-empty-turns.md)
-  — an eval item with no final response text scores **0.06** on `hallucination_v1`
-  vs 0.66-0.82 for items that answered, so the metric largely tracks the run's
-  infra-empty rate (11/30 empty ⇒ 0.42; 2/47 ⇒ 0.81 — same agent, same cases).
-  Retries now cover "events but no final text", and every run prints its empty
-  rate. Then the bigger lever: `agent_data.agents` was `None`, so the judge was told
-  the agent had **no tools** and graded real `function_call`s as contradictory —
-  supplying a name-aligned `AgentInfo` took `tool_use_quality` 0.38 → **0.93** and
-  decoupled hallucination from the empty rate (27% empty now scores 0.93 where 22%
-  scored 0.66). Corrects two earlier guesses: aiplatform judge drift, and PR #66's
-  `AgentConfig.tools`, which never reached the batch path until this change wired it.
+  — `agent_data.agents` was `None`, so the judge graded real `function_call`s as
+  contradictory; supplying a name-aligned `AgentInfo` took `tool_use_quality`
+  0.38 → **0.93** and decoupled hallucination from the empty rate. Also: answer-less
+  turns are now retried and every run reports its empty rate. Corrects two wrong
+  guesses (aiplatform judge drift; PR #66's `AgentConfig.tools`).
 - [Router `tool_use_quality_v1`: "no function_call events found"](./router-tool-use-quality.md)
   — the metric grades the `AgentData` **events**, not the response text, so a run
-  where nothing calls a tool is unscorable and used to come back silently reporting
-  five metrics instead of six. A regression: it scored 0.542 on 2026-08-12, when
-  `transfer_to_agent` still put a `function_call` in every trace by construction.
-  Ships a legible `Tool calls: N/M` preflight, a router descriptor that matches the
-  direct-tools agent, the never-populated `AgentConfig.tools`, and per-agent engine
-  resolution (a bare run scored router cases against a *coordinator*).
+  where nothing calls a tool is unscorable and came back silently reporting five
+  metrics instead of six. Ships a `Tool calls: N/M` preflight, a router descriptor
+  matching the direct-tools agent, and per-agent engine resolution.
 - [Model Armor Security dashboard](./model-armor-security-dashboard.md) — what feeds
   the console Security-tab Model Armor dashboard, the no-preview path we chose (floor
   settings inspect-only + Cloud Logging + template logging), and two honesty caveats
@@ -171,23 +170,16 @@ file; keep this index short (< 200 lines).
   knobs (regional-Gemini path only, default unset = no change) + the live A/B to
   validate before changing the served default; memory-preload cache is a follow-up.
 - [ADK 2.6.3 → 2.7.1 + dependency refresh](./adk-2.7.1-dependency-refresh.md) — the
-  upgrade and what it actually risked: ADK 2.7.0 moved `PreloadMemoryTool`'s render
-  from `_append_dynamic_instructions` to `_insert_transient_user_content` while
-  leaving **both** methods on `LlmRequest`, so our caching subclass's verbatim copy
-  degraded **silently** — and the old test's duck-typed fake could never have caught
-  it (now a differential diff against the stock tool). Also: `GOOGLE_GENAI_USE_VERTEXAI`
-  → `GOOGLE_GENAI_USE_ENTERPRISE`, a transitively-dropped `google-cloud-trace` that
-  had to be declared, the 11/11 private-API audit, which packages upstream caps, and
-  the `--all-groups` trap that silently collects 39 fewer tests.
+  upgrade and its one silent hazard: 2.7.0 moved `PreloadMemoryTool`'s render to
+  `_insert_transient_user_content` while leaving **both** methods on `LlmRequest`,
+  so our caching subclass degraded silently (now a differential test). Plus the
+  `GOOGLE_GENAI_USE_ENTERPRISE` rename, a dropped `google-cloud-trace`, the 11/11
+  private-API audit, and the `--all-groups` test-collection trap.
 - [`vertexai.Client` → `agentplatform.Client`](./agentplatform-client-migration.md)
-  — the deprecation swap, and why it isn't a rename: `agentplatform._genai` is a
-  **separate copy** (`agentplatform.types is vertexai.types` → False), so `Client`,
-  `types`, and the `_sdk_patches` targets must move as one unit or the patches
-  silently no-op back to ~0 rubric scores. Ships in the same
-  `google-cloud-aiplatform` dist (no dependency change); `vertexai.init` /
-  `agent_engines` deliberately left alone. Honest limit: 50/50 engine-log
-  occurrences are ADK's, and ADK 2.7.1 doesn't fix them — includes the 2.6.3 → 2.7.1
-  upgrade findings as seed for a future plan.
+  — not a rename: `agentplatform._genai` is a **separate copy**, so `Client`,
+  `types` and the `_sdk_patches` targets must move as one unit or the patches
+  silently no-op back to ~0 rubric scores. No dependency change; `vertexai.init` /
+  `agent_engines` left alone. Engine logs stay noisy — those frames are ADK's.
 - [The google-genai AFC warning](./genai-afc-warning.md) — google-genai defaults
   automatic function calling **on**, so every call took the AFC branch and the
   router logged an `AFC is enabled` INFO per request plus a WARNING per worker
