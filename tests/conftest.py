@@ -66,6 +66,10 @@ _TEST_ENV_DEFAULTS = {
     "SEARCH_MCP_URL": "http://localhost:8001/mcp",
     "BOOKING_MCP_URL": "http://localhost:8002/mcp",
     "EXPENSE_MCP_URL": "http://localhost:8003/mcp",
+    # ADK 2.7.1 / google-genai 2.19.0 renamed this; both are set so the suite
+    # exercises the same pair the deployed engines get and stays quiet under
+    # ADK's DeprecationWarning for the old spelling.
+    "GOOGLE_GENAI_USE_ENTERPRISE": "1",
     "GOOGLE_GENAI_USE_VERTEXAI": "1",
 }
 

@@ -87,7 +87,7 @@ REQUIREMENTS = [
     "google-cloud-aiplatform[adk,agent-engines]>=1.163.0",
     "google-genai>=2",
     "google-auth>=2.52.0",
-    "google-adk[agent-identity]==2.6.3",
+    "google-adk[agent-identity]==2.7.1",
     "a2a-sdk>=1",
     "fastmcp>=2.0.0",
     "python-dotenv>=1.0.0",
@@ -404,6 +404,12 @@ def _build_config(
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
         "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "EVENT_ONLY",
+        # Both spellings on purpose. ADK 2.7.1 and google-genai 2.19.0 read
+        # GOOGLE_GENAI_USE_ENTERPRISE first and only fall back to
+        # GOOGLE_GENAI_USE_VERTEXAI with a DeprecationWarning; older code on the
+        # managed runtime may still know only the old name. Identical values, so
+        # genai's "conflicting values" warning never fires.
+        "GOOGLE_GENAI_USE_ENTERPRISE": "1",
         "GOOGLE_GENAI_USE_VERTEXAI": "1",
         "SEARCH_MCP_SERVER": SEARCH_MCP_SERVER,
         "BOOKING_MCP_SERVER": BOOKING_MCP_SERVER,

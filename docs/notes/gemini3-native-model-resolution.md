@@ -3,7 +3,8 @@
 **What changed (2026-08-14):** `src/config.py:resolve_model()` now returns the **native ADK `Gemini`
 class** for Gemini-3.x backbones (on the global endpoint) instead of wrapping them in `LiteLlm`, and
 server-side Model Armor is now attached only for the Gemini-2.x path. This adopts the two applicable fixes
-from a downstream fork's `gemini-3.7-flash` migration and pins ADK to our tested `2.6.3`.
+from a downstream fork's `gemini-3.7-flash` migration and pins ADK to our tested version
+(`2.6.3` at the time; now `2.7.1` — see [adk-2.7.1-dependency-refresh.md](./adk-2.7.1-dependency-refresh.md)).
 
 ## Why — the fork's migration findings, assessed against our code
 

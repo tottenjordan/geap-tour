@@ -109,7 +109,8 @@ choice (server-side prompt/response content lands in Cloud Trace), not a default
 - Span content capture is the **native-Gemini** path; the router's gen_ai **log**
   path is a different gate and is not addressed here.
 - Line numbers in the vendored `templates/adk.py` / ADK telemetry are for the
-  pinned versions (vertexai 1.163.0, google-adk 2.6.3) and may drift.
+  versions pinned when this was written (vertexai 1.163.0, google-adk 2.6.3) and may
+  drift — the repo is now on aiplatform 1.165.1 / google-adk 2.7.1.
 
 Related: [[online-eval-content-capture-blocked]] (memory, now corrected),
 [[coordinator-outage-is-runtime-not-model]] (memory),
