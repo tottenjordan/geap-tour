@@ -32,8 +32,11 @@ def test_parse_tool_use_score_none_when_absent():
 
 def test_build_tool_use_prompt_contains_rubric_and_io():
     p = tj.build_tool_use_prompt("Find flights SFO to JFK", "United FL001 is $450.")
-    # The delegation-aware rubric instruction must be present (not the generic one).
-    assert "transfer_to_agent" in p
+    # The GEAP rubric must be present, not the generic one. It used to be pinned by
+    # asserting "transfer_to_agent" — that rubric described a delegation topology
+    # deleted on 2026-08-20, so the marker is now the direct-tools premise.
+    assert "SINGLE direct-tools agent" in p
+    assert "transfer_to_agent" not in p
     assert "Find flights SFO to JFK" in p
     assert "United FL001 is $450." in p
     assert "Score:" in p

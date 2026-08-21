@@ -159,15 +159,16 @@ class TestAgentConfigsDeclareTools:
         }
 
     def test_declared_tools_are_real_mcp_tool_names(self):
-        """Guard against inventing names: every declared tool must be expected
-        by at least one eval case (``expected_tool``)."""
-        from src.eval.agent_eval_configs import _EVAL_CASES, ALL_AGENTS, build_agent_info
+        """Guard against inventing names: every declared tool must exist on a
+        server. Checked against ``verify_mcp_tools.EXPECTED_TOOLS`` (the real
+        server inventory) rather than the eval cases' ``expected_tool``, which
+        covers only the 7 tools the cases happen to exercise and so silently
+        blessed an incomplete declaration."""
+        from src.eval.agent_eval_configs import ALL_AGENTS, build_agent_info
+        from src.eval.verify_mcp_tools import EXPECTED_TOOLS
 
         known = {
-            case["expected_tool"]
-            for cases in _EVAL_CASES.values()
-            for case in cases
-            if case.get("expected_tool") and case["expected_tool"] != "multiple"
+            f"{domain}_mcp_{tool}" for domain, tools in EXPECTED_TOOLS.items() for tool in tools
         }
         for name in ALL_AGENTS:
             for agent_id, config in build_agent_info(name).agents.items():
@@ -185,6 +186,62 @@ class TestAgentConfigsDeclareTools:
                         assert decl.description, (
                             f"{name}/{agent_id}: {decl.name} has no description"
                         )
+
+
+class TestPromptsMatchTheArchitecture:
+    """Prompts and judge rubrics must describe the agents that actually exist.
+
+    Both the coordinator and the router became single direct-tools agents on
+    2026-08-20 — no ``sub_agents``, no ``transfer_to_agent``. The ``geap_tool_use``
+    rubric still told the judge it was grading "a multi-agent system where a router
+    agent delegates to specialist sub-agents via transfer_to_agent" and spent one
+    of its four criteria on delegation quality that can never occur — while feeding
+    the monitored ``agent_eval/tool_use_accuracy`` series.
+    """
+
+    def test_tool_use_rubric_does_not_describe_delegation(self):
+        from src.eval.batch_eval import TOOL_USE_METRIC
+
+        # The SDK serializes MetricPromptBuilder to a single string.
+        text = str(TOOL_USE_METRIC.prompt_template).lower()
+        # Affirmative claims only — the rubric legitimately *denies* delegation
+        # ("does NOT delegate and has no sub-agents"), so a bare word match would
+        # flag its own correction.
+        for stale in (
+            "transfer_to_agent",
+            "delegates to",
+            "delegation appropriateness",
+            "routed to an appropriate specialist",
+            "or its delegate",
+        ):
+            assert stale not in text, f"geap_tool_use rubric still asserts {stale!r}"
+        assert "single direct-tools agent" in text, "rubric must state the real topology"
+
+    def test_tool_use_rubric_lists_the_real_tools(self):
+        from src.eval.batch_eval import ALL_MCP_TOOL_NAMES, TOOL_USE_METRIC
+
+        instruction = str(TOOL_USE_METRIC.prompt_template)
+        for name in ALL_MCP_TOOL_NAMES:
+            assert name in instruction, f"rubric omits {name}"
+
+    def test_declared_inventory_matches_the_mcp_servers(self):
+        """The judge now reads this inventory, so a missing tool is a real penalty."""
+        from src.eval.batch_eval import ALL_MCP_TOOL_NAMES
+        from src.eval.verify_mcp_tools import EXPECTED_TOOLS
+
+        declared = {n.split("_mcp_", 1)[1] for n in ALL_MCP_TOOL_NAMES}
+        real = {t for tools in EXPECTED_TOOLS.values() for t in tools}
+        assert declared == real, (
+            f"missing={sorted(real - declared)} extra={sorted(declared - real)}"
+        )
+
+    def test_no_shipped_agent_declares_sub_agents(self):
+        """A prompt promising delegation would describe an impossible topology."""
+        from src.eval.agent_eval_configs import ALL_AGENTS, build_agent_info
+
+        for name in ALL_AGENTS:
+            for agent_id, cfg in build_agent_info(name).agents.items():
+                assert not cfg.sub_agents, f"{name}/{agent_id} declares sub_agents"
 
 
 class TestAgentInfoAlignment:

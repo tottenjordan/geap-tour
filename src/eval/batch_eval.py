@@ -536,57 +536,6 @@ POLICY_COMPLIANCE_METRIC = types.LLMMetric(
     ),
 )
 
-TOOL_USE_METRIC = types.LLMMetric(
-    name="geap_tool_use",
-    prompt_template=types.MetricPromptBuilder(
-        instruction=(
-            "Evaluate the agent's tool usage for a corporate travel and expense system. "
-            "This is a multi-agent system where a router agent delegates to specialist "
-            "sub-agents via transfer_to_agent, and sub-agents call MCP tools: "
-            "search_flights, search_hotels, book_flight, book_hotel, "
-            "check_expense_policy, submit_expense, get_user_expenses. "
-            "The delegation pattern (router → sub-agent → tool) is the CORRECT "
-            "architecture — do NOT penalize for using transfer_to_agent."
-        ),
-        criteria={
-            "Correct tool selection": (
-                "Did the agent (or its delegate) call the right MCP tool for the request? "
-                "search_flights for flight queries, check_expense_policy for policy questions, "
-                "submit_expense for submissions, etc."
-            ),
-            "Parameter accuracy": (
-                "Were the tool arguments correct? Right cities, amounts, user IDs, "
-                "categories as specified by the user."
-            ),
-            "Delegation appropriateness": (
-                "If the request was delegated via transfer_to_agent, was it routed to "
-                "an appropriate specialist? Simple queries to lite/flash agents, "
-                "complex queries to pro/sonnet/opus agents."
-            ),
-            "Result utilization": (
-                "Did the agent use the tool's output to construct a helpful response? "
-                "Flight results should include prices/airlines, policy checks should "
-                "state the limit, expense submissions should confirm status."
-            ),
-        },
-        rating_scores={
-            "5": "Correct tool called with accurate parameters, delegation appropriate, response fully uses tool output.",
-            "4": "Correct tool and parameters, minor formatting or delegation issue.",
-            "3": "Right tool but parameters slightly off, or response doesn't fully use tool output.",
-            "2": "Wrong tool selected, or critical parameter error.",
-            "1": "No tool called when one was needed, or completely wrong tool and parameters.",
-        },
-    ),
-)
-
-
-def _resolve_agent_resource_name(agent_id: str) -> str:
-    """Convert a bare engine ID to the full Vertex AI resource name."""
-    if agent_id.startswith("projects/"):
-        return agent_id
-    return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
-
-
 # Tool inventories declared to the eval service via ``AgentConfig.tools``.
 #
 # The field is real (``list[google.genai.types.Tool]``) and was populated nowhere,
@@ -613,10 +562,19 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
         "Submit an expense report for reimbursement; over-limit items are flagged for review."
     ),
     "expense_mcp_get_user_expenses": "Get a user's most recent expenses, newest first.",
+    "booking_mcp_cancel_booking": "Cancel an existing booking by booking id.",
+    "booking_mcp_get_booking_details": "Get the details of an existing booking by booking id.",
+    "booking_mcp_list_all_bookings": "List the most recent bookings in the system.",
 }
 
 SEARCH_TOOL_NAMES = ("search_mcp_search_flights", "search_mcp_search_hotels")
-BOOKING_TOOL_NAMES = ("booking_mcp_book_flight", "booking_mcp_book_hotel")
+BOOKING_TOOL_NAMES = (
+    "booking_mcp_book_flight",
+    "booking_mcp_book_hotel",
+    "booking_mcp_cancel_booking",
+    "booking_mcp_get_booking_details",
+    "booking_mcp_list_all_bookings",
+)
 EXPENSE_TOOL_NAMES = (
     "expense_mcp_check_expense_policy",
     "expense_mcp_submit_expense",
@@ -643,6 +601,58 @@ def declared_tools(names: tuple[str, ...]) -> list[genai_types.Tool]:
             ]
         )
     ]
+
+
+TOOL_USE_METRIC = types.LLMMetric(
+    name="geap_tool_use",
+    prompt_template=types.MetricPromptBuilder(
+        instruction=(
+            "Evaluate the agent's tool usage for a corporate travel and expense system. "
+            "The agent is a SINGLE direct-tools agent: it holds the search, booking and "
+            "expense MCP toolsets itself and calls them directly. It does NOT delegate "
+            "and has no sub-agents. Available tools: "
+            f"{', '.join(ALL_MCP_TOOL_NAMES)}. "
+            "Judge only the tools the agent actually called; there is no delegation step "
+            "to assess."
+        ),
+        criteria={
+            "Correct tool selection": (
+                "Did the agent call the right MCP tool for the request? "
+                "search_flights for flight queries, check_expense_policy for policy questions, "
+                "submit_expense for submissions, get_user_expenses for expense history, etc."
+            ),
+            "Parameter accuracy": (
+                "Were the tool arguments correct? Right cities, amounts, user IDs, "
+                "categories as specified by the user."
+            ),
+            "Policy-then-submit ordering": (
+                "For an expense submission, did the agent call check_expense_policy BEFORE "
+                "submit_expense? An over-limit expense must still be submitted — the system "
+                "records it with status pending_review — so refusing to submit is a defect, "
+                "not caution."
+            ),
+            "Result utilization": (
+                "Did the agent use the tool's output to construct a helpful response? "
+                "Flight results should include prices/airlines, policy checks should "
+                "state the limit, expense submissions should confirm status."
+            ),
+        },
+        rating_scores={
+            "5": "Correct tool called with accurate parameters, correct ordering, response fully uses tool output.",
+            "4": "Correct tool and parameters, minor formatting or ordering issue.",
+            "3": "Right tool but parameters slightly off, or response doesn't fully use tool output.",
+            "2": "Wrong tool selected, or critical parameter error.",
+            "1": "No tool called when one was needed, or completely wrong tool and parameters.",
+        },
+    ),
+)
+
+
+def _resolve_agent_resource_name(agent_id: str) -> str:
+    """Convert a bare engine ID to the full Vertex AI resource name."""
+    if agent_id.startswith("projects/"):
+        return agent_id
+    return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
 def _build_agent_info() -> types.evals.AgentInfo:
