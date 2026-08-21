@@ -2,10 +2,15 @@ name: Eval Gate
 
 # Opt-in, ADVISORY CI quality gate for the coordinator agent.
 #
-# What it does: on demand it scores the coordinator on rubric metrics (via the
-# Vertex Gen AI Evaluation Service) and reports a 1-5 quality score with a < 3.0
-# threshold to the job summary. Reuses src.eval.multi_agent_batch_eval as-is
-# (--limit keeps a run ~3-5 min).
+# What it does, on demand, all reported to the job summary:
+#   1. verifies the deployed engine's SERVING CONFIG against the baseline
+#      (src.deploy.verify_engine_config) — first, because a misconfigured engine
+#      (e.g. a 4Gi container dropping turns) makes every score below meaningless;
+#   2. scores the coordinator on rubric metrics via the Vertex Gen AI Evaluation
+#      Service, 1-5 with a < 3.0 threshold (src.eval.multi_agent_batch_eval,
+#      --limit keeps a run ~3-5 min);
+#   3. runs two smoke checks the single-turn rubric path cannot see — multi-turn
+#      (simulated_eval) and empty-at-200 (online_monitor --dry-run).
 #
 # Opt-in, so it never slows an unrelated PR:
 #   - runs only when a PR carries the `run-eval` label, or via manual dispatch;
@@ -76,6 +81,52 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
 
+      # Runs BEFORE the rubric eval: a misconfigured engine makes the scores below
+      # meaningless, and this is the cheap way to know. It is a control-plane GET —
+      # seconds, no inference cost. Advisory like the rest of this workflow.
+      - name: Verify deployed engine config
+        id: engine_config
+        continue-on-error: true
+        run: |
+          uv run python -m src.deploy.verify_engine_config \
+            --engine-id "${{ vars.AGENT_ENGINE_ID }}" --role coordinator \
+            --json > engine_config.json
+          cat engine_config.json
+
+      - name: Publish engine config to job summary
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          import json, os, pathlib
+
+          path = pathlib.Path("engine_config.json")
+          lines = ["# Deployed Engine Config (advisory)", ""]
+          if not path.exists():
+              lines.append("Config verification produced no output — see the step logs.")
+          else:
+              results = json.loads(path.read_text())
+              for res in results:
+                  if res.get("error"):
+                      lines.append(f"`{res['engine_id']}` UNREACHABLE: {res['error']}")
+                      continue
+                  bad = [f for f in res.get("findings", []) if not f["ok"]]
+                  crit = [f for f in bad if f["severity"] == "critical"]
+                  status = "✅ PASS" if not crit else "❌ FAIL"
+                  lines += [f"**{status}** `{res['engine_id']}` "
+                            f"({len(crit)} critical, {len(bad) - len(crit)} advisory)", ""]
+                  if bad:
+                      lines += ["| Check | Severity | Expected | Observed |", "|---|---|---|---|"]
+                      lines += [f"| {f['name']} | {f['severity']} | {f['expected']} | "
+                                f"{f['observed']} |" for f in bad]
+                      lines.append("")
+              lines.append("_Critical drift means the engine is serving wrong "
+                           "(e.g. a 4Gi container dropping turns) — the rubric scores "
+                           "below are suspect until it is fixed._")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("\n".join(lines) + "\n\n")
+          print("\n".join(lines))
+          PY
+
       - name: Run coordinator rubric eval
         env:
           THRESHOLD: ${{ inputs.threshold || '3.0' }}
@@ -87,6 +138,42 @@ jobs:
             --limit 8 \
             --output eval_gate_result.json
 
+      # Two smoke checks the rubric gate above cannot see (roadmap P2.9):
+      #   * multi-turn — the rubric eval is single-turn, so a regression that only
+      #     shows up across turns (context loss, repeated tool calls) is invisible.
+      #   * empty-at-200 — a zero-character HTTP 200 is an INFRA failure that the
+      #     rubric path can score as merely low quality.
+      # Deliberately small and advisory; both are billable, so keep the counts low.
+      - name: Multi-turn smoke (advisory)
+        id: multiturn
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.simulated_eval \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --agent-name coordinator_agent \
+            --scenario-count 2 --max-turns 3 --threshold 3.0
+
+      - name: Empty-stream / online-quality smoke (advisory)
+        id: online_smoke
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.online_monitor \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --samples 4 --dry-run
+
+      - name: Publish smoke results to job summary
+        if: always()
+        run: |
+          {
+            echo "# Smoke checks (advisory)"
+            echo ""
+            echo "| Check | Result | Catches |"
+            echo "|---|---|---|"
+            echo "| multi-turn (simulated_eval) | ${{ steps.multiturn.outcome }} | context loss across turns |"
+            echo "| online quality (dry-run) | ${{ steps.online_smoke.outcome }} | empty-at-200 infra failures |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish score to job summary
         if: always()
         run: |
@@ -94,6 +181,7 @@ jobs:
           import json, os, pathlib
 
           path = pathlib.Path("eval_gate_result.json")
+          # Append, never overwrite — the engine-config step wrote its section first.
           out = os.environ["GITHUB_STEP_SUMMARY"]
           lines = ["# Coordinator Eval Gate (advisory)", ""]
           if not path.exists():
@@ -120,6 +208,7 @@ jobs:
               lines += ["",
                         "_Advisory gate: scores the deployed engine, not this PR's "
                         "code. Not a required check._"]
-          pathlib.Path(out).write_text("\n".join(lines) + "\n")
+          with open(out, "a") as fh:
+              fh.write("\n".join(lines) + "\n")
           print("\n".join(lines))
           PY

@@ -7,7 +7,8 @@ engine-driving half is exercised live, not in CI.
 
 import pytest
 
-from src.eval.sweep_empty_rate import arm_order, summarize, verdict, wilson_interval
+from src.eval.stats import wilson_ci
+from src.eval.sweep_empty_rate import arm_order, summarize, verdict
 
 
 class TestArmOrder:
@@ -29,16 +30,16 @@ class TestArmOrder:
 class TestWilsonInterval:
     def test_zero_successes_has_a_nonzero_upper_bound(self):
         """The whole point of Wilson over normal-approx: 0/49 is not '0% +/- 0'."""
-        low, high = wilson_interval(0, 49)
+        low, high = wilson_ci(0, 49)
         assert low == 0.0
         assert 0.0 < high < 0.15
 
     def test_brackets_the_point_estimate(self):
-        low, high = wilson_interval(7, 49)
+        low, high = wilson_ci(7, 49)
         assert low < 7 / 49 < high
 
     def test_empty_total_is_safe(self):
-        assert wilson_interval(0, 0) == (0.0, 0.0)
+        assert wilson_ci(0, 0) == (0.0, 0.0)
 
 
 def _rows(pairs):

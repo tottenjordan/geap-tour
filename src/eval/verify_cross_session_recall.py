@@ -32,6 +32,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -57,13 +59,118 @@ DEFAULT_SEED_MESSAGES = (
 # directly. (A "book me a flight" probe instead triggers the booking delegation,
 # which on the probe engine tends to stream an empty 200 — a false FAIL.)
 DEFAULT_PROBE_MESSAGE = "Remind me of my saved travel preferences."
+# Diagnostic only — see `evaluate_recall`. These were the *verdict* until a judge
+# replaced them; they are kept because seeing which demo signals surfaced is useful
+# when reading a failure, not because their presence proves anything.
 DEFAULT_EXPECTED_SIGNALS = ("window", "Delta", "Marriott")
+
+# The judge's contract line. Mirrors the `Score:`/`Hallucinated:` convention in
+# src/eval/tool_faithfulness.py, including "last match wins" — judges restate the
+# criterion while reasoning, so the final line is the verdict.
+_RECALLED_RE = re.compile(r"recalled\s*:?\**\s*:?\s*(yes|no)", re.IGNORECASE)
+_REASON_RE = re.compile(r"reason\s*:?\**\s*:?\s*(.+)", re.IGNORECASE)
+
+# Cheap, non-thinking, and consistent with the other standalone judges.
+DEFAULT_RECALL_JUDGE_MODEL = "gemini-2.5-flash"
+
+log = logging.getLogger(__name__)
 
 
 def _drain_stream(agent, *, user_id: str, session_id: str, message: str) -> str:
     """Send one turn and concatenate the visible assistant text from the stream."""
     response = agent.stream_query(user_id=user_id, session_id=session_id, message=message)
     return "".join(_extract_text(chunk) for chunk in response)
+
+
+def build_recall_prompt(probe_response: str, facts: Sequence[str]) -> str:
+    """Grounded judge prompt: did the reply *surface* one of the stored facts?
+
+    Grounded on the facts Memory Bank actually holds (the caller already polled
+    for them), so the judge decides against real stored state rather than against
+    hardcoded demo words — the same shape as
+    :func:`src.eval.tool_faithfulness.build_faithfulness_prompt`.
+
+    The negative cases are spelled out because they are precisely what the old
+    substring check got wrong: a denial that happens to name the topic.
+    """
+    stored = "\n".join(f"- {fact}" for fact in facts) or "- (none recorded)"
+    return f"""You are auditing whether an AI travel assistant RECALLED a user's stored
+preferences in a brand-new conversation.
+
+STORED FACTS about this user (ground truth from the memory store):
+{stored}
+
+THE ASSISTANT'S REPLY when asked about the user's saved preferences:
+\"\"\"{probe_response}\"\"\"
+
+Did the reply AFFIRMATIVELY surface at least one of the stored facts as something
+it knows about this user?
+
+Answer NO if the reply:
+- denies having, or says it has no record of, the information (even if it repeats
+  the topic word — "I have no window seat preference on file" is NOT recall);
+- asks the user to supply the preferences;
+- only offers generically to help, or describes what it could do;
+- mentions a topic without attributing it to this user as a known preference.
+
+Answer YES only if it states the user's actual preference. A correct paraphrase
+counts ("a seat by the glass" for a window-seat preference).
+
+Respond in exactly this format:
+Reason: <one sentence>
+Recalled: <yes|no>"""
+
+
+def parse_recall_verdict(text: str | None) -> dict:
+    """Parse ``Recalled: yes|no`` (+ optional ``Reason:``) → a verdict dict.
+
+    An absent or unparseable verdict is **not** recall: this gate should fail
+    closed, since a green board over broken memory is the failure it exists to
+    prevent.
+    """
+    if not text:
+        return {"recalled": False, "reason": "judge returned no text"}
+    matches = _RECALLED_RE.findall(str(text))
+    if not matches:
+        return {"recalled": False, "reason": f"unparseable judge verdict: {str(text)[:160]}"}
+    reasons = _REASON_RE.findall(str(text))
+    reason = str(reasons[-1]).splitlines()[0].strip().lstrip("*: ").strip() if reasons else ""
+    return {"recalled": matches[-1].strip().lower() == "yes", "reason": reason or "(no reason)"}
+
+
+def evaluate_recall(
+    probe_response: str,
+    facts: Sequence[str],
+    *,
+    generate_fn: Callable[[str], str],
+) -> dict:
+    """Judge whether ``probe_response`` demonstrates recall of ``facts``.
+
+    Replaces ``any(signal in response)``, which could not distinguish recall from
+    its exact opposite: "I don't have a saved **window** preference" contains
+    ``window`` and therefore *passed* — a green result on the precise symptom of
+    memory being broken, in a check marked critical in ``demo_readiness --deep``.
+
+    Fails closed in every degenerate case (empty stream, judge error, unparseable
+    verdict) and never falls back to substring matching, which would quietly
+    reintroduce the bug.
+    """
+    if not (probe_response or "").strip():
+        # No judge call: an empty stream is an infra failure, not a recall verdict.
+        return {"recalled": False, "reason": "probe response was empty"}
+    try:
+        verdict_text = generate_fn(build_recall_prompt(probe_response, list(facts)))
+    except Exception as exc:
+        log.warning("recall judge failed: %s", exc)
+        return {"recalled": False, "reason": f"judge error: {type(exc).__name__}: {exc}"}
+    return parse_recall_verdict(verdict_text)
+
+
+def _default_recall_judge() -> Callable[[str], str]:
+    """Deterministic (temperature=0) retrying judge, shared with the other judges."""
+    from src.eval.judge_client import build_judge_generate_fn
+
+    return build_judge_generate_fn(DEFAULT_RECALL_JUDGE_MODEL)
 
 
 def _poll_for_facts(
@@ -106,6 +213,7 @@ def run_cross_session_recall(
     wait: bool = True,
     probe_attempts: int = 3,
     sleep_fn: Callable[[float], None] = time.sleep,
+    generate_fn: Callable[[str], str] | None = None,
 ) -> dict:
     """Drive session A → persistence → session B and report whether recall worked.
 
@@ -119,14 +227,18 @@ def run_cross_session_recall(
             the ``verify_memory`` engine default (pinned ``AGENT_ENGINE_ID``).
         seed_messages: Session-A turns that establish preferences.
         probe_message: The single session-B turn that should elicit recall.
-        expected_signals: Case-insensitive substrings whose presence in the probe
-            response proves recall.
+        expected_signals: Case-insensitive substrings reported as ``signals_found``
+            for diagnostics. **They no longer decide the verdict** — see
+            :func:`evaluate_recall`.
         poll_timeout_s / poll_interval_s: Bound the wait for async fact generation.
         wait: When ``False``, skip the persistence poll (probe immediately).
         sleep_fn: Injected for tests; defaults to ``time.sleep``.
+        generate_fn: Recall judge (``prompt -> text``). Built lazily from
+            :func:`_default_recall_judge` when omitted; injected in tests.
 
     Returns:
-        ``{"recalled", "session_a_id", "session_b_id", "facts", "probe_response"}``.
+        ``{"recalled", "reason", "signals_found", "session_a_id", "session_b_id",
+        "facts", "probe_response"}``.
     """
     seeds = list(seed_messages if seed_messages is not None else DEFAULT_SEED_MESSAGES)
     probe = probe_message if probe_message is not None else DEFAULT_PROBE_MESSAGE
@@ -182,11 +294,19 @@ def run_cross_session_recall(
         if probe_response.strip():
             break
 
+    # The verdict is the grounded judge's, not a substring match — see
+    # `evaluate_recall`. Signals are reported alongside purely as diagnostics.
     lowered = probe_response.lower()
-    recalled = any(sig.lower() in lowered for sig in signals)
+    verdict = evaluate_recall(
+        probe_response,
+        facts,
+        generate_fn=generate_fn if generate_fn is not None else _default_recall_judge(),
+    )
 
     return {
-        "recalled": recalled,
+        "recalled": verdict["recalled"],
+        "reason": verdict["reason"],
+        "signals_found": [sig for sig in signals if sig.lower() in lowered],
         "session_a_id": sess_a_id,
         "session_b_id": sess_b_id,
         "facts": facts,
@@ -213,7 +333,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         dest="signals",
         metavar="TEXT",
-        help="Substring proving recall (repeatable; default: window/Delta/Marriott).",
+        help="Diagnostic substring reported as signals_found (repeatable; default: "
+        "window/Delta/Marriott). Does NOT decide the verdict — a grounded judge does.",
     )
     parser.add_argument(
         "--poll-timeout", type=float, default=120.0, help="Seconds to wait for facts."
@@ -246,8 +367,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(render_memories(args.user_id, result["facts"]))
     print(f"\nProbe: {args.probe}")
     print(f"Response: {result['probe_response']}")
+    print(f"Signals present (diagnostic only): {result['signals_found'] or 'none'}")
     verdict = "PASS" if result["recalled"] else "FAIL"
-    print(f"\nRECALL: {verdict}")
+    print(f"\nRECALL: {verdict} — {result['reason']}")
     return 0 if result["recalled"] else 1
 
 

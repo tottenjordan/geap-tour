@@ -123,6 +123,16 @@ ENV_FILE = os.path.join(PROJECT_ROOT, ".env")
 LITELLM_CPU = "4"
 LITELLM_MEMORY = "16Gi"
 
+# Keep-warm floor applied when CREATING an engine. Scale-to-zero is the only
+# value we know is wrong: the first request after idle pays a cold start that
+# surfaces as a slow or error-shaped stream rather than a queued request. An
+# update passes None instead, so it preserves whatever the engine already has
+# (our served engines run 4) — a create has nothing to preserve and must pick.
+# Honest scope: 1 is a floor against idle, not a throughput setting, and the one
+# measurement that blamed min_instances=1 for empty streams predates the 4Gi OOM
+# fix and is confounded by it. See src/deploy/engine_baseline.py.
+DEFAULT_MIN_INSTANCES = 1
+
 
 ENABLE_AGENT_IDENTITY = os.environ.get("ENABLE_AGENT_IDENTITY", "0") in ("1", "true")
 ENABLE_AGENT_GATEWAY = os.environ.get("ENABLE_AGENT_GATEWAY", "0") in ("1", "true")
@@ -366,14 +376,14 @@ def _build_config(
     """Build the deployment config dict used for both create and update.
 
     ``min_instances`` sets a keep-warm floor (Agent Engine ``min_instances``) so
-    the engine never scales to zero. The default (None) preserves scale-to-zero;
-    a floor of 1 avoids the idle cold-start/error-shaped-stream wedge that a demo
-    engine can fall into when left idle (see the pre-demo readiness runbook).
+    the engine never scales to zero. ``None`` omits the key entirely, which on an
+    **update** preserves whatever the engine already has — that asymmetry is why
+    :func:`deploy_agent` (create, nothing to preserve) substitutes
+    :data:`DEFAULT_MIN_INSTANCES` while :func:`update_agent` does not.
 
-    ``memory`` overrides the container memory limit. Left unset, a LiteLlm-backed
-    agent is given :data:`LITELLM_MEMORY` automatically (see :func:`_auto_memory`
-    — the default 4Gi gets its workers OOM-killed mid-call) and a Gemini-only
-    agent keeps the platform default.
+    ``memory`` overrides the container memory limit. Left unset, :func:`_auto_memory`
+    supplies :data:`LITELLM_MEMORY` for **every** agent — the 4Gi platform default
+    gets workers OOM-killed mid-call on any backbone.
     """
     env_vars = {
         **OTEL_ENV_VARS,
@@ -460,7 +470,7 @@ def _build_config(
     limit = memory or _auto_memory(agent)
     if limit:
         config["resource_limits"] = {"cpu": LITELLM_CPU, "memory": limit}
-        reason = "explicit" if memory else "auto: LiteLlm backbone needs >4Gi"
+        reason = "explicit" if memory else "auto: the 4Gi default OOMs any backbone"
         print(f"  Memory: {limit} ({reason})")
 
     if ENABLE_AGENT_IDENTITY:
@@ -497,10 +507,16 @@ def deploy_agent(
     min_instances: int | None = None,
     memory: str | None = None,
 ) -> str:
-    """Create a new agent on Agent Runtime."""
+    """Create a new agent on Agent Runtime.
+
+    Unlike :func:`update_agent`, an unset ``min_instances`` becomes
+    :data:`DEFAULT_MIN_INSTANCES` rather than "leave it alone" — there is no
+    prior value to leave alone, and the platform's own default is scale-to-zero.
+    """
     os.chdir(PROJECT_ROOT)
     print(f"\n--- Creating {agent.name} ---")
-    config = _build_config(agent, display_name, min_instances=min_instances, memory=memory)
+    floor = DEFAULT_MIN_INSTANCES if min_instances is None else min_instances
+    config = _build_config(agent, display_name, min_instances=floor, memory=memory)
 
     remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
@@ -516,7 +532,13 @@ def update_agent(
     min_instances: int | None = None,
     memory: str | None = None,
 ) -> str:
-    """Update an existing agent on Agent Runtime."""
+    """Update an existing agent on Agent Runtime.
+
+    ``min_instances=None`` deliberately preserves the engine's current floor
+    instead of substituting :data:`DEFAULT_MIN_INSTANCES`: our served engines run
+    4, and silently downgrading them to 1 on every routine ``--update`` would be
+    a regression nobody asked for.
+    """
     os.chdir(PROJECT_ROOT)
     # Accept bare ID or full resource name
     if not engine_id.startswith("projects/"):
@@ -635,12 +657,12 @@ def run_deploy(
              batch grouped in the Agent Engine console.
         min_instances: Keep-warm floor (Agent Engine ``min_instances``) applied
              to every agent in this batch. None (default) preserves each
-             engine's existing scaling (scale-to-zero on create); a floor of
-             1-2 avoids idle cold-start / empty-at-200 streams.
+             engine's existing floor on ``--update`` and applies
+             :data:`DEFAULT_MIN_INSTANCES` on create.
         memory: Container memory limit (e.g. "16Gi") applied to every agent in
-             this batch. None (default) lets each agent pick its own — see
-             :func:`_auto_memory`, which gives a LiteLlm-backed engine the
-             headroom the 4Gi platform default does not provide.
+             this batch. None (default) lets :func:`_auto_memory` supply
+             :data:`LITELLM_MEMORY`, the headroom the 4Gi platform default does
+             not provide on any backbone.
     """
     vertexai.init(
         project=GCP_PROJECT_ID, location=GCP_REGION, staging_bucket=f"gs://{GCP_STAGING_BUCKET}"
@@ -703,17 +725,18 @@ if __name__ == "__main__":
         "--min-instances",
         type=int,
         default=None,
-        help="Keep-warm floor (Agent Engine min_instances) so the engine never "
-        "scales to zero — avoids idle cold-start / empty-at-200 streams "
-        "(e.g. --min-instances 1). Default: unset (preserves existing scaling).",
+        help=f"Keep-warm floor (Agent Engine min_instances) so the engine never "
+        f"scales to zero — avoids the idle cold-start wedge. Default: unset, "
+        f"which preserves an existing engine's floor on --update and applies "
+        f"{DEFAULT_MIN_INSTANCES} on create.",
     )
     parser.add_argument(
         "--memory",
         default=None,
         help=f"Container memory limit, e.g. --memory 32Gi. Default: unset, which "
-        f"gives a LiteLlm-backed (Claude) engine {LITELLM_MEMORY} — the 4Gi "
-        f"platform default OOM-kills its workers mid-call (empty-at-200) — and "
-        f"leaves a Gemini-only engine on the platform default.",
+        f"gives EVERY engine {LITELLM_MEMORY} — the 4Gi platform default "
+        f"OOM-kills workers mid-call (empty-at-200) on any backbone, Gemini-only "
+        f"engines included.",
     )
     args = parser.parse_args()
 

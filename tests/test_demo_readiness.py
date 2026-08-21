@@ -4,7 +4,10 @@ Every underlying ``verify_*`` call is injected, so the compose → render → ga
 path is exercised without any network, credentials, or engine calls.
 """
 
+from src.deploy.engine_baseline import Finding
 from src.eval.demo_readiness import (
+    build_default_checks,
+    check_engine_config,
     check_engine_live,
     check_mcp_tools,
     check_memory,
@@ -15,6 +18,12 @@ from src.eval.demo_readiness import (
     render,
     run_readiness,
 )
+
+
+def _finding(name, ok, severity):
+    return Finding(
+        name=name, ok=ok, severity=severity, expected="x", observed="y", why="because " * 8
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -38,6 +47,44 @@ class TestChecks:
         assert "ok" in detail
         ok, _ = check_monitors(verify_fn=lambda **_: {"status": "degraded"})
         assert ok is False
+
+    def test_engine_config_clean_passes(self):
+        ok, detail = check_engine_config(
+            engine_id="e",
+            check_fn=lambda _e: {"findings": [_finding("memory", True, "critical")]},
+        )
+        assert ok is True
+        assert "0 critical" in detail
+
+    def test_engine_config_critical_drift_fails_and_names_the_check(self):
+        ok, detail = check_engine_config(
+            engine_id="e",
+            check_fn=lambda _e: {"findings": [_finding("memory", False, "critical")]},
+        )
+        assert ok is False
+        assert "memory" in detail
+
+    def test_engine_config_advisory_alone_still_passes(self):
+        """Advisories are posture, not breakage — they must not block a demo."""
+        ok, detail = check_engine_config(
+            engine_id="e",
+            check_fn=lambda _e: {"findings": [_finding("min_instances", False, "advisory")]},
+        )
+        assert ok is True
+        assert "1 advisory" in detail
+
+    def test_engine_config_unreachable_is_a_failure(self):
+        ok, detail = check_engine_config(
+            engine_id="e", check_fn=lambda _e: {"error": "403 denied", "findings": []}
+        )
+        assert ok is False
+        assert "unreachable" in detail
+
+    def test_engine_config_is_a_default_critical_check(self):
+        """Wiring it in is the whole point — a verifier nobody runs helps nobody."""
+        names = {c["name"]: c for c in build_default_checks(engine_id="e", user_id="alice")}
+        assert "engine_config" in names
+        assert names["engine_config"]["critical"] is True
 
     def test_memory_presence(self):
         ok, detail = check_memory(

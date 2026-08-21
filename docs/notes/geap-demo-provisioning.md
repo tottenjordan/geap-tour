@@ -199,6 +199,23 @@ uv run python -m src.eval.verify_monitors --format json    # read all three surf
    is unavailable in hybrid-vertex, both log "A2A preview not enabled — skipping"
    and exit 0 — never crashing the demo.
 
+## Optional platform surfaces — what is actually available here
+
+Probed 2026-08-21 against `hybrid-vertex`. These are the surfaces the repo supports
+but keeps **off by default**; the point of writing the answers down is that "preview,
+may not be enabled" is not a demo plan.
+
+| surface | state | detail |
+| --- | --- | --- |
+| **A2A registry** | ✅ **enabled** | `register_a2a --discover` returns 59 agents, ours included (`coordinator_agent`, `coordinator_agent_jt1`, `router_agent`, `router_agent_jt1`). The "preview may not be enabled" hedge in the code does not apply to this project. |
+| **A2A *agent card*** | ❌ **not published** | Those 59 entries are auto-registered per Agent Engine: keys are `agentId/displayName/protocols/…` with **no `card` field and zero skills**. So the coordinator is discoverable by *name* but not by *capability*. Publishing the real card (5 skills mirroring its tools) is `register_a2a` with no flags — a one-command, additive demo win that has never been run. |
+| **Agent Gateway** | ❌ **not available** | `ENABLE_AGENT_GATEWAY=false` and `AGENT_GATEWAY_EGRESS_PATH` is configured, but the `agentGateways` REST collection 404s with an HTML error page (not a JSON API error) on both `v1` and `v1beta1` — the route does not exist for this project, i.e. early access is not granted. Do not plan a gateway demo without getting that enabled first. |
+| **Native Online Evaluators** | ⚠️ **available, deliberately off** | Needs `ENABLE_SPAN_CONTENT_CAPTURE=1` at deploy, already validated live (46/46 `call_llm` spans carried real content). It writes prompt/response into Cloud Trace, so enable it on the **probe engine `4380…` only** and leave the offline bridge as the shipped default. |
+
+Neither A2A finding was knowable from the code: it degrades gracefully and returns
+`[]`/`None` on an unavailable preview, so "no output" and "not enabled" look
+identical until you actually run it.
+
 ## Verification (existence checks)
 
 - `gcloud model-armor templates list --location=us-central1` → geap-workshop-*

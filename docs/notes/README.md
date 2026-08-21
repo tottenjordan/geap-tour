@@ -13,31 +13,28 @@ file; keep this index short (< 200 lines).
   intentional monkeypatches, optional imports) and the rule for triaging new ones.
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
   DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas.
-- [Offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) — why the
-  native Online Evaluators are platform-blocked (`INSUFFICIENT_DATA`) and how the
+- [Offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) — how the
   offline bridge became the canonical source for two honest surfaces: coordinator
   quality (`agent_eval/*`, 1-5) via `publish_offline_eval` and router efficiency
   (`agent_router/*`, native units) via `publish_router_efficiency`.
 - [Evaluation robustness — assessment + roadmap](./evaluation-robustness-roadmap.md)
   — grounded audit of the eval surface (G1–G6) with a P0/P1/P2 roadmap. **P0
-  shipped:** deterministic+retry judge client, a held-out split with a contamination
-  guard, and the CLI threshold-default fix.
+  shipped:** deterministic+retry judge client, a held-out split + contamination
+  guard, the CLI threshold-default fix.
 - [Online quality monitor (`agent_online_eval/*`)](./online-quality-monitor.md) —
   continuous client-side eval: scores sampled live `stream_query` traffic with the
-  same rubrics as the offline bridge and publishes a third monitored surface
-  (`eval_mode=online`, same 1-5/3.0 axis) — sidesteps the platform-blocked native
-  Online Evaluators by using client-side response content the trace surface strips.
+  offline bridge's rubrics and publishes a third monitored surface (`eval_mode=online`,
+  same 1-5/3.0 axis) from response content the trace surface strips.
 - [Infra-empty separation + rolling-baseline alerts](./online-infra-empty-and-baseline-alerts.md)
   — (P2.8) empty-at-200 / error-shaped responses are partitioned out before judging
   and tracked as their own `infra_empty_rate` ceiling (GT) so empty streams stop
-  masquerading as low quality; `verify_monitors` adds a rolling-baseline z-score
-  anomaly block that catches drift the static floor misses.
+  masquerading as low quality; plus a rolling-baseline z-score anomaly block in
+  `verify_monitors` that catches drift the static floor misses.
 - [Online-eval INSUFFICIENT_DATA — true root cause & fix](./online-eval-content-capture.md)
-  — the native Online Evaluators failed because the managed runtime's `set_up()`
-  forces the ADK span-content gate closed unless deployed with
-  `AdkApp(enable_tracing=True)` (NOT a hard content strip); the opt-in
-  `ENABLE_SPAN_CONTENT_CAPTURE` flag opens it, validated live (46/46 spans carry
-  real content). Corrects the earlier "no lever" conclusion.
+  — the native Online Evaluators failed because the managed runtime's `set_up()` forces
+  the ADK span-content gate closed unless deployed with `AdkApp(enable_tracing=True)`
+  (NOT a hard content strip); the opt-in `ENABLE_SPAN_CONTENT_CAPTURE` flag opens it,
+  validated live (46/46 spans). Corrects the earlier "no lever" conclusion.
 - [DOE framework for scaling experimentation](./doe-framework.md) — factor
   registry → fractional-factorial design → one PipelineJob per point → harvest →
   main-effects report; factor channels, subprocess-per-point, cost caveat.
@@ -70,21 +67,25 @@ file; keep this index short (< 200 lines).
   `LiteLlm` from ADK's `isinstance` check, so ADK strips the `adk-` tool-call ids
   Anthropic pairs results by and a multi-step, mixed-tier Claude turn dies on
   `AnthropicError: 'tool_call_id'`. Fixed by `restore_tool_call_ids()`.
-- [The Claude tiers were OOM-killed: 4Gi is not enough for a LiteLlm engine](./router-claude-tier-oom.md)
-  — a trace missing its enclosing `invoke_agent` span, no traceback, and a fresh
-  worker booting 5.6s into the LiteLLM call = a SIGKILL: litellm (+140MB resident)
-  overruns the Agent Runtime default. 16Gi took the probes 8/8 empty to **0/8**;
-  `_auto_memory()` now derives the limit so it cannot silently revert.
+- [The Claude tiers were OOM-killed: 4Gi is not enough](./router-claude-tier-oom.md)
+  — first sighting of the OOM: a missing enclosing span, no traceback, a worker
+  booting 5.6s into the LiteLLM call. 8/8 empty → **0/8** at 16Gi. Since generalised
+  to every backbone — see the field guide.
+- [The deployed-engine baseline](./deployed-engine-baseline.md) — what "configured
+  correctly" means, as **executable** rules (`engine_baseline.py`) plus a verifier
+  that diffs the live spec and exits non-zero (`verify_engine_config`). Catches the
+  silent class: 4Gi containers, router tiers regressed to Gemini-3 by a plain
+  `--update`, a thinking classifier collapsing all traffic to lite. First run found
+  the `.env` coordinator still on 4Gi — the fix had merged, the engine hadn't.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
   wrapper (insurance — the coordinator took 0 of the 215 429s), domain spans for
   the un-traced 3-5s Memory Bank preload + the silently-swallowed save, and drops
   both AgentTools (0 calls measured across 10 traces).
-- [DOE harvest `--wait` path hang (root cause & hardening)](./doe-harvest-wait-path.md)
-  — a transient live-poll stall could hang unattended for the 2h timeout with no
-  output; fixed via GCS ground-truth fall-through, a heartbeat, and a download
-  timeout.
+- [DOE harvest `--wait` path hang](./doe-harvest-wait-path.md) — a transient live-poll
+  stall could hang unattended for the 2h timeout with no output; fixed via GCS
+  ground-truth fall-through, a heartbeat, and a download timeout.
 - [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
   — one-time provisioning checklist + run-of-show for the four demo money-shots
   (observability, trace debugging, periodic-snapshot eval, governance blocking).
@@ -93,13 +94,12 @@ file; keep this index short (< 200 lines).
   prompt/response/tool content to BQ independent of the OTEL surface the managed
   runtime strips; flags, IAM prereqs, and the pending live-capture gate.
 - [Tool-call faithfulness (did it do what it said?)](./tool-call-faithfulness.md) —
-  a grounded judge compares the agent's completion claims against the real executed
-  `stream_query` trajectory to catch **hallucinated actions** (the gap
-  `tool_use_judge` explicitly can't cover — `run_inference` yields text but no
-  trajectory); publishes `agent_eval/tool_faithfulness` (offline) +
-  `agent_online_eval/tool_faithfulness` (online), floor 3.0. Load-bearing Branch-A/B
-  trajectory-visibility fork **resolved live 2026-08-18 → Branch A** (nested domain
-  MCP calls visible client-side, so coordinator faithfulness is action-level).
+  a grounded judge compares completion claims against the real executed
+  `stream_query` trajectory to catch **hallucinated actions** — the gap
+  `tool_use_judge` can't cover (`run_inference` yields text but no trajectory).
+  Publishes `agent_eval/tool_faithfulness` + the online twin, floor 3.0. The
+  load-bearing trajectory-visibility fork **resolved live → Branch A** (nested MCP
+  calls are visible client-side, so faithfulness is action-level).
 - [Tool-call faithfulness — the console demo](./tool-faithfulness-demo.md) — a
   curated 5-case dataset (`src/eval/data/faithfulness_demo.json`) where look-alike
   confident responses differ only in the executed trajectory; the eval catches 3
