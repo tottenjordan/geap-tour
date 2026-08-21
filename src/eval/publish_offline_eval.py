@@ -236,13 +236,25 @@ def _inject_tool_faithfulness(batch: dict, agent_id: str | None = None) -> None:
     )
 
 
-def _apply_standalone_judges(batch: dict, agent_id: str | None = None) -> None:
+def _apply_standalone_judges(
+    batch: dict, agent_id: str | None = None, *, faithfulness: bool = True
+) -> None:
     """Splice the standalone-judge metrics (policy + tool_use + faithfulness) into ``batch``.
 
     Each judge is best-effort and independently guarded, so one failing never
     blocks the others or the surrounding publish. Shared by the ``--run`` CLI and
     the ``run_all_evals`` publish phase so both paths report the same corrected
     ``tool_use_accuracy`` (and ``policy_compliance``) plus ``tool_faithfulness``.
+
+    ``faithfulness=False`` skips the faithfulness judge. Two reasons a scheduled
+    publish wants that, and the first is the load-bearing one:
+
+    1. **It would overwrite a deliberate demo regression point.** The
+       ``demo_readiness`` monitors check treats a RED faithfulness publish as an
+       intentional demo artefact; an hourly cron republishing a healthy score
+       silently erases it.
+    2. It is the most expensive judge here — it captures a real ``stream_query``
+       trajectory per case rather than reusing ``run_inference`` output.
     """
     try:
         _inject_policy_compliance(batch, agent_id=agent_id)
@@ -252,13 +264,16 @@ def _apply_standalone_judges(batch: dict, agent_id: str | None = None) -> None:
         _inject_tool_use_accuracy(batch, agent_id=agent_id)
     except Exception as e:  # tool_use scoring is best-effort
         print(f"  tool_use_accuracy scoring failed: {e}")
+    if not faithfulness:
+        print("  tool_faithfulness: skipped (--no-faithfulness)")
+        return
     try:
         _inject_tool_faithfulness(batch, agent_id=agent_id)
     except Exception as e:  # faithfulness scoring is best-effort
         print(f"  tool_faithfulness scoring failed: {e}")
 
 
-def _run_fresh(agent_id: str | None = None) -> dict:
+def _run_fresh(agent_id: str | None = None, *, faithfulness: bool = True) -> dict:
     """Run a fresh coordinator batch eval (plus the standalone judges).
 
     ``agent_id`` targets a specific deployment (bake-off); when unset the batch
@@ -270,7 +285,7 @@ def _run_fresh(agent_id: str | None = None) -> dict:
     batch = run_multi_agent_batch_eval(
         agents=[DEFAULT_COORDINATOR_AGENT], agent_id=agent_id or AGENT_ENGINE_ID
     )
-    _apply_standalone_judges(batch, agent_id=agent_id)
+    _apply_standalone_judges(batch, agent_id=agent_id, faithfulness=faithfulness)
     return batch
 
 
@@ -307,6 +322,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--label model=claude-sonnet-5 keeps a bake-off's snapshots separable)",
     )
     parser.add_argument(
+        "--no-faithfulness",
+        action="store_true",
+        help="with --run, skip the tool-faithfulness judge. Use this for a SCHEDULED "
+        "publish: republishing a healthy score would overwrite the deliberate RED "
+        "faithfulness point the demo relies on (and it is the priciest judge).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and print scores without writing to Cloud Monitoring",
@@ -314,7 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.run:
-        batch = _run_fresh(agent_id=args.agent_id)
+        batch = _run_fresh(agent_id=args.agent_id, faithfulness=not args.no_faithfulness)
     else:
         path = _resolve_latest() if args.latest else args.from_json
         if not path:
