@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.models.quota_retry import EMPTY_RESPONSE_PREFIX
 from src.router.tier_routing_llm import TierRoutingLlm
+
+
+async def _no_sleep(_seconds: float) -> None:
+    """Collapse the retry backoff so silent-turn tests stay fast."""
 
 
 class _FakeLlm:
@@ -286,3 +291,137 @@ async def test_a_healthy_tier_call_never_sleeps():
     assert out[0].text == "resp-from-lite-x"
     assert llm.calls == 1
     assert slept == []
+
+
+class TestLitellmPrewarm:
+    """litellm must load at construction, never inside a live request.
+
+    ADK imports litellm lazily (``lite_llm.py:61``, inside the call path), so a
+    router worker that has only served Gemini paid nothing for it until a Claude
+    tier arrived — and then paid ~140MB resident / ~334MB peak plus a multi-second
+    blocking import *inside the event loop of an in-flight request*. On the managed
+    runtime that worker was hard-killed: HTTP 200, one event, zero characters, no
+    traceback, and a truncated trace missing its enclosing ``invoke_agent`` span.
+    See docs/notes/router-empty-stream-retry.md.
+    """
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("claude-sonnet-4-6", True),
+            ("claude-opus-4-6", True),
+            ("vertex_ai/claude-sonnet-4-6", True),
+            ("gemini-2.5-flash", False),
+            ("gemini-2.5-flash-lite", False),
+            ("gemini-3.5-flash", False),
+            ("models/gemini-2.0-flash", False),
+        ],
+    )
+    def test_needs_litellm_mirrors_resolve_model_family_split(self, model_id, expected):
+        from src.router.tier_routing_llm import needs_litellm
+
+        assert needs_litellm(model_id) is expected
+
+    def test_gemini_only_tiers_never_import_litellm(self):
+        """A Gemini-only router keeps its ~168MB coordinator-parity footprint."""
+        calls = []
+        TierRoutingLlm(
+            ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+            default_model="gemini-2.5-flash-lite",
+            resolver=lambda m: _FakeLlm(m),
+            importer=lambda: calls.append("imported"),
+        )
+        assert calls == []
+
+    def test_claude_tier_imports_litellm_once_at_construction(self):
+        calls = []
+        TierRoutingLlm(
+            ["gemini-2.5-flash-lite", "claude-sonnet-4-6", "claude-opus-4-6"],
+            default_model="gemini-2.5-flash-lite",
+            resolver=lambda m: _FakeLlm(m),
+            importer=lambda: calls.append("imported"),
+        )
+        assert calls == ["imported"], "one import for the whole dispatcher, not one per tier"
+
+    def test_a_failed_import_does_not_break_construction(self):
+        """Warming is an optimization; a broken import must not take the router down."""
+
+        def _boom():
+            raise ImportError("no litellm here")
+
+        disp = TierRoutingLlm(
+            ["gemini-2.5-flash-lite", "claude-sonnet-4-6"],
+            default_model="gemini-2.5-flash-lite",
+            resolver=lambda m: _FakeLlm(m),
+            importer=_boom,
+        )
+        assert disp.model == "gemini-2.5-flash-lite"
+
+
+class TestDispatchLogging:
+    """A failing tier must leave a log line — it is the only debuggable surface.
+
+    ADK discards the exception the dispatcher re-raises, so without these the
+    router's Claude tiers failed silently: HTTP 200, zero characters, no log, and
+    a trace truncated before ``call_llm``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_exception_is_logged_with_the_tier_and_reraised(self, caplog):
+        class _Boom:
+            model = "vertex_ai/claude-sonnet-4-6"
+
+            async def generate_content_async(self, llm_request, stream=False):
+                raise RuntimeError("tier exploded")
+                yield  # pragma: no cover  (makes this an async generator)
+
+        disp = TierRoutingLlm(
+            ["claude-sonnet-4-6"],
+            default_model="claude-sonnet-4-6",
+            resolver=lambda m: _Boom(),
+            importer=lambda: None,
+        )
+        with caplog.at_level("ERROR"), pytest.raises(RuntimeError, match="tier exploded"):
+            await _collect(disp.generate_content_async(SimpleNamespace(model="claude-sonnet-4-6")))
+        assert "vertex_ai/claude-sonnet-4-6" in caplog.text
+        assert "tier exploded" in caplog.text, "the traceback must be logged, not just the tier"
+
+    @pytest.mark.asyncio
+    async def test_a_silent_tier_still_yields_the_labelled_empty_response(self):
+        """Silence alone can no longer produce a zero-character stream.
+
+        ``_select`` wraps every tier in :class:`RetryingLlm`, which retries a
+        silent turn and then emits an explicit "empty response" message. This is
+        load-bearing evidence about the deployed failure: a Claude turn that was
+        merely *silent* would have surfaced that label, so the router's observed
+        zero-character streams must come from an exception or a killed worker,
+        not from a model that returned nothing.
+        """
+
+        class _Silent:
+            model = "vertex_ai/claude-opus-4-6"
+
+            async def generate_content_async(self, llm_request, stream=False):
+                return
+                yield  # pragma: no cover
+
+        disp = TierRoutingLlm(
+            ["claude-opus-4-6"],
+            default_model="claude-opus-4-6",
+            resolver=lambda m: _Silent(),
+            importer=lambda: None,
+            retry_base_delay=0.0,
+            sleep=_no_sleep,
+        )
+        out = await _collect(disp.generate_content_async(SimpleNamespace(model="claude-opus-4-6")))
+        assert len(out) == 1
+        assert out[0].error_code == "EMPTY_RESPONSE"
+        assert EMPTY_RESPONSE_PREFIX in out[0].content.parts[0].text
+
+    @pytest.mark.asyncio
+    async def test_a_healthy_turn_logs_no_error(self, caplog):
+        disp, _ = _dispatcher(["lite-x"])
+        with caplog.at_level("ERROR"):
+            out = await _collect(disp.generate_content_async(SimpleNamespace(model="lite-x")))
+        assert len(out) == 1
+        assert caplog.text == ""
