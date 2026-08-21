@@ -160,6 +160,7 @@ def test_every_agent_config_declares_tools():
         for agent_id, cfg in info.agents.items():
             assert cfg.tools, f"{name}/{agent_id} declares no tools"
 
+
 def test_router_descriptor_is_direct_tools():
     """The router stopped delegating on 2026-08-20 — no sub_agents survive."""
     info = build_agent_info("router_agent")
@@ -195,10 +196,14 @@ DataFrame — no cloud:
 
 ```python
 def test_counts_items_with_tool_calls():
-    df = pd.DataFrame({"agent_data": [
-        _agent_data_with_tool("search_flights"),
-        _agent_data_text_only(),
-    ]})
+    df = pd.DataFrame(
+        {
+            "agent_data": [
+                _agent_data_with_tool("search_flights"),
+                _agent_data_text_only(),
+            ]
+        }
+    )
     assert _count_tool_call_items(df) == (1, 2)
 ```
 
@@ -229,6 +234,7 @@ count with `trajectory_eval.capture_trajectory`, then:
 def test_router_resolves_to_router_engine():
     assert _engine_for_agent("router_agent", None).endswith(ROUTER_ENGINE_ID)
     assert _engine_for_agent("coordinator_agent", None).endswith(AGENT_ENGINE_ID)
+
 
 def test_explicit_agent_id_overrides_the_map():
     assert _engine_for_agent("router_agent", "999").endswith("999")
