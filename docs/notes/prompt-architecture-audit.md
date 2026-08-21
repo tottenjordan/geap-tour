@@ -56,14 +56,23 @@ so the judge was told the agent lacked tools it holds. Now sourced against
 
 The card advertised five skills but not `get_user_expenses`, despite the
 coordinator's instruction having a dedicated "User Expense Retrieval" bullet. Added
-`expense_history`. The booking-management tools stay unadvertised **deliberately** —
-see the open item below.
+`expense_history`. The booking-management tools stay off the card deliberately even
+though item C now describes them in the coordinator prompt: an A2A skill is a
+published contract, so it should advertise only what an eval case exercises.
 
-## Found, NOT fixed — GEPA prompts are re-optimize-only
+## Also fixed — GEPA prompts, by owner decision
 
-`CLAUDE.md`: *"Agent instructions that say 'GEPA-optimized' were produced by the
-optimizer — edit these only through re-optimization, not manually."* These are real
-defects; hand-patching them would silently de-optimize a measured prompt.
+`CLAUDE.md` says GEPA-optimized instructions are re-optimize-only. The owner
+overrode that on 2026-08-21 for these three defects, so they were hand-edited
+**surgically** — matching the precedent already recorded in `coordinator_agent.py`,
+whose delegation lines were removed by hand on 2026-08-20. Every other sentence in
+both prompts remains verbatim optimizer output, and each file's header comment now
+records exactly what was changed and why.
+
+**Re-optimization will reintroduce defect A unless the sampler cases are corrected
+first** — GEPA is what produced it (the pre-GEPA `INSTRUCTION_BASELINE`, kept frozen
+for DOE uplift comparison, has the *correct* behaviour). Guard tests in
+`tests/test_standalone_agents.py::TestPromptsAgreeWithTheSystem` pin all three.
 
 ### A. `expense_agent` is instructed to fail its own eval case
 
@@ -82,7 +91,7 @@ That contradicts three things at once:
 | its own eval case | "Submit a $500 entertainment expense…" → reference `Status: pending_review`, `expected_signals` includes `pending_review`, `expected_tool` is `submit_expense` |
 
 So the prompt tells the agent to withhold the tool call its own test requires.
-**Fix path:** re-optimize with
+**Fixed** by rewriting step 2 to submit-and-flag. To re-derive properly, re-optimize with
 `uv run python -m src.optimize.run_optimize src/agents/expense_agent_opt src/optimize/expense_sampler_config.json`,
 after correcting the sampler cases so the optimizer targets submit-and-flag.
 
@@ -93,17 +102,18 @@ after correcting the sampler cases so the optimizer targets submit-and-flag.
 
 Vestigial — everything after it is "Direct Tool Usage (Your Primary Action)". Low
 harm, but it is the first line the model reads and it names a behaviour the agent
-cannot perform. Roll into the next re-optimization rather than hand-editing; the
-file's own comment says every other sentence is verbatim optimizer output.
+cannot perform. **Fixed:** the opening line now states the direct-tools topology.
 
 ### C. Three tools no prompt mentions
 
 `cancel_booking`, `get_booking_details` and `list_all_bookings` are held by the
 coordinator and the router (both take the whole booking toolset) but are described
 by **no** instruction. The model still sees their MCP declarations so it *can* call
-them, but nothing steers it to, and no eval case covers them. Either drive them from
-a re-optimized prompt with cases, or drop them from the served toolsets — carrying
-undescribed, untested tools is the state that let the inventory drift unnoticed.
+them, but nothing steered it to. **Fixed** by adding a "Booking Management" bullet to
+the coordinator instruction, pinned by a test asserting the instruction mentions
+every tool the servers expose. **Still open:** no eval case exercises them, so the
+new bullet is undertested — adding cases changes the coordinator's 49-case
+denominator and the `geap_tool_use` sample, so it belongs in its own change.
 
 ## Guard tests
 
@@ -118,3 +128,23 @@ undescribed, untested tools is the state that let the inventory drift unnoticed.
 
 `tests/test_tool_use_judge.py` previously asserted `"transfer_to_agent" in prompt` —
 it was actively **pinning the stale rubric in place**. Inverted.
+
+
+## Measured after the prompt edits
+
+Coordinator, 49 cases, probe `4380288848559603712`, redeployed in place:
+
+| | match | quality | halluc | instr | safety | tool_use |
+| --- | --- | --- | --- | --- | --- | --- |
+| before (post-#68) | 0.76 | 0.92 | 0.93 / 0.90 | 0.64 / 0.63 | 1.00 | 0.93 / 0.94 |
+| **after** | 0.73 | 0.94 | **0.94** | 0.64 | 0.95 | 0.91 |
+
+Every metric inside the existing band; all six pass. The edits are
+neutral-to-positive — the point was correctness, not a score gain, and nothing
+regressed. The run also confirms the inventory fix is live: `Declared 10 tools`.
+
+**`expense_agent`'s fix is unmeasured.** There is no deployed travel/expense engine
+(`.env` has no `EXPENSE_ENGINE_ID`), and `_engine_for_agent` sends its cases to the
+coordinator engine, which would test the coordinator's prompt instead. The fix is
+justified by contradiction — server, coordinator prompt, and its own eval case all
+disagreed with it — not by a live score.

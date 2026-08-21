@@ -29,10 +29,11 @@ COORDINATOR_DESCRIPTION = (
 # can assert on the exact contract without constructing the card.
 #
 # Deliberately capability-level, not one-per-tool: `booking` covers book_flight
-# and book_hotel. The booking server also exposes cancel_booking /
-# get_booking_details / list_all_bookings, which the coordinator holds but its
-# instruction never describes — they are omitted here too rather than advertised
-# as contract when no prompt drives them. See docs/notes/prompt-architecture-audit.md.
+# and book_hotel. cancel_booking / get_booking_details / list_all_bookings are held
+# by the coordinator and (since 2026-08-21) described by its instruction, but they
+# stay off the card until an eval case exercises them — an A2A skill is a published
+# contract, so advertise only what is tested. See
+# docs/notes/prompt-architecture-audit.md.
 _SKILLS: tuple[dict, ...] = (
     {
         "id": "flight_search",
