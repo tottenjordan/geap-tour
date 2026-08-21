@@ -187,6 +187,41 @@ class TestAgentConfigsDeclareTools:
                         )
 
 
+class TestPerAgentEngineRouting:
+    """The router and the coordinator are separate deployments.
+
+    ``run_multi_agent_batch_eval`` resolved ONE engine for the whole run, so a
+    bare invocation (and ``run_all_evals``, which passes no ``--agent-id``) scored
+    ROUTER_EVAL_CASES against ``AGENT_ENGINE_ID`` — a coordinator engine — with no
+    indication it had done so.
+    """
+
+    def test_router_defaults_to_the_router_engine(self):
+        from src.config import ROUTER_ENGINE_ID
+        from src.eval.multi_agent_batch_eval import _engine_for_agent
+
+        assert _engine_for_agent("router_agent", None).endswith(f"/{ROUTER_ENGINE_ID}")
+
+    def test_coordinator_defaults_to_the_coordinator_engine(self):
+        from src.config import AGENT_ENGINE_ID
+        from src.eval.multi_agent_batch_eval import _engine_for_agent
+
+        assert _engine_for_agent("coordinator_agent", None).endswith(f"/{AGENT_ENGINE_ID}")
+
+    def test_explicit_agent_id_overrides_the_map(self):
+        """The bake-off pins one engine for every agent — that must keep working."""
+        from src.eval.multi_agent_batch_eval import _engine_for_agent
+
+        for agent in ("router_agent", "coordinator_agent", "travel_agent"):
+            assert _engine_for_agent(agent, "999").endswith("/999")
+
+    def test_full_resource_names_pass_through(self):
+        from src.eval.multi_agent_batch_eval import _engine_for_agent
+
+        arn = "projects/p/locations/us-central1/reasoningEngines/123"
+        assert _engine_for_agent("router_agent", arn) == arn
+
+
 class TestToolCallPreflight:
     """``tool_use_quality_v1`` needs at least one tool event in the whole run.
 

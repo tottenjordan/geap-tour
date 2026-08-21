@@ -27,6 +27,7 @@ from src.config import (
     GCP_PROJECT_ID,
     GCP_REGION,
     GCP_STAGING_BUCKET,
+    ROUTER_ENGINE_ID,
 )
 from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
 from src.eval.agent_eval_configs import (
@@ -120,6 +121,27 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     if agent_id.startswith("projects/"):
         return agent_id
     return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
+
+
+# Which deployed engine serves each agent's eval cases, when no --agent-id is given.
+# The router is its own deployment; everything else lives on the coordinator engine
+# (travel/expense have their own engines only in a full deploy_agents all run, and
+# AGENT_ENGINE_ID stays the safe default for them). Resolved per agent because a
+# single run can span agents on different engines — scoring ROUTER_EVAL_CASES
+# against a coordinator used to happen silently.
+_DEFAULT_ENGINE_BY_AGENT = {"router_agent": ROUTER_ENGINE_ID}
+
+
+def _engine_for_agent(agent_name: str, agent_id: str | None) -> str:
+    """Resource name of the engine to evaluate ``agent_name`` against.
+
+    An explicit ``agent_id`` wins for every agent — the bake-off deliberately
+    pins one engine for the whole run. Otherwise each agent falls back to its own
+    default deployment.
+    """
+    if agent_id:
+        return _resolve_agent_resource_name(agent_id)
+    return _resolve_agent_resource_name(_DEFAULT_ENGINE_BY_AGENT.get(agent_name, AGENT_ENGINE_ID))
 
 
 def _annotate_low_confidence(metric_results: dict, n_items: int) -> dict:
@@ -333,7 +355,7 @@ def _run_single_agent_eval(
 
 def run_multi_agent_batch_eval(
     agents: list[str] | None = None,
-    agent_id: str = AGENT_ENGINE_ID,
+    agent_id: str | None = None,
     score_threshold: float = 3.0,
     output_path: str | None = None,
     limit: int | None = None,
@@ -343,15 +365,19 @@ def run_multi_agent_batch_eval(
         agents = ALL_AGENTS
 
     run_id = f"multi_agent_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    agent_resource_name = _resolve_agent_resource_name(agent_id)
+    # Resolved per agent, not once: the router is its own deployment, so a run
+    # spanning agents can span engines. An explicit --agent-id still pins all of
+    # them (the bake-off relies on that).
+    engines = {name: _engine_for_agent(name, agent_id) for name in agents}
 
     print(f"{'=' * 60}")
     print("MULTI-AGENT BATCH EVALUATION")
     print(f"{'=' * 60}")
     print(f"  Run ID:    {run_id}")
-    print(f"  Agent:     {agent_resource_name}")
-    print(f"  Agents:    {', '.join(agents)}")
     print(f"  Threshold: {score_threshold}")
+    print(f"  Agents:    {len(agents)}")
+    for name in agents:
+        print(f"    {name:<20} -> {engines[name].split('/')[-1]}")
 
     # Initialize
     vertexai.init(
@@ -368,7 +394,7 @@ def run_multi_agent_batch_eval(
             result = _run_single_agent_eval(
                 client=client,
                 agent_name=agent_name,
-                agent_resource_name=agent_resource_name,
+                agent_resource_name=engines[agent_name],
                 score_threshold=score_threshold,
                 limit=limit,
             )
@@ -389,7 +415,11 @@ def run_multi_agent_batch_eval(
     results = {
         "run_id": run_id,
         "timestamp": datetime.now().isoformat(),
-        "agent_engine": agent_resource_name,
+        # Kept for back-compat with readers that expect one engine per run
+        # (harvest / publish_offline_eval); ``agent_engines`` is the honest map
+        # now that a run can span deployments.
+        "agent_engine": next(iter(engines.values()), None),
+        "agent_engines": engines,
         "score_threshold": score_threshold,
         "total_agents": len(agents),
         "agents_passed": agents_passed,
@@ -449,8 +479,11 @@ def main():
     )
     parser.add_argument(
         "--agent-id",
-        default=AGENT_ENGINE_ID,
-        help=f"Agent Engine ID. Default: {AGENT_ENGINE_ID}",
+        default=None,
+        help=(
+            "Pin every agent to this Agent Engine ID. Default: per agent — "
+            f"router_agent -> {ROUTER_ENGINE_ID}, others -> {AGENT_ENGINE_ID}."
+        ),
     )
     parser.add_argument(
         "--threshold",
