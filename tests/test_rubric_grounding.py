@@ -156,13 +156,17 @@ class TestCalibrationGoldIsGroundedInRealPolicy:
         assert "CORRECTED" in gold["provenance"]
         assert "mock_db" in gold["provenance"], "must name the ground-truth source"
 
-    def test_every_case_still_has_a_paired_good_and_bad_response(self, gold):
-        """The set's discriminative power comes from pairs: the same prompt with a
-        good and a degraded response. A correction must not collapse a pair."""
+    def test_every_contrast_case_still_has_a_paired_good_and_bad_response(self, gold):
+        """The contrast band's discriminative power comes from pairs: the same
+        prompt with a good and a degraded response. A correction must not collapse
+        a pair. (The `hard` band is deliberately exempt — its whole point is
+        responses that are neither clearly good nor clearly bad.)"""
         from collections import defaultdict
 
         by_prompt = defaultdict(list)
         for case in gold["cases"]:
+            if case["difficulty"] != "contrast":
+                continue
             by_prompt[case["prompt"]].append(case["human_score"])
         for prompt, scores in by_prompt.items():
             assert len(scores) >= 2, prompt
