@@ -19,7 +19,7 @@ A prominent yellow callout box: "Each engine gets its OWN identity. Recreating a
 
 Bottom strip, a gray dashed bordered region labeled "Agent Gateway - NOT ENABLED in this project":
 - Two faded gray boxes "Ingress Gateway (client-to-agent)" and "Egress Gateway (agent-to-anywhere)"
-- Small text: "agentGateways API returns 404; early access not granted"
+- Small text: Private Preview - the agentGateways API returns 404 in this project, early access not granted
 
 Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
 Title at top: "Agent Identity and Access Governance"

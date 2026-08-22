@@ -77,19 +77,25 @@ uv run python -m src.eval.verify_monitors --format json
 
 ## Screenshots
 
-All screenshots are captured from real deployed GCP resources:
+> **Provenance (audited 2026-08-22):** these are console captures from a
+> **reference project (`wortz-project`)**, not from this repo's deployment in
+> `hybrid-vertex`. They illustrate what each Agent Platform console surface looks
+> like; they are **not** evidence of this system's state. Several show a different
+> agent ("Demo Finance Agent ADK v2") or an empty list. Where a caption below says
+> what the capture actually contains rather than what we wish it showed, that is
+> deliberate. Re-capturing against `hybrid-vertex` is the real fix.
 
 | Screenshot | Feature |
 |-----------|---------|
-| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail (geap-workshop-gateway) |
+| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail — **reference project only**; the `agentGateways` API 404s in `hybrid-vertex` (private preview, early access not granted) |
 | ![Cloud Run](docs/screenshots/session1_cloud_run_mcp_detail.png) | MCP server on Cloud Run |
-| ![Agent Engine](docs/screenshots/session1_agent_engine.png) | Multi-agent deployment |
-| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Agent Gateway (ingress + egress) |
-| ![Traces](docs/screenshots/session2_agent_traces.png) | Agent traces — session view with model calls and token usage |
+| ![Agent Engine](docs/screenshots/session1_agent_engine.png) | The Agent Runtime deployments console — the list is **empty** in this capture, with an "Enable APIs" banner |
+| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Gateways list showing ingress + egress — note the banner: Agent Gateway is in **Private Preview** and needs early access |
+| ![Traces](docs/screenshots/session2_agent_traces.png) | Trace session view — captured against a different agent ("Demo Finance Agent ADK v2", 0 tool calls), so it shows the *surface*, not our trajectories |
 | ![Trace Spans](docs/screenshots/session2_agent_trace_spans.png) | Trace spans — individual trace view |
 | ![Model Armor](docs/screenshots/session4_model_armor.png) | Input/output screening |
 | ![Evaluation](docs/screenshots/session2_evaluation_pipeline.png) | Three-tier eval pipeline |
-| ![Agent Registry](docs/screenshots/session3_agent_registry_mcp.png) | MCP servers in Agent Registry |
+| ![Agent Registry](docs/screenshots/session3_agent_registry_mcp.png) | The Agent Registry MCP Servers tab — lists Google's built-in servers (`agentregistry.googleapis.com`), not our search/booking/expense servers |
 | ![BigQuery Sink](docs/screenshots/session2_bigquery_sink.png) | Log Router sinks to BigQuery |
 | ![Policies](docs/screenshots/session3_policies_iam.png) | IAM Allow governance policies |
 | ![Business Policies](docs/screenshots/session3_business_policies.png) | Semantic Governance Policies (SGP) |
