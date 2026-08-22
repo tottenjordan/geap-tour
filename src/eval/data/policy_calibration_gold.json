@@ -1,233 +1,501 @@
 {
   "dataset": "policy_compliance_calibration",
-  "version": "2",
+  "version": "3",
   "metric": "policy_compliance",
   "scale": "human_score is a 1-5 rubric (5 = fully policy-compliant + correct; 1 = wrong / hallucinated / non-compliant)",
-  "provenance": "AUTHOR-CURATED gold labels (single annotator), NOT independent human annotation. A directional calibration probe for judge-vs-human drift, not a validated inter-annotator gold standard. v2 (2026-08-22): CORRECTED. v1's reference responses cited policy that the system does not implement \u2014 a $200 entertainment limit (real: $150), city-specific lodging caps for New York/Austin (real: flat $400), a '$500 domestic flight approval' tier (real: flat $200 transport), a 'gifts' category (does not exist), per-person meal scaling (real: flat $75), and travel-class rules (none exist). Two cases also contradicted the coordinator's specification by treating refusal-to-submit as correct, when an over-limit expense must still be submitted and flagged for review. Calibrating the judge against v1 would have rewarded hallucinated policy. Ground truth is src/mcp_servers/expense/mock_db.py:POLICY_LIMITS. See docs/notes/evaluation-robustness-roadmap.md P1.6.",
+  "provenance": "AUTHOR-CURATED gold labels (single annotator), NOT independent human annotation. A directional calibration probe for judge-vs-human drift, not a validated inter-annotator gold standard. v2 (2026-08-22): CORRECTED. v1's reference responses cited policy that the system does not implement \u2014 a $200 entertainment limit (real: $150), city-specific lodging caps for New York/Austin (real: flat $400), a '$500 domestic flight approval' tier (real: flat $200 transport), a 'gifts' category (does not exist), per-person meal scaling (real: flat $75), and travel-class rules (none exist). Two cases also contradicted the coordinator's specification by treating refusal-to-submit as correct, when an over-limit expense must still be submitted and flagged for review. Calibrating the judge against v1 would have rewarded hallucinated policy. Ground truth is src/mcp_servers/expense/mock_db.py:POLICY_LIMITS. v3 (2026-08-22): per-annotator schema (`annotations`) with `human_score` derived as the median, plus 20 deliberately AMBIGUOUS cases. v2 was effectively binary (16 fives, 15 at or below 2, ONE midscale), so a judge separated it trivially and agreement pinned at 100% \u2014 a gate that can only move down. The hard cases target the 3-4 band: right limit with a subtly wrong verdict, correct verdict omitting the submitted-and-flagged consequence, multi-category requests, exactly-at-the-limit amounts, hedged phrasing, and verbose-vs-terse pairs of the SAME correct answer (which must score alike). They are unscored here and get blind annotations from a1 and a2 via `python -m src.eval.annotate`. NOTE a1 and a2 are the same operator's first and second pass, so a2 is independent of a1's labels but not of a1's framing. See docs/notes/evaluation-robustness-roadmap.md P1.6.",
   "cases": [
     {
       "prompt": "Check if a $50 meal expense is within policy",
       "response": "A $50 meal is within the $75 per-person meal limit, so it is compliant and can be submitted without extra approval.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: under the meal cap, states the limit, no extra approval needed."
+      "rationale": "Correct: under the meal cap, states the limit, no extra approval needed.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Check policy for a $500 entertainment expense",
       "response": "A $500 entertainment expense exceeds the $150 entertainment limit. It can still be submitted and will be flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: flags over-limit and names the approval requirement."
+      "rationale": "Correct: flags over-limit and names the approval requirement.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Check if a $50 meal expense is within policy",
       "response": "Sure, $50 is fine.",
       "human_score": 3,
       "metric": "policy_compliance",
-      "rationale": "Right verdict but no policy reasoning or limit cited."
+      "rationale": "Right verdict but no policy reasoning or limit cited.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 3
+      }
     },
     {
       "prompt": "Check policy for a $500 entertainment expense",
       "response": "Yes, $500 is totally fine, submit it whenever.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: approves an over-limit expense with no approval."
+      "rationale": "Wrong: approves an over-limit expense with no approval.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Can I expense a $90 dinner for myself?",
       "response": "A $90 meal is over the $75 meal limit. It can still be submitted and will be flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct over-limit handling with the specific cap."
+      "rationale": "Correct over-limit handling with the specific cap.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Can I expense a $90 dinner for myself?",
       "response": "The meal limit is $150, so $90 is fine.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Hallucinated limit ($150); wrong policy fact."
+      "rationale": "Hallucinated limit ($150); wrong policy fact.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Submit a $45 meals expense for lunch meeting, user ID EMP001",
       "response": "Submitted a $45 meals expense for EMP001. It is within the $75 meal limit; confirmation ID EXP-4821.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Compliant submission, within limit, confirms action."
+      "rationale": "Compliant submission, within limit, confirms action.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Submit a $45 meals expense for lunch meeting, user ID EMP001",
       "response": "I can't help with expenses.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Refuses a valid, in-policy request."
+      "rationale": "Refuses a valid, in-policy request.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Is a $300 hotel night in New York reimbursable?",
       "response": "The lodging limit is $400 per night, so a $300 room is within policy and reimbursable.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: within the city lodging cap."
+      "rationale": "Correct: within the city lodging cap.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Is a $300 hotel night in New York reimbursable?",
       "response": "No, all hotels over $100 are denied.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: fabricated $100 cap, denies a compliant expense."
+      "rationale": "Wrong: fabricated $100 cap, denies a compliant expense.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "I spent $600 on a flight to a client site, is that okay?",
       "response": "The transport limit is $200, so a $600 flight is over the limit. It can still be submitted and will be flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: over threshold, states approval path."
+      "rationale": "Correct: over threshold, states approval path.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "I spent $600 on a flight to a client site, is that okay?",
       "response": "Flights are never reimbursable.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: flights are reimbursable under policy."
+      "rationale": "Wrong: flights are reimbursable under policy.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Expense a $20 taxi from the airport",
       "response": "A $20 airport taxi is a normal ground-transport expense and is within policy.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct, routine in-policy expense."
+      "rationale": "Correct, routine in-policy expense.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Expense a $20 taxi from the airport",
       "response": "Taxis require CFO sign-off for any amount.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Overly strict / invented approval barrier for a trivial expense."
+      "rationale": "Overly strict / invented approval barrier for a trivial expense.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
     },
     {
       "prompt": "Can I expense a $250 gift for a client?",
       "response": "There is no gifts category in the expense policy \u2014 the covered categories are meals, transport, lodging, supplies and entertainment. A $250 client gift isn't covered by any of them, so it can't be checked against a limit.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: over gift limit, rejected."
+      "rationale": "Correct: over gift limit, rejected.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Can I expense a $250 gift for a client?",
       "response": "Gifts are always fine, go ahead.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: ignores gift limit."
+      "rationale": "Wrong: ignores gift limit.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Check policy for a $75 meal",
       "response": "A $75 meal is exactly at the $75 per-person meal cap, so it is within policy.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct boundary handling."
+      "rationale": "Correct boundary handling.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Check policy for a $75 meal",
       "response": "$75 is over the limit, denied.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Off-by-one at the boundary; treats at-limit as over."
+      "rationale": "Off-by-one at the boundary; treats at-limit as over.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
     },
     {
       "prompt": "I want to expense a $500 entertainment dinner with pre-approval from my manager",
       "response": "A $500 entertainment expense exceeds the $150 entertainment limit. Manager pre-approval isn't part of this policy, but the expense can still be submitted and will be flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: over-limit but approved path handled."
+      "rationale": "Correct: over-limit but approved path handled.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "I want to expense a $500 entertainment dinner with pre-approval from my manager",
       "response": "Denied, entertainment is capped at $200 no matter what.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Ignores the stated pre-approval exception."
+      "rationale": "Ignores the stated pre-approval exception.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Can I submit a personal Netflix subscription as an expense?",
       "response": "Personal subscriptions like Netflix are not business expenses and are not reimbursable under policy.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: personal expense rejected."
+      "rationale": "Correct: personal expense rejected.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Can I submit a personal Netflix subscription as an expense?",
       "response": "Sure, add it to your next report.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: approves a personal, non-reimbursable expense."
+      "rationale": "Wrong: approves a personal, non-reimbursable expense.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Is a $130 dinner for me and a client within policy?",
       "response": "The meal limit is $75 per expense and does not scale with headcount, so a $130 dinner is over the limit. It can still be submitted and will be flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct per-head reasoning for a shared meal."
+      "rationale": "Correct per-head reasoning for a shared meal.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Is a $130 dinner for me and a client within policy?",
       "response": "Any dinner over $75 is denied.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Ignores per-person scaling for a legitimate two-person meal."
+      "rationale": "Ignores per-person scaling for a legitimate two-person meal.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
     },
     {
       "prompt": "What's the reimbursement for a $40 lunch?",
       "response": "A $40 lunch is within the meal limit and fully reimbursable.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct and clear."
+      "rationale": "Correct and clear.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "What's the reimbursement for a $40 lunch?",
       "response": "I'm not sure, maybe check with someone.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Unhelpful non-answer for a clear in-policy case."
+      "rationale": "Unhelpful non-answer for a clear in-policy case.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
     },
     {
       "prompt": "Can I expense first-class airfare?",
       "response": "The policy sets limits by category and amount, not by travel class. A first-class fare still has to fit the $200 transport limit; above that it is submitted and flagged for review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct cabin policy with the long-haul nuance."
+      "rationale": "Correct cabin policy with the long-haul nuance.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Can I expense first-class airfare?",
       "response": "Yes, first class is always covered for employees.",
       "human_score": 1,
       "metric": "policy_compliance",
-      "rationale": "Wrong: first class is not reimbursable."
+      "rationale": "Wrong: first class is not reimbursable.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 1
+      }
     },
     {
       "prompt": "Is a $110 hotel in Austin okay to expense?",
       "response": "The lodging limit is $400 per night, so a $110 room is within policy.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: within city cap."
+      "rationale": "Correct: within city cap.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Is a $110 hotel in Austin okay to expense?",
       "response": "That depends on many factors I can't determine.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Evasive; a clearly in-policy amount deserves a verdict."
+      "rationale": "Evasive; a clearly in-policy amount deserves a verdict.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
     },
     {
       "prompt": "Submit a $500 entertainment expense with no approval",
       "response": "Submitted. The $500 entertainment expense exceeds the $150 entertainment limit, so it has been flagged for manager review.",
       "human_score": 5,
       "metric": "policy_compliance",
-      "rationale": "Correct: blocks non-compliant submission and explains remedy."
+      "rationale": "Correct: blocks non-compliant submission and explains remedy.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 5
+      }
     },
     {
       "prompt": "Submit a $500 entertainment expense with no approval",
       "response": "Done, submitted your $500 entertainment expense.",
       "human_score": 2,
       "metric": "policy_compliance",
-      "rationale": "Wrong: submits a non-compliant expense."
+      "rationale": "Wrong: submits a non-compliant expense.",
+      "difficulty": "contrast",
+      "annotations": {
+        "a1": 2
+      }
+    },
+    {
+      "prompt": "Is a $210 transport expense within policy?",
+      "response": "The transport limit is $200, so $210 is within policy.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Submit a $250 transport expense for EMP001",
+      "response": "That exceeds the $200 transport limit.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Submit a $60 lunch and a $220 airport transfer for EMP001",
+      "response": "Submitted both. The $60 meal is within the $75 limit. The $220 transfer exceeds the $200 transport limit and has been flagged for manager review.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Submit a $60 lunch and a $220 airport transfer for EMP001",
+      "response": "Both submitted. The meal is fine; the transfer is a bit high.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $200 transport expense within policy?",
+      "response": "A $200 transport expense is exactly at the $200 limit, so it is within policy.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $200 transport expense within policy?",
+      "response": "$200 hits the transport limit, so it's over and will be flagged.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Can I expense a $60 team lunch?",
+      "response": "I think a $60 meal is probably fine, the limit is around $75 I believe.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Submit a $180 entertainment expense for EMP001",
+      "response": "A $180 entertainment expense exceeds the $150 limit, so I won't submit it.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $50 meal within policy?",
+      "response": "Could you tell me which category this falls under and who it's for?",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $90 meal expense within policy?",
+      "response": "A $90 expense is within the $100 supplies limit, so it's fine.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Submit a $500 supplies expense for EMP001",
+      "response": "Submitted your $500 supplies expense. The supplies limit is $100.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $120 lodging expense within policy?",
+      "response": "Within policy.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $120 lodging expense within policy?",
+      "response": "Yes \u2014 the lodging limit is $400 per night, and a $120 expense is comfortably under it, so it is within policy and can be submitted normally.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Can I expense a $300 entertainment dinner?",
+      "response": "The entertainment limit is $150.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $40 meal within policy?",
+      "response": "A $40 meal is within the $75 limit, though repeated claims may be audited.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "What is the meal limit?",
+      "response": "I'd need more details about your specific expense to say.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "What is the meal limit?",
+      "response": "The meal limit is $75 per expense.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Is a $500 lodging expense within policy?",
+      "response": "A $500 lodging expense exceeds the $400 limit and will be rejected.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Are a $80 meal and a $90 supplies expense within policy?",
+      "response": "The $80 meal exceeds the $75 meal limit; the $90 supplies expense is within the $100 supplies limit.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
+    },
+    {
+      "prompt": "Are a $80 meal and a $90 supplies expense within policy?",
+      "response": "Both are within their limits.",
+      "metric": "policy_compliance",
+      "difficulty": "hard",
+      "annotations": {}
     }
   ]
 }

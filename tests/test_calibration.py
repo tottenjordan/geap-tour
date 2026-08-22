@@ -102,14 +102,33 @@ class TestGoldSet:
         for case in gold:
             assert case["prompt"]
             assert case["response"]
-            assert 1 <= case["human_score"] <= 5
             assert case["metric"] == "policy_compliance"
+            assert case["difficulty"] in {"contrast", "hard"}
+            # `annotations` is the source of truth; a case may legitimately be
+            # unscored while it waits for a blind annotation pass.
+            for score in (case.get("annotations") or {}).values():
+                assert 1 <= score <= 5
 
     def test_gold_spans_low_and_high_scores(self) -> None:
         # A calibration set that is all-good or all-bad can't detect bias.
-        scores = {c["human_score"] for c in cal.load_gold_set()}
+        scores = {cal.consensus_score(c) for c in cal.scored_cases(cal.load_gold_set())}
         assert min(scores) <= 2
         assert max(scores) >= 4
+
+    def test_gold_carries_hard_cases_for_sensitivity(self) -> None:
+        """v2 was effectively binary — 16 fives, 15 at or below 2, ONE midscale — so
+        a judge separated it trivially and agreement pinned at 100%, a gate that
+        could only move down. The hard band is what restores sensitivity."""
+        gold = cal.load_gold_set()
+        hard = [c for c in gold if c["difficulty"] == "hard"]
+        assert len(hard) >= 15
+
+    def test_verbose_and_terse_forms_of_one_answer_are_both_present(self) -> None:
+        """A deliberate probe: the same correct verdict stated tersely and at
+        length must score alike. `geap_tool_use` was caught grading exactly this
+        difference as if it were quality."""
+        prompts = [c["prompt"] for c in cal.load_gold_set() if c["difficulty"] == "hard"]
+        assert any(prompts.count(p) >= 2 for p in set(prompts))
 
 
 def _parse_1_5(text: str) -> float | None:

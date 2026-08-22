@@ -196,6 +196,44 @@ alert floors (`quality_alerts.py:112-152`).
    Cheap generalisation: an eval reference standard is code and rots like code.
    This one was never validated against the system it grades.
 
+   **2026-08-22 (second pass) — 100% agreement was the next problem.** Fixing the
+   reference took the gate to 100% within tolerance, which sounds like success and
+   is closer to a dead instrument. Two linked reasons:
+
+   * **No human ceiling.** Judge-vs-human agreement means nothing on its own. If
+     two careful annotators agree α=0.85 with *each other*, a judge at 0.84 is at
+     human level; at 0.99 it has fitted one annotator's idiosyncrasies. We could
+     not tell which world we were in.
+   * **The cases were binary.** Measured distribution: **16 fives, 15 at or below
+     2, exactly ONE midscale**. Good responses averaged 121 characters, bad ones
+     38 — the bad ones are terse dismissals ("Sure, $50 is fine"). A judge, a
+     human, or a length heuristic separates those trivially, so the gate sat
+     pinned at its ceiling and could only ever move *down*.
+
+   Those compound: a second annotator on binary cases would also agree ~100% and
+   teach us nothing. So gold **v3** does both — a per-annotator `annotations`
+   schema (`human_score` becomes the derived median) plus **20 deliberately
+   ambiguous cases** targeting the missing 3-4 band: right limit with a subtly
+   wrong verdict, correct verdict omitting the submitted-and-flagged consequence,
+   multi-category requests, exactly-at-the-limit amounts, hedged phrasing, and
+   verbose-vs-terse pairs of the *same* correct answer (which must score alike —
+   a direct probe for the style-dependence found in `geap_tool_use`).
+
+   `calibration.annotator_reliability` reports the human α by reusing
+   `judge_panel.krippendorff_alpha_interval` **unchanged**, so the human α and the
+   judge-panel α are the same statistic and directly comparable.
+   `ceiling_verdict` then phrases judge agreement as at / below / above that
+   ceiling — and treats *above* as suspicious rather than good.
+   `python -m src.eval.annotate` collects the second pass: blind (no existing
+   score is ever rendered), grounded in the real `POLICY_LIMITS` table, resumable,
+   and non-destructive until an explicit `--merge`.
+
+   **Open:** the 20 hard cases are unscored, so α is `nan` and the gate currently
+   runs on the 32 contrast cases only. `DEFAULT_MIN_WITHIN_TOLERANCE = 0.7` must be
+   re-derived from the measured ceiling once they are annotated — the headline
+   number *will* drop when they land, by design. And a1/a2 are the same operator's
+   two passes: independent of each other's labels, not of each other's framing.
+
 ### Rubric audit (2026-08-22)
 
 All five judge rubrics reviewed against the system they grade. Two had defects;

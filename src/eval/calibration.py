@@ -26,9 +26,20 @@ The scoring core is pure Python and unit-tested with fake judges (no GCP). A
 ``main()`` CLI prints the report and exits non-zero when calibration falls below
 a threshold, so it doubles as a drift alarm.
 
-**Honest caveat:** the shipped gold set (``data/policy_calibration_gold.json``)
-is **author-curated single-annotator** labels, not independent multi-annotator
-human annotation — a directional drift probe, not a validated gold standard.
+**Judge agreement is only interpretable against a HUMAN ceiling.** "96% within
+tolerance" says nothing on its own: if two careful annotators only agree with
+*each other* 85% of the time, a judge at 84% is performing at human level, and a
+judge at 96% is suspiciously well-fitted to one annotator's idiosyncrasies. So
+the gold cases carry per-annotator scores in ``annotations`` (``human_score`` is
+the derived median), and :func:`annotator_reliability` reports Krippendorff's
+alpha among the humans — reusing the exact function the judge panel uses, so the
+two alphas are directly comparable. Collect a second pass with
+``python -m src.eval.annotate``.
+
+**Honest caveat:** the gold set (``data/policy_calibration_gold.json``) is
+author-curated, and its two annotation passes are the same operator's — so a2 is
+independent of a1's *labels* but not of a1's *framing*. A probe with a known
+ceiling, not a validated benchmark.
 """
 
 from __future__ import annotations
@@ -42,8 +53,21 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 # Default: within one rubric point (of 5) counts as agreement on the 0-1 axis.
+# Provisional: a round number, not a derived one. The distribution of human-human
+# deltas (once a second annotator exists) is what should set it.
 DEFAULT_TOLERANCE = 0.2
-# Default judge-vs-human agreement floor for the CLI PASS/FAIL (fraction within tol).
+
+# Judge-vs-human agreement floor for the CLI PASS/FAIL (fraction within tolerance).
+#
+# **Provisional, and it must be re-derived.** 0.7 was chosen against a gold set
+# that was effectively binary — stark good/bad contrasts a judge separates
+# trivially, which is why agreement sat at 100% and the gate could only ever move
+# down. The 20 ambiguous `difficulty: "hard"` cases added in gold v3 will pull the
+# headline number down *by design* once they are annotated. At that point set this
+# from the measured human ceiling (see `annotator_reliability`) rather than from a
+# round number: a floor above what two humans manage on the same cases is
+# unachievable, and one far below it never fires. Until those cases are scored the
+# gate runs on the 32 contrast cases only, where 0.7 remains valid.
 DEFAULT_MIN_WITHIN_TOLERANCE = 0.7
 
 GOLD_SET_PATH = Path(__file__).parent / "data" / "policy_calibration_gold.json"
@@ -112,9 +136,95 @@ def load_gold_set(path: Path = GOLD_SET_PATH) -> list[dict]:
     return list(data["cases"])
 
 
+def annotator_scores(case: dict) -> list[float]:
+    """The per-annotator 1-5 scores for a case, in a stable annotator order.
+
+    Falls back to a single-element list from the legacy ``human_score`` so a case
+    written before the multi-annotator schema still works.
+    """
+    annotations = case.get("annotations")
+    if annotations:
+        return [float(annotations[k]) for k in sorted(annotations)]
+    return [float(case["human_score"])] if case.get("human_score") is not None else []
+
+
+def consensus_score(case: dict) -> float | None:
+    """The case's agreed 1-5 score: the median across annotators.
+
+    Median, not mean, so one outlying annotator cannot drag the reference — the
+    same reason :mod:`src.eval.judge_panel` aggregates its panel by median.
+    Returns ``None`` for an unscored case (a hard case awaiting annotation), which
+    callers must filter rather than treat as zero.
+    """
+    from src.eval.judge_panel import median_score
+
+    scores = annotator_scores(case)
+    return median_score(scores) if scores else None
+
+
+def scored_cases(cases: Sequence[dict]) -> list[dict]:
+    """Only the cases that have at least one annotation — the rest aren't gradable."""
+    return [c for c in cases if consensus_score(c) is not None]
+
+
+def annotator_reliability(cases: Sequence[dict]) -> dict:
+    """Human-vs-human agreement: Krippendorff's alpha over the annotator columns.
+
+    This is the **ceiling** for judge agreement. Reuses
+    :func:`src.eval.judge_panel.krippendorff_alpha_interval` unchanged — it takes
+    one row of ratings per unit and does not care whether the raters are models or
+    people, which makes the human alpha and the judge-panel alpha comparable
+    numbers rather than two similar-sounding ones.
+
+    Only cases rated by ≥2 annotators are pairable, so ``alpha`` is ``nan`` until
+    a second pass exists. Scores are compared on the raw 1-5 scale.
+    """
+    from src.eval.judge_panel import krippendorff_alpha_interval, score_spread
+
+    rows = [annotator_scores(c) for c in cases]
+    pairable = [r for r in rows if len(r) >= 2]
+    names: set[str] = set()
+    for case in cases:
+        names.update(case.get("annotations") or {})
+    spreads = [score_spread(r) for r in pairable]
+    return {
+        "alpha": krippendorff_alpha_interval(rows),
+        "mean_spread": (sum(spreads) / len(spreads)) if spreads else float("nan"),
+        "n_annotators": len(names),
+        "n_pairable": len(pairable),
+        "annotators": sorted(names),
+    }
+
+
+def annotator_disagreements(cases: Sequence[dict], min_delta: float = 1.0) -> list[dict]:
+    """Cases where annotators differ by ``min_delta`` rubric points or more.
+
+    These are where "correct" is genuinely contested. They deserve re-wording or
+    exclusion rather than silently penalising the judge for picking a side.
+    """
+    from src.eval.judge_panel import score_spread
+
+    out = []
+    for case in cases:
+        scores = annotator_scores(case)
+        if len(scores) >= 2 and score_spread(scores) >= min_delta:
+            out.append(
+                {
+                    "prompt": case["prompt"],
+                    "response": case["response"],
+                    "scores": dict(case.get("annotations") or {}),
+                    "spread": score_spread(scores),
+                }
+            )
+    return sorted(out, key=lambda c: -c["spread"])
+
+
 def _human_axis(case: dict) -> float:
-    """Normalize a gold case's 1-5 ``human_score`` to the 0-1 judge axis."""
-    return float(case["human_score"]) / HUMAN_SCALE
+    """Normalize a gold case's consensus 1-5 score to the 0-1 judge axis."""
+    consensus = consensus_score(case)
+    if consensus is None:
+        raise ValueError(f"case has no annotations: {case.get('prompt', '?')!r}")
+    return consensus / HUMAN_SCALE
 
 
 def score_judge_vs_gold(
@@ -177,6 +287,34 @@ def score_panel_vs_gold(
     return metrics
 
 
+def ceiling_verdict(judge_agreement: float, human_alpha: float, margin: float = 0.05) -> str:
+    """Phrase judge agreement RELATIVE to what humans manage on the same cases.
+
+    The claim worth making is not "the judge scores 0.91" but "the judge is at the
+    human ceiling". Below the ceiling by more than ``margin`` is a judge problem;
+    conspicuously *above* it is a warning, not a triumph — it usually means the
+    judge has fitted one annotator's idiosyncrasies rather than the rubric.
+    """
+    if math.isnan(judge_agreement) or math.isnan(human_alpha):
+        return "human ceiling unavailable (need >= 2 annotators on shared cases)"
+    delta = judge_agreement - human_alpha
+    if delta < -margin:
+        return (
+            f"judge agreement ({judge_agreement:.3f}) is BELOW the human ceiling "
+            f"({human_alpha:.3f}) — the judge, not the cases, is the weak link"
+        )
+    if delta > margin:
+        return (
+            f"judge agreement ({judge_agreement:.3f}) EXCEEDS human agreement "
+            f"({human_alpha:.3f}) — suspicious: likely fitted to one annotator "
+            "rather than to the rubric"
+        )
+    return (
+        f"judge agreement ({judge_agreement:.3f}) is AT the human ceiling "
+        f"({human_alpha:.3f}) — as good as the labels allow"
+    )
+
+
 def _default_judge(judge_model: str) -> Callable[[str], str]:
     from src.eval.judge_client import build_judge_generate_fn
 
@@ -194,9 +332,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     parser.add_argument("--min-within-tolerance", type=float, default=DEFAULT_MIN_WITHIN_TOLERANCE)
+    parser.add_argument(
+        "--annotators",
+        action="store_true",
+        help="also report human-vs-human agreement (the ceiling the judge is measured against)",
+    )
     args = parser.parse_args(argv)
 
-    gold = load_gold_set()
+    all_cases = load_gold_set()
+    gold = scored_cases(all_cases)
+    skipped = len(all_cases) - len(gold)
+    if skipped:
+        # Loud, not silent: an unannotated case is missing evidence, and a
+        # calibration number quietly computed over a subset is how a gate lies.
+        print(f"NOTE: {skipped} case(s) have no annotations yet and are excluded.")
+        print("      Run `python -m src.eval.annotate --annotator <id>` to score them.")
+
+    if args.annotators:
+        rel = annotator_reliability(gold)
+        disagreements = annotator_disagreements(gold)
+        if rel["n_annotators"] < 2:
+            print(
+                f"Annotators: {rel['n_annotators']} ({', '.join(rel['annotators']) or 'none'}) "
+                "— no human ceiling yet; judge agreement is uninterpretable on its own."
+            )
+        else:
+            print(
+                f"Annotators: alpha {rel['alpha']:.3f} "
+                f"({rel['n_annotators']} raters, {rel['n_pairable']} doubly-rated cases, "
+                f"{len(disagreements)} disagreeing by >= 1 point)"
+            )
+            for case in disagreements[:5]:
+                scores = ", ".join(f"{k}={v}" for k, v in sorted(case["scores"].items()))
+                print(f"    contested ({scores}): {case['prompt'][:58]}")
+
     if args.panel:
         from src.eval.judge_panel import build_panel
 
@@ -219,6 +388,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "reliability" in result:
         rel = result["reliability"]
         print(f"  panel alpha: {rel['alpha']:.3f}   mean spread: {rel['mean_spread']:.3f}")
+
+    if args.annotators:
+        human = annotator_reliability(gold)
+        if human["n_annotators"] >= 2 and not math.isnan(human["alpha"]):
+            print(f"  -> {ceiling_verdict(result['pearson'], human['alpha'])}")
 
     ok = result["within_tolerance"] >= args.min_within_tolerance
     print(f"CALIBRATION: {'PASS' if ok else 'FAIL'} (floor {args.min_within_tolerance:.0%})")
