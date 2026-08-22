@@ -174,6 +174,47 @@ alert floors (`quality_alerts.py:112-152`).
    annotation — a directional probe, not a validated gold standard (see the file's
    `provenance` field).
 
+   **2026-08-22 — the gate was failing, and the judge was not the problem.**
+   Baseline: 68.8% within tolerance (floor 70% → FAIL), MAE 0.231, bias **-0.206**,
+   Pearson r 0.571. The bias said the judge was systematically stricter than the
+   humans, which read as an over-strict rubric. It was the opposite: **v1's 5/5
+   reference responses cited policy the system does not implement** — a $200
+   entertainment limit (real: $150), city-specific lodging caps for New York and
+   Austin (real: flat $400), a "$500 domestic flight approval" tier (real: flat
+   $200 transport), a *gifts* category (none exists), per-person meal scaling
+   (real: flat $75), and travel-class rules (none exist). Two cases also scored a
+   **refusal to submit** an over-limit expense 5/5, contradicting the
+   coordinator's own spec ("Do not refuse to submit… flag it for review").
+   The judge, correctly grounded in `mock_db.POLICY_LIMITS`, marked those down —
+   and scored the good and bad member of each pair *identically* (0.2/0.2), which
+   is why Pearson r was so low. **Calibrating against v1 would have tuned the
+   judge to accept hallucinated policy.** Gold set corrected to v2; the judge and
+   rubric were untouched at that point and the gate went to **96.9%, r 0.941**.
+   `tests/test_rubric_grounding.py` now fails the build if any 5/5 reference cites
+   a dollar figure that is not a real limit or prompt-derived.
+
+   Cheap generalisation: an eval reference standard is code and rots like code.
+   This one was never validated against the system it grades.
+
+### Rubric audit (2026-08-22)
+
+All five judge rubrics reviewed against the system they grade. Two had defects;
+**two were left alone deliberately** — an early attempt to "improve" the policy
+rubric wholesale dropped calibration from 96.9% to 81.2% (r 0.941 → 0.694), so
+every change below was gated on re-measuring.
+
+| rubric | verdict |
+| --- | --- |
+| `policy_compliance` (`batch_eval.py`) | **fixed.** Its fallback ("if the query is not about expenses, rate on whether the agent correctly *routes* the request") was both vague and stale — the coordinator has no delegation — so the judge applied policy criteria to non-expense turns. A hotel *search* returning compliant results scored **0.2** for "no awareness of the policy". Now scopes policy judgement to expense questions/checks/submissions, states that a reply asking for a missing amount is correct, and that refusing to submit an over-limit expense is a defect. Search **0.2 → 1.0**, clarify **0.2 → 1.0**, hallucinated-limit control held at 0.2, calibration **100%, r 0.980**. |
+| `geap_tool_use` (`batch_eval.py`) | **fixed.** It asked "did the agent call the right tool?" but `run_inference` supplies text only, **no trajectory** — so it graded narration. The identical correct answer scored **0.2** without and **1.0** with the words "I checked the policy". Reframed to grade the *evidence* a correct tool leaves in the response (real ids, fares, the actual limit, a confirmation), with an explicit "no tool needed" path for greetings and clarifying questions, and the unobservable call-ordering criterion moved out. Now: good 1.0 / incomplete 0.6 / wrong-route 0.4 / fabricated 0.2 — a real gradient instead of a style signal. Likely explains much of why `tool_use_accuracy` was the weakest monitored metric. |
+| `tool_faithfulness` | **unchanged, sound.** The only rubric given the real trajectory, so it asks a question its inputs can answer. Already spells out what does *not* count as a claim. Live: 4.846 with 2/39 flagged. |
+| `helpfulness` (online-only) | **unchanged.** Probed with a clarifying question and a greeting — both 1.0, no blind spot found. Its "judge only helpfulness (not tone or policy)" scope line is doing real work. |
+| recall (`verify_cross_session_recall`) | **unchanged**, written the same week with explicit negative cases (a denial is not recall). |
+
+The pattern across both defects: **a rubric asked for something its inputs could
+not support**, and the judge answered anyway. Faithfulness avoids it by having
+the trajectory; the other four have to stay inside what the response text shows.
+
 ### P2 — larger / infra
 7. **Expand + version datasets.** Grow adversarial + multi-turn + a long-context
    stress set; add `dataset_version` + checksum + a committed generation/curation
