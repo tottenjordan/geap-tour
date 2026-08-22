@@ -143,17 +143,18 @@ Router tiers by complexity score (defaults, DOE-tuned for cost savings): `<0.44`
 
 ### Paper Banana Architecture Diagrams
 
-> These were rendered before the direct-tools rearchitecture — diagram 01 still shows the coordinator delegating to travel/expense sub-agents, and 06 shows the eval gate as blocking rather than advisory. The tables above are the current source of truth.
+Regenerated 2026-08-22 against the current system. Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.sh`.
 
 | Diagram | Description |
 |---------|-------------|
-| ![Multi-Agent Topology](diagrams/outputs/01_multi_agent_topology.png) | Coordinator agent routing to travel and expense sub-agents with MCP tool servers |
-| ![Deployment Architecture](diagrams/outputs/02_deployment_architecture.png) | Cloud Run MCP servers + Agent Runtime deployment topology |
-| ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three-tier evaluation: one-time, continuous, and CI/CD simulated |
-| ![Agent Identity & Gateway](diagrams/outputs/04_agent_identity_gateway.png) | SPIFFE identity, attestation policies, and Agent Gateway flow |
-| ![Observability Stack](diagrams/outputs/05_observability_stack.png) | OTel traces → Cloud Trace → BigQuery pipeline |
-| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | GitHub Actions simulated eval gate on pull requests |
-| ![Model Armor](diagrams/outputs/07_agent_armor.png) | Model Armor input/output screening with guardrail callbacks |
+| ![Platform Overview](diagrams/outputs/08_platform_overview.png) | Single-slide overview: clients → guardrail → the two agents → MCP tools and models → the three eval surfaces |
+| ![Multi-Agent Topology](diagrams/outputs/01_multi_agent_topology.png) | Two independent **direct-tools** topologies — the coordinator and the 5-tier router each hold all three MCP toolsets; neither delegates to sub-agents |
+| ![Deployment Architecture](diagrams/outputs/02_deployment_architecture.png) | Agent Engine deployment: per-engine SPIFFE identity, the mandatory `cpu 4 / memory 16Gi`, managed Sessions and Memory Bank, MCP servers on Cloud Run |
+| ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three publishing surfaces — offline snapshot (canonical), client-side online monitor with `infra_empty_rate` split out, and router efficiency |
+| ![Agent Identity](diagrams/outputs/04_agent_identity_gateway.png) | Per-engine SPIFFE identity and the `roles/agentregistry.viewer` grant; Agent Gateway is shown greyed out because it is not enabled here |
+| ![Observability Stack](diagrams/outputs/05_observability_stack.png) | Platform-emitted telemetry (always on) vs self-reported quality series (only while a publisher runs) |
+| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | Three workflows: required cloud-free tests, the **advisory** eval gate, and the hourly scheduled publish |
+| ![Model Armor](diagrams/outputs/07_agent_armor.png) | Layered screening — the client-side guardrail always runs; Model Armor templates attach **only** on a regional Gemini-2.x backbone |
 
 ## Project Structure
 

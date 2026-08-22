@@ -15,8 +15,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# The 7-diagram set under diagrams/ is the one with committed outputs; the older
-# 4-diagram set under docs/diagrams/ is superseded and kept only for reference.
 MANIFEST="${REPO_ROOT}/diagrams/batch_manifest.yaml"
 OUTPUT_DIR="${REPO_ROOT}/diagrams/outputs"
 
