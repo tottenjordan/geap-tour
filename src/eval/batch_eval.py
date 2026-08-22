@@ -518,8 +518,17 @@ POLICY_COMPLIANCE_METRIC = types.LLMMetric(
             "Evaluate whether the agent correctly enforces corporate expense "
             "policies. The policy limits are: meals ($75), transport ($200), "
             "lodging ($400), supplies ($100), entertainment ($150). "
-            "If the query is not about expenses, rate based on whether the "
-            "agent correctly routes the request."
+            "SCOPE: only judge policy handling when the request actually calls for "
+            "it — an expense question, a policy check, or an expense submission. A "
+            "flight or hotel search, a booking, or a reply asking for missing details "
+            "is NOT an expense action: the agent has nothing to check against a limit, "
+            "and saying nothing about policy is correct there. Score those 5 unless "
+            "the response states something false about policy. In particular, when a "
+            "required detail is still missing (no amount or category yet), asking the "
+            "user for it IS the correct next step — a policy limit cannot be applied to "
+            "an unknown amount, so do not mark the response down for omitting one. "
+            "An over-limit expense is still SUBMITTED and flagged for manager review — "
+            "refusing to submit it is a defect, not caution."
         ),
         criteria={
             "Policy awareness": "Does the agent mention or check policy limits before taking action?",
@@ -612,37 +621,56 @@ TOOL_USE_METRIC = types.LLMMetric(
             "expense MCP toolsets itself and calls them directly. It does NOT delegate "
             "and has no sub-agents. Available tools: "
             f"{', '.join(ALL_MCP_TOOL_NAMES)}. "
-            "Judge only the tools the agent actually called; there is no delegation step "
-            "to assess."
+            "There is no delegation step to assess.\n"
+            "IMPORTANT — YOU CANNOT SEE THE TOOL CALLS. You are shown only the user's "
+            "request and the agent's final response; the execution trajectory is NOT "
+            "provided (a separate faithfulness metric audits that). So judge the "
+            "EVIDENCE of correct tool use that the response itself carries: concrete, "
+            "specific data that only the right tool could have supplied — real flight "
+            "ids and fares, real hotel names and nightly rates, the actual policy limit "
+            "for the category, a submission confirmation. "
+            "Do NOT reward or require the agent for NARRATING its tool calls. "
+            '"A $50 meal is within the $75 meal limit" and "I checked the policy: a '
+            '$50 meal is within the $75 limit" are the SAME quality — both carry the '
+            "real limit. Scoring them differently grades writing style, not tool use."
         ),
         criteria={
-            "Correct tool selection": (
-                "Did the agent call the right MCP tool for the request? "
-                "search_flights for flight queries, check_expense_policy for policy questions, "
-                "submit_expense for submissions, get_user_expenses for expense history, etc."
+            "Evidence of the right tool": (
+                "Does the response carry the concrete data the correct tool would return "
+                "for this request — real flight ids/fares, hotel names/rates, the actual "
+                "category limit, a confirmation id? Vague or generic answers ('there are "
+                "many flights available') indicate no tool ran, or its result was ignored."
             ),
-            "Parameter accuracy": (
-                "Were the tool arguments correct? Right cities, amounts, user IDs, "
-                "categories as specified by the user."
+            "Matches what was asked": (
+                "Does the result reflect the specifics the user gave — the right cities, "
+                "dates, amount, category and user id? A response about the wrong route or "
+                "the wrong category means the tool was driven with the wrong arguments."
             ),
-            "Policy-then-submit ordering": (
-                "For an expense submission, did the agent call check_expense_policy BEFORE "
-                "submit_expense? An over-limit expense must still be submitted — the system "
-                "records it with status pending_review — so refusing to submit is a defect, "
-                "not caution."
+            "Expense submissions are complete": (
+                "For a submission, does the response BOTH give the policy outcome (within "
+                "the limit, or over it) AND confirm the expense was submitted? An "
+                "over-limit expense must still be submitted — the system records it as "
+                "pending_review — so refusing to submit is a defect, not caution."
             ),
-            "Result utilization": (
-                "Did the agent use the tool's output to construct a helpful response? "
-                "Flight results should include prices/airlines, policy checks should "
-                "state the limit, expense submissions should confirm status."
+            "No tool needed": (
+                "If the request genuinely needs no tool — a greeting, or a reply asking for "
+                "a detail required before any tool can run — then calling none is correct. "
+                "Score such a response on whether it asks for the right things, and never "
+                "mark it down for the absence of tool output."
             ),
         },
         rating_scores={
-            "5": "Correct tool called with accurate parameters, correct ordering, response fully uses tool output.",
-            "4": "Correct tool and parameters, minor formatting or ordering issue.",
-            "3": "Right tool but parameters slightly off, or response doesn't fully use tool output.",
-            "2": "Wrong tool selected, or critical parameter error.",
-            "1": "No tool called when one was needed, or completely wrong tool and parameters.",
+            "5": (
+                "The response carries the specific data the right tool returns, matching "
+                "what the user asked; or no tool was needed and the reply is correct."
+            ),
+            "4": "Right data and specifics, with a minor omission or unclear framing.",
+            "3": "Some real tool output, but incomplete — e.g. a submission that gives the policy outcome but never confirms it was submitted.",
+            "2": "Data present but it answers a different request than the one asked (wrong route, wrong category, wrong user).",
+            "1": (
+                "Generic or fabricated content with none of the specifics a tool would "
+                "return, when the request clearly required one."
+            ),
         },
     ),
 )
