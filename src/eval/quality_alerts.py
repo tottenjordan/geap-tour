@@ -146,18 +146,45 @@ ROUTER_MONITORED_METRICS = [
     ("classifier_latency_ms", 8000.0, "GT"),
 ]
 
-# Online coordinator quality series (``agent_online_eval/*``). Same three rubrics
-# as ALL_MONITORED_METRICS on the same 1-5 axis (so the same 3.0 floor applies),
-# but a SEPARATE family so continuous, client-side-sampled live-traffic scores
-# (``eval_mode=online``) never blur into the periodic offline snapshot
-# (``agent_eval/*``, ``eval_mode=offline``). The native Vertex Online Evaluators
-# are platform-blocked (the managed runtime strips prompt/response from traces —
-# INSUFFICIENT_DATA), so this surface is fed by scoring live ``stream_query``
-# responses captured client-side (see src/eval/online_monitor.py).
+# Online coordinator quality series (``agent_online_eval/*``). Same rubrics as
+# ALL_MONITORED_METRICS on the same 1-5 axis, but a SEPARATE family so continuous,
+# client-side-sampled live-traffic scores (``eval_mode=online``) never blur into
+# the periodic offline snapshot (``agent_eval/*``, ``eval_mode=offline``). This
+# surface is fed by scoring live ``stream_query`` responses captured client-side
+# (see src/eval/online_monitor.py).
+#
+# **The floors are NOT the same as offline, and that is deliberate.** The two
+# surfaces score the same rubrics over *different prompt mixes*, so they do not
+# share a distribution and never should have shared a number:
+#
+#   ``ONLINE_PROBE_PROMPTS`` includes policy-*adjacent* tasks — "search hotels
+#   under $350", "book a trip and submit my last meal receipt" — where the user
+#   never asks about policy. The coordinator's GEPA-optimized instruction surfaces
+#   policy status "when an expense submission is requested", i.e. after
+#   ``check_expense_policy`` runs, so on those prompts the trigger never fires and
+#   the policy judge scores 0.2 for "no awareness of the policy". Measured
+#   2026-08-22 over the 6-prompt probe set: the two non-policy prompts scored 1.0,
+#   the two policy-adjacent ones 0.2. The agent is following its instruction; the
+#   rubric expects proactive disclosure the instruction does not mandate. Reviewed
+#   and the CURRENT BEHAVIOUR WAS JUDGED CORRECT — surfacing a limit before an
+#   amount exists is noise — so the floor moves, not the agent.
+#
+# Observed online over 4 hourly runs (n=6 probes each): helpfulness 4.17-4.50,
+# tool_use_accuracy 3.00-4.33, policy_compliance 3.00-3.50. The latter two *touched*
+# the old 3.0 floor, so a shared floor was one noisy sample away from paging on
+# healthy traffic. Floors below sit clear of the observed range:
+#   - helpfulness       3.0  (observed min 4.17 — >1.1 headroom; keeps offline parity)
+#   - tool_use_accuracy 2.5  (observed min 3.00 — the old floor WAS the minimum)
+#   - policy_compliance 2.5  (observed min 3.00; structurally lower, see above)
+#   - tool_faithfulness 3.0  (hallucinated-action detector; a real drop must page)
+#
+# **Provisional — n=4 runs.** Revisit once the rolling baseline in
+# ``src/eval/baseline.py`` has real history; its z-score anomaly detection catches
+# *changes* regardless of absolute level and is the better long-run signal here.
 ONLINE_MONITORED_METRICS = [
     ("helpfulness", 3.0),
-    ("tool_use_accuracy", 3.0),
-    ("policy_compliance", 3.0),
+    ("tool_use_accuracy", 2.5),
+    ("policy_compliance", 2.5),
     ("tool_faithfulness", 3.0),
 ]
 

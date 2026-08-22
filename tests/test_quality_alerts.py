@@ -60,12 +60,51 @@ def test_router_monitored_metrics_shape():
 def test_online_monitored_metrics_shape():
     from src.eval.quality_alerts import ALL_MONITORED_METRICS, ONLINE_MONITORED_METRICS
 
-    # The online quality surface mirrors the coordinator's three rubrics on the
-    # same 1-5 axis, so it alerts on the same floor (3.0) — only the metric
-    # family (agent_online_eval) differs.
+    # Same rubrics as the offline surface, on the same 1-5 axis — only the metric
+    # family (agent_online_eval) and the FLOORS differ. See below for why.
     assert {m[0] for m in ONLINE_MONITORED_METRICS} == {m[0] for m in ALL_MONITORED_METRICS}
     for _name, threshold in ONLINE_MONITORED_METRICS:
-        assert threshold == 3.0
+        assert 1.0 <= threshold <= 5.0, "floors live on the rubric's 1-5 axis"
+
+
+def test_online_floors_sit_below_the_observed_online_range():
+    """Online and offline score the same rubrics over DIFFERENT prompt mixes, so
+    they don't share a distribution and must not share a floor.
+
+    ONLINE_PROBE_PROMPTS includes policy-*adjacent* tasks where the user never
+    asks about policy; the coordinator only surfaces policy status at submission
+    time, so the judge scores those 0.2. Measured over 4 hourly runs, online
+    tool_use_accuracy and policy_compliance both *touched* 3.00 — the old floor
+    was the observed minimum, i.e. one noisy sample from paging on healthy
+    traffic. These floors sit clear of that range.
+    """
+    from src.eval.quality_alerts import ALL_MONITORED_METRICS, ONLINE_MONITORED_METRICS
+
+    online = dict(ONLINE_MONITORED_METRICS)
+    offline = dict(ALL_MONITORED_METRICS)
+
+    assert online["policy_compliance"] < offline["policy_compliance"]
+    assert online["tool_use_accuracy"] < offline["tool_use_accuracy"]
+    # Both observed a minimum of 3.00; a floor at or above that pages on noise.
+    assert online["policy_compliance"] < 3.0
+    assert online["tool_use_accuracy"] < 3.0
+    # Not loosened into uselessness — still well inside the rubric's range.
+    assert online["policy_compliance"] >= 2.0
+    assert online["tool_use_accuracy"] >= 2.0
+
+
+def test_metrics_with_headroom_keep_the_offline_floor():
+    """Only the two metrics the probe mix actually depresses were moved.
+
+    helpfulness never dropped below 4.17 online, and tool_faithfulness is the
+    hallucinated-action detector — blanket-loosening either would trade a real
+    false-page problem for a real missed-page one.
+    """
+    from src.eval.quality_alerts import ONLINE_MONITORED_METRICS
+
+    online = dict(ONLINE_MONITORED_METRICS)
+    assert online["helpfulness"] == 3.0
+    assert online["tool_faithfulness"] == 3.0
 
 
 def test_all_monitored_includes_tool_faithfulness():
