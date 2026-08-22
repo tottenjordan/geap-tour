@@ -78,7 +78,8 @@ uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID> --panel         
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent --agent-id <ENGINE_ID> --threshold 3.0 --limit 8
 
 # Judge-vs-human calibration — score the policy judge against the author-curated gold set (no engine; drift alarm)
-uv run python -m src.eval.calibration            # single judge: within-tolerance %, MAE, bias, Pearson r; exits non-zero below floor
+uv run python -m src.eval.calibration            # single judge: within-tolerance % + 95% CI, MAE, bias, Pearson r.
+                                                 # Three-valued: PASS / FAIL / INCONCLUSIVE (interval spans the floor -> exit 0, names the n needed)
 uv run python -m src.eval.calibration --panel    # score with the diverse cross-generation Gemini judge panel + inter-rater alpha; see roadmap P1.6
 uv run python -m src.eval.calibration --annotators  # ALSO report human-vs-human alpha — the ceiling judge agreement is only interpretable against
 

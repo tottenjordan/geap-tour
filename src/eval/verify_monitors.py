@@ -155,7 +155,7 @@ def _summarize(
 ) -> dict:
     """Build the per-metric summary dict for one score/epoch bucket."""
     from src.eval.baseline import detect_regression
-    from src.eval.stats import is_low_confidence
+    from src.eval.stats import is_low_confidence, mean_power_report
 
     # Rolling-baseline check: the chronologically-latest point is the "current"
     # value, everything before it the baseline history. This is ADDITIVE to the
@@ -165,9 +165,22 @@ def _summarize(
     current = ordered[-1]
     baseline = detect_regression(ordered[:-1], current, direction=comparison)
 
+    # Power: can this sample resolve its own threshold, or is the verdict a
+    # coin-flip? `low_confidence` alone is threshold-blind — it passes 12 samples
+    # judged against an 80% line whose interval spans every possible outcome.
+    #
+    # The claim under test is about the metric's VALUE (the alert fires on the
+    # gauge crossing its floor), so the power check is a bootstrap CI on the mean.
+    # A share-of-good-points framing was tried first and is wrong: resolving a 90%
+    # good-share needs ~35 points, so a perfectly healthy 24-point series would
+    # read underpowered and every alert would be suppressed.
+    power = mean_power_report(scores, threshold, comparison)
+
     return {
         "eval_count": len(scores),
         "low_confidence": is_low_confidence(len(scores)),
+        "power": power,
+        "underpowered": not power["resolved"],
         "avg_score": round(sum(scores) / len(scores), 3),
         "min_score": round(min(scores), 3),
         "max_score": round(max(scores), 3),
@@ -232,22 +245,85 @@ def _aggregate_surface(
         else:
             metrics.setdefault(name, {})[label_value] = summary
 
-    surface = {"status": "ok" if metrics else "empty", "metrics": metrics, "total_evals": total}
+    surface = {"status": _surface_status(metrics), "metrics": metrics, "total_evals": total}
     if group_by_label is not None:
         surface["group_by"] = group_by_label
     return surface
 
 
+def _flat_metrics(metrics: dict) -> list[tuple[str, dict]]:
+    """(name, summary) pairs, flattening the optional --group-by nesting."""
+    out: list[tuple[str, dict]] = []
+    for name, value in metrics.items():
+        if isinstance(value, dict) and "eval_count" in value:
+            out.append((name, value))
+        elif isinstance(value, dict):
+            out.extend((f"{name}[{label}]", inner) for label, inner in value.items())
+    return out
+
+
+def _surface_status(metrics: dict) -> str:
+    """``empty`` / ``underpowered`` / ``ok``.
+
+    ``underpowered`` is a distinct state on purpose: it lets a caller tell
+    "nothing is wrong" apart from "we cannot tell", which a two-valued status
+    silently conflates.
+    """
+    if not metrics:
+        return "empty"
+    flat = _flat_metrics(metrics)
+    if flat and all(m.get("underpowered") for _n, m in flat):
+        return "underpowered"
+    return "ok"
+
+
+def insufficient_power(data: dict) -> list[dict]:
+    """Every metric whose sample cannot resolve its own threshold.
+
+    The escalation half of suppress-and-escalate. Suppressing an alert without
+    surfacing *why* is how a monitoring gap is created — this repo has been bitten
+    by exactly that shape more than once — so anything that gets quieter here has
+    to show up in this list, with the sample size that would settle it.
+    """
+    out = []
+    for surface_key, surface in data.items():
+        if not isinstance(surface, dict) or "metrics" not in surface:
+            continue
+        for name, summary in _flat_metrics(surface["metrics"]):
+            if not summary.get("underpowered"):
+                continue
+            power = summary.get("power") or {}
+            out.append(
+                {
+                    "surface": surface_key,
+                    "metric": name,
+                    "eval_count": summary.get("eval_count"),
+                    "needed_n": power.get("needed_n"),
+                    "ci": power.get("ci"),
+                    "out_of_bounds": summary.get("out_of_bounds"),
+                }
+            )
+    return out
+
+
 def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None) -> dict:
     client = client or _monitoring_client()
     data: dict[str, object] = {}
-    any_ok = False
+    statuses = []
     for surface_key, spec in SURFACES.items():
         series = list(_query_surface_series(client, spec.prefix, spec.metrics, hours))
         surface = _aggregate_surface(series, spec.metrics, group_by_label=group_by)
         data[surface_key] = surface
-        any_ok = any_ok or surface["status"] == "ok"
-    data["status"] = "ok" if any_ok else "empty"
+        statuses.append(surface["status"])
+    if "ok" in statuses:
+        data["status"] = "ok"
+    elif "underpowered" in statuses:
+        data["status"] = "underpowered"
+    else:
+        data["status"] = "empty"
+    # Always present, even when empty: an absent key reads as "not checked",
+    # a present empty list reads as "checked, nothing suppressed".
+    data["insufficient_power"] = insufficient_power(data)
     return data
 
 
@@ -370,6 +446,13 @@ _SURFACE_TITLES = {
 def _print_metric(m: dict, indent: str = "  ") -> None:
     op = ">" if m.get("direction") == "GT" else "<"
     conf = "  ⚠ low_confidence" if m.get("low_confidence") else ""
+    if m.get("underpowered"):
+        needed = (m.get("power") or {}).get("needed_n")
+        conf += (
+            f"  ⚠ UNDERPOWERED (alert suppressed; ~{needed} points needed)"
+            if needed
+            else ("  ⚠ UNDERPOWERED (alert suppressed)")
+        )
     print(f"{indent}  Evals:  {m['eval_count']}{conf}")
     print(f"{indent}  Avg:    {m['avg_score']}  (min: {m['min_score']}, max: {m['max_score']})")
     print(f"{indent}  P50:    {m['p50_score']}  P90: {m['p90_score']}")
@@ -396,7 +479,8 @@ def _print_metric(m: dict, indent: str = "  ") -> None:
 def _print_surface(title: str, surface: dict) -> None:
     print(f"\n{title}")
     print("-" * 60)
-    if surface.get("status") != "ok":
+    # `underpowered` still HAS data to render — only `empty` has nothing to show.
+    if surface.get("status") not in ("ok", "underpowered"):
         print(f"  {surface.get('message', 'No scores in Cloud Monitoring yet.')}")
         return
     grouped = surface.get("group_by")
@@ -426,6 +510,17 @@ def _print_report(data: dict, hours: int) -> None:
     for surface_key, title in _SURFACE_TITLES.items():
         if surface_key in data:
             _print_surface(title, data[surface_key])
+    suppressed = data.get("insufficient_power") or []
+    if suppressed:
+        print()
+        print(f"INSUFFICIENT POWER — {len(suppressed)} metric(s) cannot resolve their threshold.")
+        print("  These do NOT alert; they are not evidence of health either.")
+        for item in suppressed:
+            needed = f"~{item['needed_n']}" if item.get("needed_n") else "more"
+            print(
+                f"    {item['surface']}/{item['metric']}: n={item['eval_count']} "
+                f"({item['out_of_bounds']} out of bounds) — {needed} points would settle it"
+            )
     print("=" * 60)
 
 
@@ -440,7 +535,7 @@ def generate_markdown_report(data: dict) -> str:
         if not surface:
             continue
         lines += ["", f"### {title}", ""]
-        if surface.get("status") != "ok":
+        if surface.get("status") not in ("ok", "underpowered"):
             lines.append(surface.get("message", "No scores in Cloud Monitoring yet."))
             continue
         grouped = surface.get("group_by")

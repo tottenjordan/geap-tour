@@ -313,6 +313,295 @@ ROUTER_EVAL_CASES = [
         "expected_complexity": "low",
         "description": "Simple policy inquiry phrased as question",
     },
+    # ── Grown 2026-08-22: 12 -> 40 cases ──────────────────────────────────
+    # At n=12 the 80% `routing_accuracy_pct` alert was unresolvable: the Wilson
+    # interval spanned 80% for EVERY possible outcome, including a perfect 12/12,
+    # so a healthy router could not be distinguished from a failing one and one
+    # case flipping moved the metric 8.3 points. `stats.min_n_for_threshold` puts
+    # the requirement at ~40 for a healthy rate. Balanced across the three bands so
+    # accuracy is not dominated by whichever band happens to be easiest.
+    # ── low: single intent, one tool, no comparison or synthesis ───────────
+    {
+        "prompt": "Search flights from LAX to ORD",
+        "reference": "American FL003 from LAX to ORD at $380, departing 07:00.",
+        "category": "low_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["LAX", "ORD"],
+        "expected_complexity": "low",
+        "description": "Single-intent flight search, explicit airport codes",
+    },
+    {
+        "prompt": "What is the lodging limit?",
+        "reference": "The lodging limit is $400 per night.",
+        "category": "low_complexity",
+        "expected_tool": "expense_mcp_check_expense_policy",
+        "expected_signals": ["400"],
+        "expected_complexity": "low",
+        "description": "Flat policy lookup, no amount to evaluate",
+    },
+    {
+        "prompt": "Find me a hotel in Miami",
+        "reference": "Fontainebleau Miami at $400/night, 4.7 rating.",
+        "category": "low_complexity",
+        "expected_tool": "search_mcp_search_hotels",
+        "expected_signals": ["Miami"],
+        "expected_complexity": "low",
+        "description": "Single-intent hotel search, no constraints",
+    },
+    {
+        "prompt": "Is a $30 taxi within policy?",
+        "reference": "A $30 transport expense is within the $200 transport limit.",
+        "category": "low_complexity",
+        "expected_tool": "expense_mcp_check_expense_policy",
+        "expected_signals": ["within", "200"],
+        "expected_complexity": "low",
+        "description": "Single policy check, clearly under the limit",
+    },
+    {
+        "prompt": "Show my recent expenses",
+        "reference": "Your most recent expenses, newest first.",
+        "category": "low_complexity",
+        "expected_tool": "expense_mcp_get_user_expenses",
+        "expected_signals": [],
+        "expected_complexity": "low",
+        "description": "Plain history retrieval",
+    },
+    {
+        "prompt": "Cancel booking BK001",
+        "reference": "Booking BK001 has been cancelled.",
+        "category": "low_complexity",
+        "expected_tool": "booking_mcp_cancel_booking",
+        "expected_signals": ["BK001"],
+        "expected_complexity": "low",
+        "description": "Single mutation with an explicit id",
+    },
+    {
+        "prompt": "What is the entertainment limit?",
+        "reference": "The entertainment limit is $150.",
+        "category": "low_complexity",
+        "expected_tool": "expense_mcp_check_expense_policy",
+        "expected_signals": ["150"],
+        "expected_complexity": "low",
+        "description": "Flat policy lookup for a second category",
+    },
+    {
+        "prompt": "Get the details for booking BK002",
+        "reference": "Details for booking BK002.",
+        "category": "low_complexity",
+        "expected_tool": "booking_mcp_get_booking_details",
+        "expected_signals": ["BK002"],
+        "expected_complexity": "low",
+        "description": "Single lookup by id",
+    },
+    {
+        "prompt": "Are there flights from SFO to LAX?",
+        "reference": "Southwest FL005 from SFO to LAX at $150.",
+        "category": "low_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["SFO", "LAX"],
+        "expected_complexity": "low",
+        "description": "Short-haul single-intent search",
+    },
+    # ── medium: two steps, or one step plus a judgement ────────────────────
+    {
+        "prompt": "Find hotels in Chicago and tell me which ones fit the lodging policy",
+        "reference": "Chicago hotels with each nightly rate checked against the $400 lodging limit.",
+        "category": "medium_complexity",
+        "expected_tool": "search_mcp_search_hotels",
+        "expected_signals": ["Chicago"],
+        "expected_complexity": "medium",
+        "description": "Search plus a policy judgement over the results",
+    },
+    {
+        "prompt": "Submit a $95 meal expense for EMP001 and tell me if it needs review",
+        "reference": "The $95 meal exceeds the $75 limit; submitted and flagged for manager review.",
+        "category": "medium_complexity",
+        "expected_tool": "expense_mcp_submit_expense",
+        "expected_signals": ["75", "review"],
+        "expected_complexity": "medium",
+        "description": "Policy check then submit, with an over-limit consequence",
+    },
+    {
+        "prompt": "Compare the SFO-JFK flights and tell me which is better value",
+        "reference": "FL001 at $450 vs FL002 at $520, with a value recommendation.",
+        "category": "medium_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["FL001", "FL002"],
+        "expected_complexity": "medium",
+        "description": "Search plus comparative reasoning",
+    },
+    {
+        "prompt": "Which of my recent expenses were over their category limits?",
+        "reference": "Recent expenses with each checked against its category limit.",
+        "category": "medium_complexity",
+        "expected_tool": "expense_mcp_get_user_expenses",
+        "expected_signals": [],
+        "expected_complexity": "medium",
+        "description": "Retrieval plus per-item policy evaluation",
+    },
+    {
+        "prompt": "Book flight FL001 for Alice Johnson and confirm the fare is reasonable",
+        "reference": "FL001 booked for Alice Johnson at $450, with a note on the fare.",
+        "category": "medium_complexity",
+        "expected_tool": "booking_mcp_book_flight",
+        "expected_signals": ["FL001", "Alice Johnson"],
+        "expected_complexity": "medium",
+        "description": "Mutation plus a judgement on the result",
+    },
+    {
+        "prompt": "Find a hotel in New York under $350 and check it against the lodging limit",
+        "reference": "New York hotels under $350, all within the $400 lodging limit.",
+        "category": "medium_complexity",
+        "expected_tool": "search_mcp_search_hotels",
+        "expected_signals": ["New York"],
+        "expected_complexity": "medium",
+        "description": "Constrained search plus a policy cross-check",
+    },
+    {
+        "prompt": "List all bookings and tell me which are still upcoming",
+        "reference": "Recent bookings with upcoming ones identified.",
+        "category": "medium_complexity",
+        "expected_tool": "booking_mcp_list_all_bookings",
+        "expected_signals": [],
+        "expected_complexity": "medium",
+        "description": "Retrieval plus filtering judgement",
+    },
+    {
+        "prompt": "I spent $220 on a taxi — can I claim it, and what happens if not?",
+        "reference": "$220 exceeds the $200 transport limit; it is submitted and flagged for review.",
+        "category": "medium_complexity",
+        "expected_tool": "expense_mcp_check_expense_policy",
+        "expected_signals": ["200", "review"],
+        "expected_complexity": "medium",
+        "description": "Policy check plus consequence explanation",
+    },
+    {
+        "prompt": "Search flights to Chicago and hotels there for the same trip",
+        "reference": "Chicago flight and hotel options for one trip.",
+        "category": "medium_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["Chicago"],
+        "expected_complexity": "medium",
+        "description": "Two coordinated searches, no synthesis beyond pairing",
+    },
+    {
+        "prompt": "Check a $160 entertainment expense and a $60 meal against policy",
+        "reference": "$160 exceeds the $150 entertainment limit; $60 is within the $75 meal limit.",
+        "category": "medium_complexity",
+        "expected_tool": "expense_mcp_check_expense_policy",
+        "expected_signals": ["150", "75"],
+        "expected_complexity": "medium",
+        "description": "Two policy checks across different categories",
+    },
+    # ── high: multi-step chains, synthesis, or optimisation ────────────────
+    {
+        "prompt": (
+            "Plan a three-city trip (SFO, Chicago, New York): find flights between each leg, "
+            "a hotel in each city within the lodging limit, and total the cost against policy"
+        ),
+        "reference": "A three-leg itinerary with per-city hotels and a policy-checked cost total.",
+        "category": "high_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["Chicago", "New York"],
+        "expected_complexity": "high",
+        "description": "Multi-leg planning with synthesis and policy totalling",
+    },
+    {
+        "prompt": (
+            "Audit EMP001's expenses: find every over-limit item, total the overage by "
+            "category, and recommend which to resubmit with justification"
+        ),
+        "reference": "Per-category overage totals with resubmission recommendations.",
+        "category": "high_complexity",
+        "expected_tool": "expense_mcp_get_user_expenses",
+        "expected_signals": ["EMP001"],
+        "expected_complexity": "high",
+        "description": "Retrieval, per-item evaluation, aggregation and recommendation",
+    },
+    {
+        "prompt": (
+            "Book the cheapest SFO-JFK flight, reserve a hotel under the lodging limit for "
+            "three nights, and submit the expected meal expenses for the trip"
+        ),
+        "reference": "Flight booked, hotel reserved within policy, and meal expenses submitted.",
+        "category": "high_complexity",
+        "expected_tool": "booking_mcp_book_flight",
+        "expected_signals": ["SFO", "JFK"],
+        "expected_complexity": "high",
+        "description": "Three chained mutations across all three toolsets",
+    },
+    {
+        "prompt": (
+            "Our team of six is travelling to Miami. Work out whether booking individually "
+            "or as a group is cheaper, and whether either fits the lodging policy"
+        ),
+        "reference": "A cost comparison of individual vs group booking, checked against policy.",
+        "category": "high_complexity",
+        "expected_tool": "search_mcp_search_hotels",
+        "expected_signals": ["Miami"],
+        "expected_complexity": "high",
+        "description": "Optimisation across options with a policy constraint",
+    },
+    {
+        "prompt": (
+            "Reconstruct my last trip from my bookings and expenses, then tell me what "
+            "I would need to change to keep the same trip fully within policy"
+        ),
+        "reference": "A reconstructed trip with the specific changes needed for compliance.",
+        "category": "high_complexity",
+        "expected_tool": "booking_mcp_list_all_bookings",
+        "expected_signals": [],
+        "expected_complexity": "high",
+        "description": "Cross-toolset reconstruction plus counterfactual reasoning",
+    },
+    {
+        "prompt": (
+            "Find the cheapest way to get four people from SFO to Chicago and back, "
+            "compare it against the transport limit per person, and flag any shortfall"
+        ),
+        "reference": "A cheapest round-trip option for four, checked per person against $200.",
+        "category": "high_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["SFO", "Chicago"],
+        "expected_complexity": "high",
+        "description": "Optimisation, per-head arithmetic and a policy comparison",
+    },
+    {
+        "prompt": (
+            "Given my expense history, forecast whether a five-night New York trip would "
+            "stay within policy, and identify the category most likely to breach"
+        ),
+        "reference": "A forecast against the lodging and meal limits with the riskiest category.",
+        "category": "high_complexity",
+        "expected_tool": "expense_mcp_get_user_expenses",
+        "expected_signals": ["New York"],
+        "expected_complexity": "high",
+        "description": "History-grounded forecasting with a risk judgement",
+    },
+    {
+        "prompt": (
+            "Cancel my Chicago booking, rebook the same trip at a lower fare if one exists, "
+            "and tell me the net saving against the transport limit"
+        ),
+        "reference": "The booking cancelled, rebooked if cheaper, with the net saving stated.",
+        "category": "high_complexity",
+        "expected_tool": "booking_mcp_cancel_booking",
+        "expected_signals": ["Chicago"],
+        "expected_complexity": "high",
+        "description": "Conditional multi-step mutation with a computed outcome",
+    },
+    {
+        "prompt": (
+            "Build the cheapest policy-compliant two-night Boston trip for two people: "
+            "flights, one hotel room, and meals, then tell me the total per person"
+        ),
+        "reference": "A costed two-night Boston trip for two, each component within its limit.",
+        "category": "high_complexity",
+        "expected_tool": "search_mcp_search_flights",
+        "expected_signals": ["Boston"],
+        "expected_complexity": "high",
+        "description": "Constrained optimisation across all three toolsets with a per-head total",
+    },
 ]
 
 

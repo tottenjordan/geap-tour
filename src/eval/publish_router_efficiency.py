@@ -148,8 +148,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
+    # routing_accuracy_pct is a proportion over the router eval cases, and its 80%
+    # alert is only meaningful if that sample can resolve it. Say which it is here,
+    # where the number is produced, rather than leaving it to the reader.
+    _print_accuracy_power(published, accuracy)
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _print_accuracy_power(published: dict, accuracy_results) -> None:
+    """Note whether routing_accuracy_pct's sample can resolve its own 80% alert.
+
+    At the historical n=12 it could not: the Wilson interval spanned 80% for every
+    possible outcome, so a perfect score was indistinguishable from a failing one.
+    """
+    accuracy = published.get("routing_accuracy_pct")
+    if accuracy is None:
+        return
+    total = (accuracy_results or {}).get("total_cases")
+    if not total:
+        return
+    from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
+    from src.eval.stats import power_report
+
+    floor = next(
+        (t for name, t, _c in ROUTER_MONITORED_METRICS if name == "routing_accuracy_pct"), 80.0
+    )
+    report = power_report(round(accuracy / 100.0 * total), total, floor / 100.0)
+    lo, hi = report["ci"]
+    if report["resolved"]:
+        print(
+            f"  routing_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — resolves the {floor:.0f}% alert"
+        )
+    else:
+        needed = report["needed_n"]
+        hint = f"~{needed} cases would" if needed else "no sample size will"
+        print(
+            f"  routing_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — CANNOT resolve the "
+            f"{floor:.0f}% alert ({hint} settle it)"
+        )
