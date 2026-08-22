@@ -1,35 +1,25 @@
-Create a security architecture diagram showing Agent Identity with dual Ingress and Egress Gateways.
+Create a security and identity architecture diagram, laid out left to right.
 
-Layout (left to right flow):
-- Far left "Users / Clients":
-  - User icon and API client icon
-  - Arrow pointing right labeled "User Requests"
+Far left: a red ellipse "Users / CI clients".
 
-- Left gateway "Ingress Gateway (Client-to-Agent)":
-  - A gateway/firewall icon labeled "Ingress Gateway"
-  - Sub-label: "Client-to-Agent"
-  - Policy box: "Ingress Policy" listing: AuthN (OAuth / API Key), Rate Limiting, Request Validation
-  - Arrow from Users through Ingress Gateway into Agent Runtime
+Center: a large blue bordered region labeled "Vertex AI Agent Engine":
+- A green rounded rectangle "Coordinator Agent"
+- Above it a red octagon "AGENT_IDENTITY (SPIFFE workload identity)"
+- Below the octagon, small monospace text: "principal://agents.global.org-<ORG>.system.id.goog/.../reasoningEngines/<ID>"
+- A gray box listing what the identity is granted: "roles/agentregistry.viewer"
 
-- Center "Agent Runtime":
-  - A large box labeled "Agent Runtime" containing an agent icon
-  - Above agent: Shield icon labeled "SPIFFE Identity"
-  - Text showing the principal format: "principal://agents.global.org-{ORG}.system.id.goog/agent/{ID}"
-  - Arrow from shield to agent showing "Workload Identity Pool"
-  - Below: "Attestation Policy" box with: Image Digest Verification, Namespace Constraints, Service Account Binding
-  - Below that: "IAM Allow Policy Binding" box with role badges
+Right side, three destination boxes stacked vertically:
+- Purple rounded rectangle "Vertex AI Models"
+- Teal rounded rectangle "MCP Servers on Cloud Run"
+- Gray rounded rectangle "Agent Registry"
 
-- Right gateway "Egress Gateway (Agent-to-Anywhere)":
-  - A gateway/firewall icon labeled "Egress Gateway"
-  - Sub-label: "Agent-to-Anywhere"
-  - Policy box: "Egress Policy" listing: IAM Allow Policies, Service Gateway Policy (SGP) Enforcement, Destination Allowlist
-  - Three outbound arrows from Egress Gateway pointing right to destinations
+Arrows from the agent to each destination, solid, labeled "per-engine identity".
 
-- Far right "Destinations" (three target boxes stacked vertically):
-  - Box 1: "Gemini Models" (Vertex AI icon, label "gemini-2.5-flash / pro")
-  - Box 2: "MCP Servers" (Cloud Run icon, label "*.run.app")
-  - Box 3: "External APIs" (globe icon, label "Governed by SGP")
+A prominent yellow callout box: "Each engine gets its OWN identity. Recreating an engine mints a NEW identity and needs a fresh grant - update engines in place."
 
-- Full flow arrow across bottom: "User → Ingress Gateway → Agent Runtime → Egress Gateway → {Gemini Models, MCP Servers, External APIs}"
+Bottom strip, a gray dashed bordered region labeled "Agent Gateway - NOT ENABLED in this project":
+- Two faded gray boxes "Ingress Gateway (client-to-agent)" and "Egress Gateway (agent-to-anywhere)"
+- Small text: "agentGateways API returns 404; early access not granted"
 
-Style: Security-focused diagram with lock/shield icons. Blue for identity, orange for ingress gateway, red-orange for egress gateway. Green check marks on allowed flows, red X on blocked flows. Professional, clean. Title: "Agent Identity & Gateway Governance — Ingress + Egress"
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Agent Identity and Access Governance"
