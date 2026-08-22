@@ -43,17 +43,39 @@ from src.eval.dataset_integrity import EVAL_EVALSETS, TRAIN_EVALSETS, resolve
 
 MANIFEST_PATH = "src/eval/data/dataset_manifest.json"
 
+# In-code case lists that are NOT evalset JSON but still feed graded output — and
+# in the router's case a *monitored, alerting* series. `ROUTER_EVAL_CASES` drives
+# `agent_router/routing_accuracy_pct`, so editing it silently moves a published
+# metric; CLAUDE.md warns about this and nothing enforced it. Keyed by a
+# `python:` pseudo-path so the manifest can hold both kinds without ambiguity.
+CODE_CASE_LISTS: dict[str, str] = {
+    "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES": "regression",
+    "python:src.eval.agent_eval_configs.TRAVEL_EVAL_CASES": "regression",
+    "python:src.eval.agent_eval_configs.EXPENSE_EVAL_CASES": "regression",
+}
+
 # Repo-relative evalset path -> role. Built from the two families dataset_integrity
 # already defines, so a new evalset registered there is tracked here automatically.
 TRACKED: dict[str, str] = {
     **dict.fromkeys(EVAL_EVALSETS.values(), "regression"),
     **dict.fromkeys(TRAIN_EVALSETS.values(), "development"),
+    **CODE_CASE_LISTS,
 }
 
 _INITIAL_VERSION = "1.0.0"
 
 
+def _import_cases(spec: str) -> list:
+    """Resolve a ``python:module.ATTR`` pseudo-path to its case list."""
+    from importlib import import_module
+
+    module_path, _, attr = spec.removeprefix("python:").rpartition(".")
+    return list(getattr(import_module(module_path), attr))
+
+
 def _cases(path: str | Path) -> list:
+    if isinstance(path, str) and path.startswith("python:"):
+        return _import_cases(path)
     data = json.loads(resolve(path).read_text())
     return data.get("eval_cases") or data.get("evalCases") or []
 

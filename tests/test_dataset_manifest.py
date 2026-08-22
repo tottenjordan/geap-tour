@@ -147,3 +147,45 @@ class TestCli:
         monkeypatch.setattr(dm, "load_manifest", lambda *a, **k: {"datasets": {}})
         assert dm.main(["--check"]) == 1
         assert "Dataset drift" in capsys.readouterr().out
+
+
+class TestCodeCaseListsAreTracked:
+    """`ROUTER_EVAL_CASES` drives a MONITORED, ALERTING series but lived in Python,
+    outside the evalset-JSON the manifest covered — so editing it silently moved
+    `agent_router/routing_accuracy_pct`. CLAUDE.md warned about it; nothing enforced it."""
+
+    def test_the_router_cases_are_checksummed(self):
+        assert "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES" in dm.TRACKED
+
+    def test_a_python_case_list_resolves_and_counts(self):
+        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+
+        described = dm.describe("python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES")
+        assert described["n_cases"] == len(ROUTER_EVAL_CASES)
+
+    def test_the_router_set_is_large_enough_to_resolve_its_own_alert(self):
+        """The whole point of growing it 12 -> 40: at n=12 the Wilson interval
+        spanned the 80% alert for every possible outcome, including a perfect
+        score, so the metric could not distinguish healthy from failing."""
+        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+        from src.eval.stats import resolves_threshold
+
+        n = len(ROUTER_EVAL_CASES)
+        healthy = round(0.925 * n)
+        assert resolves_threshold(healthy, n, 0.80), f"n={n} still cannot resolve the 80% alert"
+
+    def test_the_complexity_bands_stay_balanced(self):
+        """Accuracy must not be dominated by whichever band is easiest."""
+        from collections import Counter
+
+        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+
+        counts = Counter(c["expected_complexity"] for c in ROUTER_EVAL_CASES)
+        assert set(counts) == {"low", "medium", "high"}
+        assert max(counts.values()) - min(counts.values()) <= 3
+
+    def test_router_prompts_are_unique(self):
+        from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+
+        prompts = [c["prompt"] for c in ROUTER_EVAL_CASES]
+        assert len(set(prompts)) == len(prompts)

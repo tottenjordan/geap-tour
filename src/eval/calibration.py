@@ -98,6 +98,7 @@ def calibration_metrics(
     judge: Sequence[float | None],
     *,
     tolerance: float = DEFAULT_TOLERANCE,
+    floor: float = DEFAULT_MIN_WITHIN_TOLERANCE,
 ) -> dict:
     """Judge-vs-human agreement over aligned score lists (both on the 0-1 axis).
 
@@ -108,23 +109,36 @@ def calibration_metrics(
     pairs = [(h, j) for h, j in zip(human, judge, strict=True) if j is not None]
     n_unparseable = len(judge) - len(pairs)
     if not pairs:
+        from src.eval.stats import power_report
+
         return {
             "n": 0,
             "mae": float("nan"),
             "bias": float("nan"),
             "within_tolerance": float("nan"),
+            "within_tolerance_ci": (0.0, 0.0),
+            "power": power_report(0, 0, floor),
             "pearson": float("nan"),
             "n_unparseable": n_unparseable,
         }
+    from src.eval.stats import power_report, wilson_ci
+
     hs = [h for h, _ in pairs]
     js = [j for _, j in pairs]
     diffs = [j - h for h, j in pairs]
-    within = sum(1 for d in diffs if abs(d) <= tolerance) / len(pairs)
+    n_within = sum(1 for d in diffs if abs(d) <= tolerance)
+    # `within_tolerance` is a proportion over a small n, so it carries real
+    # uncertainty: at n=32, 31/32 and 32/32 are not distinguishable. Report the
+    # interval alongside the point estimate so nobody reads a 3-point move as a
+    # result, and a `power` block against the gate floor so the PASS/FAIL verdict
+    # can decline to be a coin-flip.
     return {
         "n": len(pairs),
         "mae": sum(abs(d) for d in diffs) / len(pairs),
         "bias": sum(diffs) / len(pairs),
-        "within_tolerance": within,
+        "within_tolerance": n_within / len(pairs),
+        "within_tolerance_ci": wilson_ci(n_within, len(pairs)),
+        "power": power_report(n_within, len(pairs), floor),
         "pearson": pearson(hs, js),
         "n_unparseable": n_unparseable,
     }
@@ -381,8 +395,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             tolerance=args.tolerance,
         )
 
+    ci = result.get("within_tolerance_ci") or (float("nan"), float("nan"))
     print(f"Calibration: {result['n']} gold cases ({result['n_unparseable']} unparseable)")
-    print(f"  within ±{args.tolerance:.2f}: {result['within_tolerance']:.1%}")
+    print(
+        f"  within ±{args.tolerance:.2f}: {result['within_tolerance']:.1%}  "
+        f"95% CI [{ci[0]:.1%}, {ci[1]:.1%}]"
+    )
     print(f"  MAE: {result['mae']:.3f}   bias (judge-human): {result['bias']:+.3f}")
     print(f"  Pearson r: {result['pearson']:.3f}")
     if "reliability" in result:
@@ -394,9 +412,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         if human["n_annotators"] >= 2 and not math.isnan(human["alpha"]):
             print(f"  -> {ceiling_verdict(result['pearson'], human['alpha'])}")
 
-    ok = result["within_tolerance"] >= args.min_within_tolerance
-    print(f"CALIBRATION: {'PASS' if ok else 'FAIL'} (floor {args.min_within_tolerance:.0%})")
-    return 0 if ok else 1
+    # Three-valued, not two. The old gate compared a point estimate to a floor,
+    # so it could flip on noise in both directions — the original FAIL (22/32 =
+    # 68.8% against a 70% floor) had an interval CONTAINING the floor. An
+    # underpowered gate must not report a clean PASS, but it must not block CI
+    # either: "we cannot tell" exits 0 and says what sample size would settle it.
+    power = result.get("power") or {}
+    verdict = power.get("verdict", "inconclusive")
+    floor_pct = f"floor {args.min_within_tolerance:.0%}"
+    if verdict == "above":
+        print(f"CALIBRATION: PASS ({floor_pct}; interval clears it)")
+        return 0
+    if verdict == "below":
+        print(f"CALIBRATION: FAIL ({floor_pct}; interval is entirely below it)")
+        return 1
+    needed = power.get("needed_n")
+    detail = f"~{needed} cases would settle it" if needed else "the rate sits on the floor"
+    # Say which side the point estimate falls on. "Inconclusive" is a neutral word
+    # and a real degradation must not hide behind it: an observed rate under the
+    # floor still wants a human look, even when the sample can't prove it.
+    lean = (
+        "leaning FAIL — observed rate is below the floor"
+        if result["within_tolerance"] < args.min_within_tolerance
+        else "leaning pass"
+    )
+    print(
+        f"CALIBRATION: INCONCLUSIVE ({floor_pct}; the interval spans it at "
+        f"n={result['n']} — {lean}; {detail})"
+    )
+    return 0
 
 
 if __name__ == "__main__":
