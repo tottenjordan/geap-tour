@@ -144,9 +144,11 @@ def test_verify_reads_coordinator_quality_surface():
 
     data = vm.verify_monitor_results(output_format="json", client=client)
 
-    assert data["status"] == "ok"
+    # Both fixtures are tiny (n=3 with a point AT the floor, and n=2), so neither
+    # can resolve its threshold — the surface reports that rather than "ok".
+    assert data["status"] == "underpowered"
     quality = data["coordinator_quality"]
-    assert quality["status"] == "ok"
+    assert quality["status"] == "underpowered"
     assert quality["total_evals"] == 5
     assert quality["metrics"]["helpfulness"]["eval_count"] == 3
     # Only 3 points in the window -> below the sample floor -> flagged.
@@ -171,7 +173,11 @@ def test_verify_reads_router_efficiency_surface_with_directions():
     data = vm.verify_monitor_results(output_format="json", client=client)
 
     router = data["router_efficiency"]
-    assert router["status"] == "ok"
+    # n=2 per metric cannot resolve either threshold, so no alert is asserted —
+    # but the suppression must be visible, never silent.
+    assert router["status"] == "underpowered"
+    suppressed = {i["metric"] for i in data["insufficient_power"]}
+    assert {"routing_accuracy_pct", "classifier_latency_ms"} <= suppressed
     assert router["metrics"]["routing_accuracy_pct"]["out_of_bounds"] == 1
     assert router["metrics"]["routing_accuracy_pct"]["direction"] == "LT"
     assert router["metrics"]["classifier_latency_ms"]["out_of_bounds"] == 1
@@ -291,7 +297,7 @@ def test_verify_tolerates_missing_metric_descriptor():
     data = vm.verify_monitor_results(output_format="json", client=client)
 
     # The present metric still reads back; missing descriptors are just absent.
-    assert data["coordinator_quality"]["status"] == "ok"
+    assert data["coordinator_quality"]["status"] in ("ok", "underpowered")
     assert data["coordinator_quality"]["metrics"]["helpfulness"]["eval_count"] == 2
     assert "policy_compliance" not in data["coordinator_quality"]["metrics"]
     # Surfaces whose every metric 404'd degrade to empty, not a crash.
@@ -317,7 +323,7 @@ def test_verify_group_by_model_splits_into_per_model_buckets():
     data = vm.verify_monitor_results(output_format="json", client=client, group_by="model")
 
     quality = data["coordinator_quality"]
-    assert quality["status"] == "ok"
+    assert quality["status"] in ("ok", "underpowered")  # tiny fixture; bucketing is the subject
     assert quality["group_by"] == "model"
     # Two buckets, one per model, each with its own average — not a merged mean.
     hp = quality["metrics"]["helpfulness"]
@@ -372,3 +378,49 @@ def test_verify_bigquery_missing_table_does_not_crash():
         output_format="json", source="bigquery", bq_client=FakeBQClient()
     )
     assert data["status"] == "no_table"
+
+
+def test_a_well_powered_healthy_series_still_reads_ok():
+    """The guard against over-suppression: if a clearly-healthy series read
+    "underpowered", every alert would be silenced and the escalation list would be
+    permanently full — and therefore ignored."""
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness", [4.5, 4.6, 4.4, 4.7, 4.5, 4.6]
+        ),
+    ]
+    data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+
+    metric = data["coordinator_quality"]["metrics"]["helpfulness"]
+    assert metric["underpowered"] is False
+    assert metric["power"]["verdict"] == "healthy"
+    assert data["coordinator_quality"]["status"] in ("ok", "underpowered")
+    assert data["insufficient_power"] == []
+
+
+def test_a_well_powered_breach_still_alerts():
+    """Suppression must not swallow a real, resolvable failure."""
+    series = [
+        _make_series(
+            "custom.googleapis.com/agent_eval/helpfulness", [2.1, 2.0, 2.2, 1.9, 2.3, 2.0]
+        ),
+    ]
+    data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+
+    metric = data["coordinator_quality"]["metrics"]["helpfulness"]
+    assert metric["power"]["verdict"] == "breached"
+    assert metric["underpowered"] is False
+    assert metric["out_of_bounds"] == 6
+    assert data["insufficient_power"] == []
+
+
+def test_suppressed_metrics_report_the_sample_size_needed():
+    """Escalation is the mandatory half of suppress-and-escalate."""
+    series = [_make_series("custom.googleapis.com/agent_eval/helpfulness", [3.1, 2.9])]
+    data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+
+    [item] = data["insufficient_power"]
+    assert item["surface"] == "coordinator_quality"
+    assert item["metric"] == "helpfulness"
+    assert item["eval_count"] == 2
+    assert item["ci"] is not None

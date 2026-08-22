@@ -163,3 +163,144 @@ def win_rate_significance(
         "ci_high": hi,
         "alpha": alpha,
     }
+
+
+# ---------------------------------------------------------------------------
+# Statistical POWER — can this sample support the threshold it is judged against?
+# ---------------------------------------------------------------------------
+# A sample-size floor like MIN_SAMPLES is threshold-blind: it asks "are there
+# enough observations?" when the question that matters is "enough *for this
+# threshold*?". Those diverge badly. `routing_accuracy_pct` is computed from 12
+# router eval cases and alerts below 80%; at n=12 the Wilson interval spans 80%
+# for EVERY possible outcome, including a perfect 12/12 — a perfect score cannot
+# be distinguished from a failing one. `is_low_confidence(12)` is False, so the
+# blanket floor passes a metric that is pure noise relative to its own alert.
+#
+# These helpers ask the threshold-relative question instead.
+
+# Cap on the search in `min_n_for_threshold`. Beyond this the honest answer is
+# "this threshold is not reachable at any sample size you will collect".
+MAX_SEARCH_N = 10_000
+
+
+def resolves_threshold(
+    k: int, n: int, threshold: float, *, confidence: float = DEFAULT_CONFIDENCE
+) -> bool:
+    """True when ``k/n`` lands decisively on one side of ``threshold``.
+
+    Decisive means the whole Wilson interval sits above or below it. When the
+    interval *spans* the threshold, the pass/fail verdict is a coin-flip dressed
+    as a measurement, and callers should say "cannot tell" rather than pick a side.
+    """
+    if n <= 0:
+        return False
+    lo, hi = wilson_ci(k, n, confidence=confidence)
+    return lo > threshold or hi < threshold
+
+
+def min_n_for_threshold(
+    observed_rate: float, threshold: float, *, confidence: float = DEFAULT_CONFIDENCE
+) -> int | None:
+    """Smallest ``n`` at which ``observed_rate`` would resolve against ``threshold``.
+
+    This is what turns "underpowered" into something actionable — not "trust this
+    less" but "you need about 40 cases". Returns ``None`` when the rate sits on the
+    threshold (no sample size ever separates them) or the search cap is hit.
+
+    Searches upward rather than inverting the Wilson formula: the closed form is
+    fiddly and this runs a handful of times per report, not per item.
+    """
+    if math.isclose(observed_rate, threshold):
+        return None
+    n = 1
+    while n <= MAX_SEARCH_N:
+        # Round to the nearest achievable success count at this n.
+        if resolves_threshold(round(observed_rate * n), n, threshold, confidence=confidence):
+            return n
+        n += 1
+    return None
+
+
+def power_report(
+    k: int, n: int, threshold: float, *, confidence: float = DEFAULT_CONFIDENCE
+) -> dict:
+    """One shape every caller can report: is this verdict supported, and if not, what would be.
+
+    Keys: ``n``, ``rate``, ``ci`` (low, high), ``threshold``, ``resolved``,
+    ``needed_n`` (``None`` when already resolved or unreachable), and ``verdict``
+    — one of ``"above"`` / ``"below"`` / ``"inconclusive"``.
+    """
+    rate = (k / n) if n > 0 else 0.0
+    lo, hi = wilson_ci(k, n, confidence=confidence)
+    resolved = resolves_threshold(k, n, threshold, confidence=confidence)
+    verdict = "inconclusive"
+    if resolved:
+        verdict = "above" if lo > threshold else "below"
+    return {
+        "n": n,
+        "rate": rate,
+        "ci": (lo, hi),
+        "threshold": threshold,
+        "resolved": resolved,
+        "needed_n": None
+        if resolved
+        else min_n_for_threshold(rate, threshold, confidence=confidence),
+        "verdict": verdict,
+    }
+
+
+# Below this a bootstrap cannot express any uncertainty: resampling one or two
+# points yields a degenerate interval (n=1 gives a zero-width CI, which would read
+# as a confident verdict). Treat such samples as underpowered regardless.
+MIN_BOOTSTRAP_N = 3
+
+
+def mean_power_report(
+    scores: Sequence[float],
+    threshold: float,
+    comparison: str = "LT",
+    *,
+    confidence: float = DEFAULT_CONFIDENCE,
+) -> dict:
+    """Can this sample resolve whether its MEAN sits past ``threshold``?
+
+    The proportion-based :func:`power_report` answers "what share of points are
+    good", which is the wrong question for a monitored gauge: the alert fires on
+    the metric's *value*, so the claim under test is about the mean. Framing it as
+    a share also sets an unreachable bar — resolving a 90% good-share needs ~35
+    points, so a perfectly healthy 24-point series would read as underpowered and
+    every alert would be suppressed.
+
+    Uses the percentile bootstrap CI on the mean. ``comparison`` is ``"LT"`` (the
+    metric is a floor; breaching means falling below) or ``"GT"`` (a ceiling).
+
+    Returns ``resolved``, ``ci``, ``mean``, ``n`` and ``verdict`` — one of
+    ``"healthy"`` / ``"breached"`` / ``"inconclusive"``.
+    """
+    n = len(scores)
+    if n == 0:
+        return {
+            "n": 0,
+            "mean": float("nan"),
+            "ci": (float("nan"), float("nan")),
+            "threshold": threshold,
+            "resolved": False,
+            "verdict": "inconclusive",
+        }
+    lo, hi = bootstrap_mean_ci(scores, confidence=confidence)
+    spans = lo <= threshold <= hi
+    resolved = (not spans) and n >= MIN_BOOTSTRAP_N
+    if not resolved:
+        verdict = "inconclusive"
+    elif comparison == "GT":
+        verdict = "breached" if lo > threshold else "healthy"
+    else:
+        verdict = "breached" if hi < threshold else "healthy"
+    return {
+        "n": n,
+        "mean": sum(scores) / n,
+        "ci": (lo, hi),
+        "threshold": threshold,
+        "resolved": resolved,
+        "verdict": verdict,
+    }

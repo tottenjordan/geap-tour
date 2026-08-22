@@ -253,6 +253,60 @@ The pattern across both defects: **a rubric asked for something its inputs could
 not support**, and the judge answered anyway. Faithfulness avoids it by having
 the trajectory; the other four have to stay inside what the response text shows.
 
+### Statistical power (2026-08-22)
+
+P1.5 shipped confidence intervals and a sample floor. Auditing where they were
+actually *used* turned up three problems, and the third is the interesting one.
+
+**The intervals were decorative.** `verify_monitors` computed `low_confidence`
+and only rendered it as a `⚠`; it never touched `status`. A metric scored over 3
+samples alerted exactly like one over 300.
+
+**Three surfaces had no interval at all** — including `calibration.py`, which is
+a PASS/FAIL *gate*, plus `publish_router_efficiency` and `tool_faithfulness`,
+which both feed alerts.
+
+**`MIN_SAMPLES = 8` is threshold-blind, and that hid a dead metric.**
+`routing_accuracy_pct` was computed from **12** cases against an **80%** alert. At
+n=12 the Wilson interval spans 80% for *every possible outcome* — 12/12, 11/12,
+10/12, 9/12 — so a perfect score was statistically indistinguishable from a
+failing one, and one case flipping moved the metric 8.3 points. `is_low_confidence(12)`
+returned `False`, so nothing flagged it. **A blanket count cannot catch this; only
+a threshold-relative check can.**
+
+`stats.resolves_threshold` / `min_n_for_threshold` / `power_report` ask the
+threshold-relative question, and `mean_power_report` does it for a gauge's mean.
+Behaviour is **suppress-and-escalate**: a metric whose interval spans its
+threshold does not alert, and *must* appear in `verify_monitors`'
+`insufficient_power` block with the sample size that would settle it. Suppression
+without escalation is how a monitoring gap is created — the failure shape this
+repo keeps hitting — so the escalation half is not optional.
+
+The calibration gate is now three-valued: `PASS` / `FAIL` / `INCONCLUSIVE`, the
+last exiting 0 (an underpowered gate must not block CI on noise) but naming which
+side the point estimate leans, so a real degradation cannot hide behind a neutral
+word.
+
+`ROUTER_EVAL_CASES` grew **12 → 40**, balanced across the three complexity bands,
+which makes the 80% alert resolvable. That moves a published series — expect a
+step change — and it exposed a gap in the dataset manifest: it covered evalset
+JSON but not the **Python case lists that feed a monitored series**. Those are now
+checksummed too, so growing them is a versioned act.
+
+**A correction to numbers reported earlier in this work.** The rubric iteration
+quoted 68.8% → 96.9% → 100% as successive improvements. At n=32 the last two are
+not distinguishable (CIs [84.3%, 99.4%] and [89.3%, 100%]). The headline finding
+survives — 68.8% and 96.9% have *disjoint* intervals, so the gold-set correction
+was real and large — but "improved on every metric" was reading noise. The
+original FAIL was also unsound: 68.8%'s interval contains the 70% floor.
+
+**One design attempt failed and is worth recording.** The first power check
+modelled health as a *share of good points* against a 0.9 floor. Resolving that
+needs ~35 points, so a perfectly healthy 24-point series read "underpowered" and
+**every** alert would have been suppressed — the escalation list permanently full
+and therefore ignored. The claim under test is about the metric's *value*, not a
+share, so the check moved to a bootstrap CI on the mean.
+
 ### P2 — larger / infra
 7. **Expand + version datasets.** Grow adversarial + multi-turn + a long-context
    stress set; add `dataset_version` + checksum + a committed generation/curation

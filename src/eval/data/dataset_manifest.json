@@ -1,5 +1,23 @@
 {
   "datasets": {
+    "python:src.eval.agent_eval_configs.EXPENSE_EVAL_CASES": {
+      "checksum": "sha256:618cbe3a62da63f586dfbedbafe017aa1f7b23e8f3422bab4dd57411d62361dc",
+      "n_cases": 10,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES": {
+      "checksum": "sha256:71244325e2ed1abb30685a6d852545bef3bdc454f25a3322b3818aa96cda9aae",
+      "n_cases": 40,
+      "role": "regression",
+      "version": "2.0.0"
+    },
+    "python:src.eval.agent_eval_configs.TRAVEL_EVAL_CASES": {
+      "checksum": "sha256:99ce5e3135117d7c78c8e10f7aadd97aa115b688de7fff5e48e193ccfee7d8a0",
+      "n_cases": 10,
+      "role": "regression",
+      "version": "1.0.0"
+    },
     "src/agents/coordinator/coordinator_eval_set.evalset.json": {
       "checksum": "sha256:39a5b38f62545b0059e189db48f09d6adae3f6864576e36410a451f4cdbd59b1",
       "n_cases": 20,

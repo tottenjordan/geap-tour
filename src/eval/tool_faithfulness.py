@@ -316,6 +316,17 @@ def _print_report(result: dict) -> None:
         f"(mean {score if score is not None else 'n/a'} over "
         f"{result.get('n_scored')}/{result.get('n_total')} cases)"
     )
+    # A mean over a handful of cases can sit either side of the 3.0 floor by
+    # chance. Say so rather than letting a small-n number read as a verdict.
+    per_case = [c.get("score") for c in (result.get("cases") or []) if c.get("score") is not None]
+    if per_case:
+        from src.eval.stats import mean_power_report
+
+        power = mean_power_report([_to_monitored_scale(s) for s in per_case], 3.0, "LT")
+        lo, hi = power["ci"]
+        note = "" if power["resolved"] else "  (cannot resolve the 3.0 floor at this n)"
+        print(f"  95% CI [{lo:.2f}, {hi:.2f}] over n={power['n']}{note}")
+
     flagged = result.get("flagged") or []
     if not flagged:
         print("  no hallucinated actions flagged.")
