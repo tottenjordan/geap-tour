@@ -1,16 +1,21 @@
-Create a CI/CD pipeline diagram showing the GitHub Actions workflow.
+Create a CI/CD and automation diagram showing three GitHub Actions workflows, flowing left to right.
 
-Flow (left to right):
-1. "Developer" icon → "Push PR" → GitHub icon labeled "GitHub Actions"
-2. GitHub Actions triggers pipeline with steps:
-   - Step 1: "Install deps" (uv sync)
-   - Step 2: "Auth to GCP" (Workload Identity Federation)
-   - Step 3: "Deploy temp agent" (Agent Runtime)
-   - Step 4: "Run simulated eval" with decision diamond
-   - Decision: "All metrics ≥ 3.0?"
-     - Yes (green arrow) → "PR approved" → "Merge to main" → "Deploy production agent"
-     - No (red arrow) → "PR blocked" → "Review failure clusters" → back to Developer
-   - Step 5: "Cleanup temp agent" (always runs)
-3. Side note: "adk optimize" box with arrow labeled "Improve instructions" pointing back to the agent code
+Left: a gray "Developer" icon arrow "Pull request" arrow a dark box "GitHub Actions".
 
-Style: DevOps pipeline diagram. Blue for GitHub, green for success path, red for failure path. Clean, horizontal flow. Title: "CI/CD with Simulated Evaluation"
+From GitHub Actions, three horizontal lanes:
+
+Lane 1, green, labeled "tests.yaml - REQUIRED, cloud-free":
+"uv sync --all-groups" arrow "pytest (unit + config + safety corpus)" arrow green check "Blocks merge on failure"
+
+Lane 2, yellow, labeled "eval_gate.yaml - ADVISORY, label-gated":
+"Verify deployed engine config" arrow "Coordinator rubric eval" arrow "Multi-turn + empty-stream smoke" arrow yellow warning "Reports to job summary, does NOT block merge"
+- Small red note under this lane: "Scores a SHARED deployed engine, not the PR diff."
+
+Lane 3, blue, labeled "monitoring_publish.yaml - SCHEDULED hourly":
+"Verify engine config" arrow "Publish offline quality" arrow "Publish online quality" arrow "Summarize monitored surfaces"
+- Small note: "Runs unattended so the series never go stale."
+
+Right: all lanes point to a purple rounded rectangle "Cloud Monitoring".
+
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "CI/CD and Scheduled Monitoring"

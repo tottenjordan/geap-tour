@@ -77,19 +77,25 @@ uv run python -m src.eval.verify_monitors --format json
 
 ## Screenshots
 
-All screenshots are captured from real deployed GCP resources:
+> **Provenance (audited 2026-08-22):** these are console captures from a
+> **reference project (`wortz-project`)**, not from this repo's deployment in
+> `hybrid-vertex`. They illustrate what each Agent Platform console surface looks
+> like; they are **not** evidence of this system's state. Several show a different
+> agent ("Demo Finance Agent ADK v2") or an empty list. Where a caption below says
+> what the capture actually contains rather than what we wish it showed, that is
+> deliberate. Re-capturing against `hybrid-vertex` is the real fix.
 
 | Screenshot | Feature |
 |-----------|---------|
-| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail (geap-workshop-gateway) |
+| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail — **reference project only**; the `agentGateways` API 404s in `hybrid-vertex` (private preview, early access not granted) |
 | ![Cloud Run](docs/screenshots/session1_cloud_run_mcp_detail.png) | MCP server on Cloud Run |
-| ![Agent Engine](docs/screenshots/session1_agent_engine.png) | Multi-agent deployment |
-| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Agent Gateway (ingress + egress) |
-| ![Traces](docs/screenshots/session2_agent_traces.png) | Agent traces — session view with model calls and token usage |
+| ![Agent Engine](docs/screenshots/session1_agent_engine.png) | The Agent Runtime deployments console — the list is **empty** in this capture, with an "Enable APIs" banner |
+| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Gateways list showing ingress + egress — note the banner: Agent Gateway is in **Private Preview** and needs early access |
+| ![Traces](docs/screenshots/session2_agent_traces.png) | Trace session view — captured against a different agent ("Demo Finance Agent ADK v2", 0 tool calls), so it shows the *surface*, not our trajectories |
 | ![Trace Spans](docs/screenshots/session2_agent_trace_spans.png) | Trace spans — individual trace view |
 | ![Model Armor](docs/screenshots/session4_model_armor.png) | Input/output screening |
 | ![Evaluation](docs/screenshots/session2_evaluation_pipeline.png) | Three-tier eval pipeline |
-| ![Agent Registry](docs/screenshots/session3_agent_registry_mcp.png) | MCP servers in Agent Registry |
+| ![Agent Registry](docs/screenshots/session3_agent_registry_mcp.png) | The Agent Registry MCP Servers tab — lists Google's built-in servers (`agentregistry.googleapis.com`), not our search/booking/expense servers |
 | ![BigQuery Sink](docs/screenshots/session2_bigquery_sink.png) | Log Router sinks to BigQuery |
 | ![Policies](docs/screenshots/session3_policies_iam.png) | IAM Allow governance policies |
 | ![Business Policies](docs/screenshots/session3_business_policies.png) | Semantic Governance Policies (SGP) |
@@ -143,17 +149,18 @@ Router tiers by complexity score (defaults, DOE-tuned for cost savings): `<0.44`
 
 ### Paper Banana Architecture Diagrams
 
-> These were rendered before the direct-tools rearchitecture — diagram 01 still shows the coordinator delegating to travel/expense sub-agents, and 06 shows the eval gate as blocking rather than advisory. The tables above are the current source of truth.
+Regenerated 2026-08-22 against the current system. Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.sh`.
 
 | Diagram | Description |
 |---------|-------------|
-| ![Multi-Agent Topology](diagrams/outputs/01_multi_agent_topology.png) | Coordinator agent routing to travel and expense sub-agents with MCP tool servers |
-| ![Deployment Architecture](diagrams/outputs/02_deployment_architecture.png) | Cloud Run MCP servers + Agent Runtime deployment topology |
-| ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three-tier evaluation: one-time, continuous, and CI/CD simulated |
-| ![Agent Identity & Gateway](diagrams/outputs/04_agent_identity_gateway.png) | SPIFFE identity, attestation policies, and Agent Gateway flow |
-| ![Observability Stack](diagrams/outputs/05_observability_stack.png) | OTel traces → Cloud Trace → BigQuery pipeline |
-| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | GitHub Actions simulated eval gate on pull requests |
-| ![Model Armor](diagrams/outputs/07_agent_armor.png) | Model Armor input/output screening with guardrail callbacks |
+| ![Platform Overview](diagrams/outputs/08_platform_overview.png) | Single-slide overview: clients → guardrail → the two agents → MCP tools and models → the three eval surfaces |
+| ![Multi-Agent Topology](diagrams/outputs/01_multi_agent_topology.png) | Two independent **direct-tools** topologies — the coordinator and the 5-tier router each hold all three MCP toolsets; neither delegates to sub-agents |
+| ![Deployment Architecture](diagrams/outputs/02_deployment_architecture.png) | Agent Engine deployment: per-engine SPIFFE identity, the mandatory `cpu 4 / memory 16Gi`, managed Sessions and Memory Bank, MCP servers on Cloud Run |
+| ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three publishing surfaces — offline snapshot (canonical), client-side online monitor with `infra_empty_rate` split out, and router efficiency |
+| ![Agent Identity](diagrams/outputs/04_agent_identity_gateway.png) | Per-engine SPIFFE identity and the `roles/agentregistry.viewer` grant; Agent Gateway is shown greyed out because it is not enabled here |
+| ![Observability Stack](diagrams/outputs/05_observability_stack.png) | Platform-emitted telemetry (always on) vs self-reported quality series (only while a publisher runs) |
+| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | Three workflows: required cloud-free tests, the **advisory** eval gate, and the hourly scheduled publish |
+| ![Model Armor](diagrams/outputs/07_agent_armor.png) | Layered screening — the client-side guardrail always runs; Model Armor templates attach **only** on a regional Gemini-2.x backbone |
 
 ## Project Structure
 

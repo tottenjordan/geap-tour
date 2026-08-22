@@ -1,40 +1,22 @@
-Create a security architecture diagram showing Agent Armor (Model Armor) protecting an AI agent system.
+Create a security diagram showing layered prompt screening for an AI agent, laid out left to right.
 
-Layout (left to right, three zones):
+Left: a red ellipse "User prompt".
 
-Zone 1 "Client Input":
-- User icon sending a message
-- Arrow labeled "User Prompt" pointing right
+Layer 1, a red octagon labeled "Client-side guardrail (ALWAYS ACTIVE)":
+- Subtitle "input_guardrail_callback"
+- Bullet list: "blocklist patterns", "length limits", "emits guardrail.blocked span + metric"
+- Two outgoing arrows: a red one labeled "blocked" to a red box "Rejection message", and a green one labeled "allowed" continuing right.
 
-Zone 2 "Agent Armor" (center, prominent):
-- Large shield icon with "Model Armor" label
-- Two screening layers shown as stacked filter bars:
-  - Top bar "Input Screening" with icons for:
-    - Prompt Injection Detection (lock icon)
-    - Content Safety (checkmark icon)
-    - Sensitive Data Protection (eye-slash icon)
-    - Malicious URL Detection (link-break icon)
-  - Bottom bar "Output Screening" with icons for:
-    - Content Safety
-    - Sensitive Data Redaction
-    - Compliance Checks
-- Configuration badges:
-  - "Confidence: MEDIUM_AND_ABOVE"
-  - "Enforcement: INSPECT_AND_BLOCK"
+Layer 2, a red octagon labeled "Model Armor templates (CONDITIONAL)":
+- Subtitle "server-side screening: prompt injection, content safety, sensitive data, malicious URLs"
+- A prominent yellow decision box in front of it reading: "Only attached when the backbone is REGIONAL GEMINI 2.x"
+- Two branches out of the decision:
+  - Green branch "gemini-2.5-flash -> templates active"
+  - Gray branch "Gemini 3.x (global endpoint) or Claude (LiteLLM) -> templates omitted, client-side guardrail is the only layer"
 
-Zone 3 "Agent Runtime":
-- Three agent boxes (Travel, Expense, Coordinator) each with a small shield badge
-- Connected to MCP servers below
-- OTel traces flowing right to Cloud Trace
+Right: a green rounded rectangle "Agent Engine" then a purple rounded rectangle "Vertex AI Model".
 
-Flow arrows:
-- User → Input Screening → Agent (green "PASS" path)
-- User → Input Screening → Blocked (red "BLOCK" path, returns rejection message)
-- Agent → Output Screening → User (green "PASS" path)
-- Agent → Output Screening → Redacted (orange "REDACT" path)
+Bottom strip, a gray bordered region "Project floor setting (inspect-only) + Cloud Logging" with an arrow to a blue box "Security dashboard".
 
-Additional detail:
-- before_agent_callback label on the input path showing "client-side guardrails"
-- ModelArmorConfig label on the agent boxes showing "server-side screening"
-
-Style: Security-focused design with shield motifs. Blue for normal flow, red for blocked, green for passed. Professional, clean. Title: "Agent Armor — Input & Output Guardrails"
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Layered Prompt Screening: Client Guardrail + Model Armor"
