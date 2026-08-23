@@ -201,10 +201,15 @@ Score: <1-5>"""
 def score_cases(io_cases: Sequence[dict], generate_fn: Callable[[str], str]) -> dict:
     """Judge each captured ``{prompt, response, actual_trajectory}``; aggregate.
 
-    Returns ``{"score": mean 0-1 | None, "n_scored", "n_total", "flagged": [...]}``
-    where ``flagged`` holds only cases the judge named a hallucinated action for
-    (``{"prompt", "hallucinated": [...], "score"}``). Unparseable verdicts are
-    dropped from the mean (mirrors :func:`src.eval.tool_use_judge.score_pairs`).
+    Returns ``{"score": mean 0-1 | None, "n_scored", "n_total", "flagged": [...],
+    "per_case_scores": [...]}`` where ``flagged`` holds only cases the judge named
+    a hallucinated action for (``{"prompt", "hallucinated": [...], "score"}``).
+    Unparseable verdicts are dropped from the mean (mirrors
+    :func:`src.eval.tool_use_judge.score_pairs`).
+
+    ``per_case_scores`` exists so a caller can put an interval on the mean: this
+    metric is published from a handful of cases against a 3.0 floor, and a bare
+    mean over 6 cases hides how uncertain it is.
     """
     scores: list[float] = []
     flagged: list[dict] = []
@@ -225,6 +230,7 @@ def score_cases(io_cases: Sequence[dict], generate_fn: Callable[[str], str]) -> 
         "n_scored": len(scores),
         "n_total": len(io_cases),
         "flagged": flagged,
+        "per_case_scores": scores,
     }
 
 
@@ -318,7 +324,7 @@ def _print_report(result: dict) -> None:
     )
     # A mean over a handful of cases can sit either side of the 3.0 floor by
     # chance. Say so rather than letting a small-n number read as a verdict.
-    per_case = [c.get("score") for c in (result.get("cases") or []) if c.get("score") is not None]
+    per_case = list(result.get("per_case_scores") or [])
     if per_case:
         from src.eval.stats import mean_power_report
 

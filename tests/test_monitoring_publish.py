@@ -2,8 +2,8 @@
 
 Workflows are the least-tested code in most repos and the easiest place for a
 silent regression: nothing type-checks them, and a mistake only shows up as
-metrics that quietly stop arriving — or, for the faithfulness flag, as a demo
-artefact that gets erased with no error anywhere.
+metrics that quietly stop arriving — which is exactly what happened to
+tool_faithfulness, whose series went empty for days without a single error.
 
 These are cheap structural assertions on the committed YAML, not a CI simulation.
 """
@@ -31,25 +31,51 @@ def steps(workflow):
     return workflow["jobs"]["publish"]["steps"]
 
 
+def _load_steps():
+    """Steps list, for tests that don't take the module-scoped fixture."""
+    return yaml.safe_load(WORKFLOW.read_text())["jobs"]["publish"]["steps"]
+
+
 def _step(steps, needle):
     return next(s for s in steps if needle in (s.get("name") or ""))
 
 
-class TestFaithfulnessFlagIsPresent:
-    """THE test. `demo_readiness` treats a RED tool_faithfulness publish as a
-    deliberate demo regression point; an hourly healthy republish erases it with
-    no error, in a workflow nobody watches."""
+class TestFaithfulnessIsActuallyPublished:
+    """The metric must reach Cloud Monitoring, or its alert can never fire.
 
-    def test_the_offline_publish_passes_no_faithfulness(self, steps):
-        run = _step(steps, "Publish offline quality")["run"]
-        assert "publish_offline_eval" in run
+    History worth keeping: the bridge was run with --no-faithfulness to avoid
+    overwriting a "deliberate RED demo point", and the series went EMPTY as a
+    result — the hallucinated-action detector, the most safety-relevant metric
+    here, had no data for days. The RED is produced on demand seconds before a
+    demo and was never a persisted artifact, so nothing was being protected.
+    """
+
+    def test_faithfulness_has_its_own_publishing_step(self):
+        assert _step(_load_steps(), "Publish tool-call faithfulness")
+
+    def test_that_step_actually_publishes(self):
+        run = _step(_load_steps(), "Publish tool-call faithfulness")["run"]
+        assert "tool_faithfulness" in run
+        assert "--publish" in run
+        assert "--dry-run" not in run, "a dry run would leave the series empty"
+
+    def test_the_run_is_bounded(self):
+        """It is the priciest judge — one trajectory capture plus one judge call
+        per case. Unbounded hourly would be the reason someone disables it again."""
+        run = _step(_load_steps(), "Publish tool-call faithfulness")["run"]
+        assert "--limit" in run
+
+    def test_the_bridge_still_skips_it_to_avoid_double_publishing(self):
+        """Two publishers on one series would double-write every hour. The bridge
+        keeps --no-faithfulness, but now for THIS reason, not to protect a demo."""
+        run = _step(_load_steps(), "Publish offline quality")["run"]
         assert "--no-faithfulness" in run
 
-    def test_the_flag_is_documented_at_the_top_of_the_file(self):
-        """A future editor deleting the flag should hit the reason first."""
-        header = WORKFLOW.read_text().split("on:")[0]
-        assert "--no-faithfulness" in header
-        assert "DO NOT REMOVE" in header.upper()
+    def test_the_separation_is_explained_in_the_file(self):
+        """A future editor deleting either half should hit the reason first."""
+        text = WORKFLOW.read_text()
+        assert "--no-faithfulness" in text
+        assert "never fire" in text
 
 
 class TestScheduling:

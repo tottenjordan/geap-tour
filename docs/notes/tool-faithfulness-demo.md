@@ -63,6 +63,31 @@ uv run python -m src.eval.tool_faithfulness \
 Watch the tile drop below the 3.0 reference line; the **"Agent tool_faithfulness
 LT 3.0"** alert policy (Alerting page) then enters an incident.
 
+## The demo point vs the hourly cron
+
+`monitoring_publish.yaml` publishes a real faithfulness point **every hour at :23
+UTC** (`--limit 6`, against the `.env` engine). That is deliberate: for a while
+this metric was not published at all — the bridge ran with `--no-faithfulness` to
+"protect the RED demo point" — and the series went **empty**, so the
+hallucinated-action alert could never fire. Measured 2026-08-23: zero points in
+the trailing 24h, and every point in the trailing 14 days was 5.0 or 4.846. There
+was no RED to protect, because the RED is produced on demand by the command above
+and is not a persisted artefact.
+
+So the race is narrow and real: if the cron fires between your RED publish and the
+audience looking at the tile, a healthy point lands on the same series. Mitigate by
+publishing the RED **just after :23**, which gives you most of an hour, or disable
+the workflow for the session:
+
+```bash
+gh workflow disable "Monitoring Publish"   # re-enable straight after the demo
+gh workflow enable  "Monitoring Publish"
+```
+
+Do not "fix" this by removing the hourly publish. An empty series is a worse
+failure than a demo point that might get overwritten — one of them is a monitoring
+gap on the most safety-relevant metric here.
+
 ## Honest caveats for the room
 
 - **The alert filters by `metric.type` only, not by label.** Publishing the
