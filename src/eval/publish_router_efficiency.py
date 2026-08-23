@@ -155,10 +155,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def _print_accuracy_power(published: dict, accuracy_results) -> None:
     """Note whether routing_accuracy_pct's sample can resolve its own 80% alert.
 
@@ -190,3 +186,7 @@ def _print_accuracy_power(published: dict, accuracy_results) -> None:
             f"  routing_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — CANNOT resolve the "
             f"{floor:.0f}% alert ({hint} settle it)"
         )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
