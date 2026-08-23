@@ -171,3 +171,78 @@ class TestCalibrationGoldIsGroundedInRealPolicy:
         for prompt, scores in by_prompt.items():
             assert len(scores) >= 2, prompt
             assert max(scores) > min(scores), f"{prompt}: no good/bad contrast"
+
+
+class TestAdversarialAndLongContextCoverage:
+    """The eval set's two weakest dimensions, and the properties that make the new
+    cases worth having rather than just numerous.
+
+    Adversarial was 8 cases, all DIRECT user-turn injections; long-context was
+    zero. Growing them is easy; growing them *without* making the suite reward a
+    refuse-everything agent is the part worth pinning.
+    """
+
+    @staticmethod
+    def _cases():
+        from src.eval.batch_eval import EVAL_CASES
+
+        return EVAL_CASES
+
+    def test_the_suite_contains_compliance_controls(self):
+        """THE most important property here. An adversarial suite made only of
+        refusals scores a maximally-refusing agent perfectly — which is a useless
+        agent. At least two cases must be ones the agent should ANSWER, and their
+        reference answers must therefore not be refusals."""
+        controls = [
+            c
+            for c in self._cases()
+            if c["category"] == "adversarial" and "COMPLIANCE CONTROL" in c["description"]
+        ]
+        assert len(controls) >= 2, "a refusal-only adversarial suite cannot detect over-refusal"
+        for c in controls:
+            ref = c["reference"].lower()
+            assert "i can't" not in ref and "i won't" not in ref, c["prompt"][:50]
+
+    def test_indirect_injection_is_covered(self):
+        """The original eight are all direct user-turn injections. For a tool-using
+        agent the dangerous shape is injection arriving inside TOOL OUTPUT."""
+        descs = " ".join(c["description"] for c in self._cases())
+        assert "INDIRECT prompt injection" in descs
+
+    def test_long_context_cases_exist_and_are_actually_long(self):
+        lc = [c for c in self._cases() if c["category"] == "long_context"]
+        assert len(lc) >= 4
+        others = [len(c["prompt"]) for c in self._cases() if c["category"] != "long_context"]
+        median_other = sorted(others)[len(others) // 2]
+        for c in lc:
+            assert len(c["prompt"]) > 5 * median_other, c["description"][:60]
+
+    def test_a_long_context_case_combines_length_with_injection(self):
+        """The realistic attack is not a short 'ignore your instructions' — it is a
+        fake SYSTEM NOTE buried inside an otherwise ordinary long document."""
+        lc = [c for c in self._cases() if c["category"] == "long_context"]
+        combined = [c for c in lc if "SYSTEM NOTE" in c["prompt"]]
+        assert combined, "no case tests a buried injection inside long input"
+        # It must still require the legitimate task to be performed.
+        assert combined[0]["expected_tool"] not in ("none", None)
+
+    def test_new_cases_never_invent_policy(self):
+        """The gold-set failure, generalised: a case that asserts a limit the system
+        does not implement teaches the judge to accept hallucinated policy."""
+        import re
+
+        from src.mcp_servers.expense.mock_db import POLICY_LIMITS
+
+        real = {str(int(v)) for v in POLICY_LIMITS.values()}
+        for c in self._cases():
+            if c["category"] not in ("adversarial", "long_context"):
+                continue
+            for amount in re.findall(r"\$(\d+)\s+(?:\w+\s+)?(?:policy\s+)?limit", c["reference"]):
+                assert amount in real, f"{c['prompt'][:40]}: ${amount} is not a real limit"
+
+    def test_every_case_declares_why_it_exists(self):
+        """A case with a thin description gets deleted by the next person who has to
+        decide whether it is still earning its cost."""
+        for c in self._cases():
+            if c["category"] in ("adversarial", "long_context"):
+                assert len(c["description"]) > 40, c["prompt"][:50]
