@@ -127,11 +127,31 @@ patch (env vars are baked at package time):
   coordinators currently have different security postures. Worth reconciling
   intentionally rather than by accident.
 
-Separately, `.env` still names five tier engine IDs (`LITE_/FLASH_/PRO_/SONNET_/
-OPUS_ENGINE_ID`) that **no longer exist**. `cross_model_experiment.py`,
-`generate_optimization_report.py` and `setup_apphub.sh` read them and will target
-nothing. Left as-is pending a decision to redeploy the tier agents or drop the
-vars.
+### Tier engines — resolved 2026-08-23
+
+`.env`'s five tier engine ids (`LITE_/FLASH_/PRO_/SONNET_/OPUS_ENGINE_ID`) named
+engines that no longer existed, and three consumers read them:
+`cross_model_experiment.py`, `generate_optimization_report.py` and
+`setup_apphub.sh`. **Redeployed.** All five models were preflighted as served
+first (`src/eval/preflight.py`) so five deploys weren't spent discovering a 404:
+
+| agent | model | engine |
+| --- | --- | --- |
+| lite | `gemini-3.1-flash-lite` | `4744816535585947648` |
+| flash | `gemini-3.5-flash` | `7050659544799641600` |
+| pro | `gemini-3.1-pro-preview` | `1047361241514770432` |
+| sonnet | `claude-sonnet-4-6` | `5659047259942158336` |
+| opus | `claude-opus-4-6` | `3508578437872746496` |
+
+All five verify clean (0 critical) and serve real answers — including the Claude
+tiers, which are the OOM-prone ones and now get 16Gi by default. The
+`cross_model_experiment` preflight guard no longer fires.
+
+**These ids live only in `.env`, which is gitignored.** Any other machine or CI
+runner still has no tier engines; the guard will (correctly) refuse there. Cost
+note: five engines at `min_instances=1` are keep-warm around the clock for a
+capability used occasionally — worth dialling to scale-to-zero if the
+cold-start risk to an experiment run is acceptable.
 
 ## Scope
 
