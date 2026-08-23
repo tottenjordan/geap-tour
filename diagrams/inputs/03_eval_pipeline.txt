@@ -1,19 +1,24 @@
-Create a pipeline diagram showing three evaluation approaches flowing left to right.
+Create a pipeline diagram of an agent evaluation system with three publishing surfaces, flowing left to right.
 
-Three parallel swim lanes:
+Lane 1, blue, labeled "Offline snapshot (canonical)":
+"Curated evalset (~50 cases, versioned + checksummed)" arrow "Vertex AI Gen AI Evaluation Service" arrow "Standalone judges: policy_compliance, tool_use, faithfulness" arrow "custom.googleapis.com/agent_eval/*"
 
-Lane 1 "One-Time Evaluation":
-- Box: "Eval Dataset (5 prompts)" → Arrow → Box: "PointwiseMetric Rubrics" → Arrow → Box: "Score Report"
-- Subtitle: "Manual, on-demand"
+Lane 2, green, labeled "Online monitor (client-side, continuous)":
+"Live stream_query traffic" arrow "Partition out empty-at-200 responses" arrow "Rubric judges" arrow "custom.googleapis.com/agent_online_eval/*"
+- A small red box branching off the partition step: "infra_empty_rate (separate infra signal, not quality)"
 
-Lane 2 "Online Monitors (Continuous)":
-- Box: "Live Agent Traffic" → Arrow → Box: "Cloud Trace Telemetry" → Arrow → Box: "10-min Cycle Evaluator" → Arrow → Box: "BigQuery Results"
-- Subtitle: "Automatic, continuous"
+Lane 3, yellow, labeled "Router efficiency":
+"Router eval cases (40, balanced across complexity)" arrow "Complexity accuracy + cost model" arrow "custom.googleapis.com/agent_router/*"
 
-Lane 3 "Simulated Evaluation (CI/CD)":
-- Box: "generate_conversation_scenarios()" → Arrow → Box: "run_inference()" → Arrow → Box: "evaluate()" → Arrow → Diamond: "Score ≥ 3.0?" with two paths: Yes → "Deploy" (green), No → "Block PR" (red)
-- Subtitle: "On every PR"
+Right side, all three lanes converge into a purple rounded rectangle "Cloud Monitoring" containing two stacked boxes:
+- "Static floors (alert below 3.0)"
+- "Rolling-baseline z-score + statistical power check"
 
-Below all lanes: A box labeled "Failure Cluster Analysis" with arrow from the score reports, showing "generate_loss_clusters()" → "Grouped failure patterns"
+Below the lanes, a gray bordered region labeled "Judge trust":
+- "Diverse Gemini judge panel (median + Krippendorff alpha)"
+- "Judge-vs-human calibration against a gold set (no engine required)"
 
-Style: Clean flowchart with soft colors. Blue for one-time, green for continuous, orange for CI/CD. White background. Title: "Evaluation Pipeline"
+Bottom note in small text: "Native Vertex Online Evaluators are OFF by default; the offline bridge is the canonical source."
+
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Evaluation and Monitoring Pipeline"

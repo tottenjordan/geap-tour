@@ -1,15 +1,26 @@
-Create a clean, professional architecture diagram showing a multi-agent system with MCP tool servers.
+Create an architecture diagram of a two-topology agent system on Vertex AI Agent Engine.
 
-Layout (left to right):
-- Left column: Three agent boxes labeled "Coordinator Agent", "Travel Agent", "Expense Agent" — each with the Google ADK logo and "LlmAgent" subtitle
-- Right column: Three MCP server boxes labeled "Search MCP", "Booking MCP", "Expense MCP" — each with a gear icon and "FastMCP" subtitle
-- Arrows connecting agents to their MCP servers:
-  - Coordinator → Search (dashed, labeled "read-only")
-  - Travel → Search (solid)
-  - Travel → Booking (solid)
-  - Expense → Expense MCP (solid)
-  - Coordinator → Travel (dotted, labeled "sub-agent")
-  - Coordinator → Expense Agent (dotted, labeled "sub-agent")
-- All arrows labeled "StreamableHTTP"
+IMPORTANT: neither agent delegates to sub-agents. Both hold the MCP toolsets directly.
 
-Style: Google Cloud architecture diagram style with soft blue/green colors, rounded corners, white background. Include a title "Multi-Agent + MCP Topology" at the top.
+Left group, labeled "Coordinator Agent (direct tools)":
+- One green rounded rectangle "Coordinator Agent", subtitle "ADK LlmAgent - gemini-2.5-flash"
+- A small purple box attached to it: "Memory Bank (PreloadMemoryTool)"
+
+Right group, labeled "Multi-Model Router (5 tiers)":
+- One green rounded rectangle "Router Agent", subtitle "TierRoutingLlm swaps the model per turn"
+- Below it a horizontal row of five small purple boxes, left to right:
+  "lite gemini-2.5-flash-lite", "flash gemini-2.5-flash", "pro gemini-2.5-pro", "sonnet claude-sonnet-4-6", "opus claude-opus-4-6"
+- A blue box feeding the router: "Complexity Classifier - scores 0 to 1"
+
+Center bottom, a blue bordered region labeled "MCP Tool Servers on Cloud Run":
+- Three teal rounded rectangles: "Search MCP", "Booking MCP", "Expense MCP", each subtitled "FastMCP, streamable-http"
+
+Connections:
+- Coordinator Agent to ALL THREE MCP servers, solid arrows labeled "streamable-http"
+- Router Agent to ALL THREE MCP servers, solid arrows labeled "streamable-http"
+- A gray box "Agent Registry" with dashed arrows to both agents, labeled "resolves MCP server, falls back to direct Cloud Run URL"
+
+Bottom note in small text: "travel_agent and expense_agent are deployed and evaluated independently - they are NOT sub-agents of the coordinator."
+
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Agent Topologies: Direct-Tools Coordinator + 5-Tier Router"

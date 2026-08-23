@@ -1,15 +1,24 @@
-Create an observability stack diagram showing how telemetry flows from agents to monitoring.
+Create an observability architecture diagram showing two independent telemetry paths, flowing left to right.
 
-Flow (left to right):
-- Source: "ADK Agent" box with "OTel Auto-Instrumentation" badge
-  - Env vars shown: OTEL_SEMCONV_STABILITY_OPT_IN, OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
-- Arrow labeled "OTLP" to:
-- Three GCP services in parallel:
-  1. Cloud Trace icon → "Distributed Traces" → "Span details, latency"
-  2. Cloud Logging icon → "Structured Logs" → "Agent interactions"
-  3. Cloud Monitoring icon → "Metrics & Alerts" → "Quality alerts (score < threshold)"
-- All three feed into:
-- BigQuery icon → "Eval Results Dataset" → "Online monitor scores, failure clusters"
-- Below BigQuery: "Cloud Monitoring Alert" → "Notification Channel" (email/Slack)
+Left: a green rounded rectangle "Agent Engine (ADK agent)" with a badge "OpenTelemetry auto-instrumentation".
 
-Style: Google Cloud product icons, clean flow diagram. Each GCP service uses its official icon color. White background. Title: "Full Observability Stack"
+Path A, upper, labeled "Platform-emitted (always on)":
+- Arrow to a blue "Cloud Trace" box: "agent / tool / model span tree"
+- Arrow to a blue "Cloud Logging" box: "structured runtime logs"
+- Arrow to a purple "Cloud Monitoring" box: "reasoning_engine/request_latencies, request_count"
+
+Path B, lower, labeled "Self-reported (only while eval publishers run)":
+- A green box "Eval publishers" arrow to a purple "Cloud Monitoring" box containing three stacked labels:
+  "custom.googleapis.com/agent_eval/*", "custom.googleapis.com/agent_online_eval/*", "custom.googleapis.com/agent_router/*"
+
+Right: a red octagon "Alert Policies" with two grouped lists:
+- "Self-reported: quality floors, infra_empty_rate ceiling"
+- "Managed engine health: p99 latency > 5s, 5xx rate > 5%"
+Arrow from Alert Policies to a gray box "Notification channel".
+
+A gray dashed box at the bottom, faded, labeled "BigQuery agent analytics - DORMANT (opt-in, not wired)".
+
+Callout box: "The managed engine metrics page even with no client-side instrumentation running. The custom series exist only while a publisher runs."
+
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Observability: Platform Metrics + Self-Reported Quality"

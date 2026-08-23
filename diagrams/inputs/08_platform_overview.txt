@@ -1,0 +1,23 @@
+Create a single-slide platform overview diagram of a corporate travel and expense agent system on Google Cloud, laid out top to bottom in four horizontal bands.
+
+Band 1, Clients: a red ellipse labeled Users / Eval clients / CI.
+
+Band 2, Agents - a blue bordered region labeled Vertex AI Agent Engine:
+- Green rounded rectangle labeled Coordinator Agent, subtitle: direct tools, Memory Bank
+- Green rounded rectangle labeled Router Agent, subtitle: 5 complexity tiers, swaps model per turn
+- A red octagon between the clients and the agents labeled Client-side guardrail (always on)
+- Small badge on the region: per-engine SPIFFE identity, cpu 4 / memory 16Gi
+
+Band 3, Tools and Models, two groups side by side:
+- Teal bordered group labeled MCP Servers on Cloud Run with three boxes: Search MCP (search_flights, search_hotels), Booking MCP (book_flight, book_hotel, cancel_booking), Expense MCP (check_expense_policy, submit_expense, get_user_expenses)
+- Purple bordered group labeled Vertex AI Models with two boxes: Gemini 2.5 and 3.x, Claude via LiteLLM
+
+Band 4, Evaluation and Observability, three boxes left to right feeding a single destination:
+- Offline rubric snapshot
+- Client-side online monitor
+- Router efficiency
+All three arrow into a purple rounded rectangle labeled Cloud Monitoring, which arrows into a red octagon labeled Alert policies.
+
+Arrows: Clients down through the guardrail into the agents; agents down to BOTH the MCP group and the Models group; agents dashed to a blue Cloud Trace box on the right labeled OpenTelemetry.
+
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Pure clean white background #FFFFFF. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.

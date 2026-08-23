@@ -1,27 +1,26 @@
-Create a deployment architecture diagram for Google Cloud Platform.
+Create a Google Cloud deployment architecture diagram, laid out top to bottom.
 
-Layout (top to bottom):
-- Top section "Users": A user icon with arrow pointing down
+Top: a red ellipse "Users / Eval Clients" with a downward arrow labeled "stream_query".
 
-- Ingress layer: A horizontal bar labeled "Ingress Gateway (Client-to-Agent)" with a gateway icon
-  - Sub-label: "AuthN, Rate Limiting, Request Validation"
-  - Arrow from Users down through Ingress Gateway
+Middle, a large blue bordered region labeled "Vertex AI Agent Engine (us-central1)":
+- Two green rounded rectangles side by side: "Coordinator Agent" and "Router Agent"
+- Each shows three small badges underneath: "AdkApp", "cpu 4 / memory 16Gi", "min_instances 4"
+- A red octagon badge on the region labeled "AGENT_IDENTITY (SPIFFE)"
+- Two purple cylinders attached to the region: "Managed Sessions" and "Memory Bank"
 
-- Middle section "Vertex AI Agent Runtime": Three boxes for deployed agents (Travel Agent, Expense Agent, Coordinator) inside a blue bordered region labeled "Agent Engine". Each box shows "AdkApp + OTel Tracing"
-  - "SPIFFE Identity" badge on Agent Runtime region
+Below, a green bordered region labeled "Cloud Run":
+- Three teal rounded rectangles: "Search MCP", "Booking MCP", "Expense MCP"
 
-- Egress layer: A horizontal bar labeled "Egress Gateway (Agent-to-Anywhere)" with a gateway/shield icon
-  - Sub-label: "IAM Allow Policies, SGP Enforcement"
-  - Arrows from Agent Runtime boxes down through Egress Gateway
+Left side, a gray rounded rectangle "Agent Registry" with a dashed arrow to the Agent Engine region labeled "resolve MCP server (needs roles/agentregistry.viewer)".
 
-- Bottom section "Destinations" (three columns):
-  - Left column "Gemini Models": Vertex AI icon, label "gemini-2.5-flash / pro"
-  - Center column "Cloud Run MCP Servers": Three service boxes (Search MCP :8001, Booking MCP :8002, Expense MCP :8003) inside a green bordered region
-  - Right column "External APIs": Globe icon, label "Governed by SGP"
+Right side, a purple rounded rectangle "Vertex AI Models" listing "Gemini 2.5 / Gemini 3.x / Claude via LiteLLM".
 
-- Arrows from Egress Gateway down to each destination column
+Arrows:
+- Agent Engine down to Cloud Run region, solid, labeled "streamable-http"
+- Agent Engine right to Vertex AI Models, solid, labeled "generateContent"
+- Agent Engine right to a "Cloud Trace" icon, dashed, labeled "OpenTelemetry"
 
-- Side annotations:
-  - "OTel → Cloud Trace" arrow going right from Agent Runtime to a Cloud Trace icon
+Callout box in the corner, gray: "memory 16Gi is required on EVERY engine - the 4Gi default OOM-kills workers and returns HTTP 200 with an empty body."
 
-Style: Google Cloud official architecture diagram style. Use GCP product icons where possible. White background, professional colors. Orange for ingress gateway bar, red-orange for egress gateway bar. Title: "Deployment Architecture"
+Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
+Title at top: "Deployment Architecture on Vertex AI Agent Engine"
