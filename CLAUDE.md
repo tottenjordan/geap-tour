@@ -57,7 +57,8 @@ uv run python -m src.eval.dataset_manifest --update   # accept an intentional ch
 # Periodic-snapshot eval — offline bridge is the canonical source (native online path off by default; unblockable via ENABLE_SPAN_CONTENT_CAPTURE)
 uv run python -m src.eval.publish_offline_eval --latest       # bridge newest coordinator quality scores → agent_eval/* (no engine cost)
 uv run python -m src.eval.publish_offline_eval --run          # fresh coordinator batch, then publish
-uv run python -m src.eval.publish_offline_eval --run --no-faithfulness  # USE THIS FOR A SCHEDULED/CRON PUBLISH — republishing a healthy tool_faithfulness would overwrite the deliberate RED demo point
+uv run python -m src.eval.publish_offline_eval --run --no-faithfulness  # bridge WITHOUT faithfulness — the scheduled workflow publishes it in its own bounded step, so this avoids two writers on one series
+uv run python -m src.eval.tool_faithfulness --agent-id <ENGINE_ID> --limit 6 --publish  # the faithfulness series itself (priciest judge: one stream_query trajectory + one judge call per case, so bound it)
 # The scheduled publish itself is .github/workflows/monitoring_publish.yaml (hourly at :23 UTC,
 # workflow_dispatch for a manual run). It runs unattended — an in-session scheduler only fires
 # while a REPL is open and idle, so the series silently stop the moment the terminal closes.

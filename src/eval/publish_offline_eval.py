@@ -246,15 +246,22 @@ def _apply_standalone_judges(
     the ``run_all_evals`` publish phase so both paths report the same corrected
     ``tool_use_accuracy`` (and ``policy_compliance``) plus ``tool_faithfulness``.
 
-    ``faithfulness=False`` skips the faithfulness judge. Two reasons a scheduled
-    publish wants that, and the first is the load-bearing one:
+    ``faithfulness=False`` skips the faithfulness judge, so a caller that
+    publishes it **separately** does not double-write the series.
 
-    1. **It would overwrite a deliberate demo regression point.** The
-       ``demo_readiness`` monitors check treats a RED faithfulness publish as an
-       intentional demo artefact; an hourly cron republishing a healthy score
-       silently erases it.
-    2. It is the most expensive judge here — it captures a real ``stream_query``
-       trajectory per case rather than reusing ``run_inference`` output.
+    That is the whole reason now, and it is worth being precise because the
+    original one was wrong. This flag was introduced to stop an hourly cron
+    "overwriting a deliberate RED demo point" — but that RED is produced on demand
+    seconds before a demo (``tool_faithfulness --from-json … --publish``) and was
+    never a persisted artefact. Nothing was being protected, and the cost was
+    real: ``agent_eval/tool_faithfulness`` went **empty**, so the
+    hallucinated-action alert could not fire at all. The scheduled workflow now
+    publishes faithfulness in its own bounded step and keeps this flag purely to
+    avoid two writers on one series.
+
+    It remains the most expensive judge here — it captures a real ``stream_query``
+    trajectory per case rather than reusing ``run_inference`` output — which is
+    why the dedicated step passes ``--limit``.
     """
     try:
         _inject_policy_compliance(batch, agent_id=agent_id)

@@ -86,6 +86,27 @@ jobs:
             --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
             --no-faithfulness
 
+      # Faithfulness is published by its OWN step, not by the bridge above, and
+      # that separation is deliberate. It is the only metric scored from a real
+      # stream_query trajectory (one capture + one judge call per case), so it is
+      # the priciest judge here — `--limit` bounds it to a small sample per hour
+      # instead of the full ~39-case set.
+      #
+      # It was previously not published AT ALL: the bridge ran with
+      # --no-faithfulness to avoid overwriting a "deliberate RED demo point", and
+      # the series consequently went empty, so the hallucinated-action alert could
+      # never fire. That RED point is produced ON DEMAND immediately before a demo
+      # (tool_faithfulness --from-json ... --publish) and is not a persisted
+      # artifact, so nothing was actually being protected. See
+      # docs/notes/tool-faithfulness-demo.md for the demo/cron race.
+      - name: Publish tool-call faithfulness (agent_eval/tool_faithfulness)
+        id: faithfulness
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.tool_faithfulness \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --limit 6 --publish
+
       - name: Publish online quality (agent_online_eval/*)
         id: online
         if: ${{ inputs.skip_online != 'true' }}
@@ -107,6 +128,7 @@ jobs:
               "|---|---|",
               f"| engine config | ${{ steps.engine_config.outcome }} |",
               f"| offline quality | ${{ steps.offline.outcome }} |",
+              f"| tool faithfulness | ${{ steps.faithfulness.outcome }} |",
               f"| online quality | ${{ steps.online.outcome }} |",
               "",
           ]
@@ -141,7 +163,7 @@ jobs:
       # the other's result in the summary — but the JOB must still go red, or a
       # permanently-broken publish looks green forever in the Actions list.
       - name: Fail if every publish failed
-        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' }}
+        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' && steps.faithfulness.outcome != 'success' }}
         run: |
           echo "::error::No monitoring surface published — the series will go stale."
           exit 1
