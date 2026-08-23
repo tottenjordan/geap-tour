@@ -11,13 +11,14 @@ from src.router.cost_tracker import CostTracker, RequestLog, estimate_cost
 class TestComplexityScoring:
     def test_low_score(self):
         assert _score_to_level(0.0) == "low"
-        assert _score_to_level(0.15) == "low"
-        assert _score_to_level(0.29) == "low"
+        assert _score_to_level(0.10) == "low"
+        assert _score_to_level(0.24) == "low"
 
     def test_medium_score(self):
-        # DOE-tuned defaults: medium = [COMPLEXITY_LOW=0.44, COMPLEXITY_HIGH=0.80)
-        assert _score_to_level(0.44) == "medium"
-        assert _score_to_level(0.60) == "medium"
+        # medium = [COMPLEXITY_LOW=0.25, COMPLEXITY_HIGH=0.80). 0.25 was chosen by
+        # the paired boundary experiment; see src/eval/router_boundary_experiment.py.
+        assert _score_to_level(0.25) == "medium"
+        assert _score_to_level(0.40) == "medium"
         assert _score_to_level(0.79) == "medium"
 
     def test_high_score(self):
@@ -27,13 +28,14 @@ class TestComplexityScoring:
 
     def test_model_tier_lite(self):
         assert score_to_model_tier(0.0) == "lite"
-        assert score_to_model_tier(0.15) == "lite"
-        assert score_to_model_tier(0.43) == "lite"
+        assert score_to_model_tier(0.10) == "lite"
+        assert score_to_model_tier(0.24) == "lite"
 
     def test_model_tier_flash(self):
-        # flash = [COMPLEXITY_LOW=0.44, MEDIUM_SPLIT=0.60)
-        assert score_to_model_tier(0.44) == "flash"
-        assert score_to_model_tier(0.50) == "flash"
+        # flash = [COMPLEXITY_LOW=0.25, MEDIUM_SPLIT=0.60). The 0.40 case is the
+        # one the experiment moved off lite (flash won 18-1, p=0.0001).
+        assert score_to_model_tier(0.25) == "flash"
+        assert score_to_model_tier(0.40) == "flash"
         assert score_to_model_tier(0.59) == "flash"
 
     def test_model_tier_sonnet(self):

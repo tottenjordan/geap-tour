@@ -210,11 +210,30 @@ OPUS_MODEL = os.environ.get("OPUS_MODEL", "claude-opus-4-6")
 ROUTER_MODEL = os.environ.get("ROUTER_MODEL", LITE_MODEL)
 
 # Router complexity boundaries (overridable for DOE).
-# Defaults adopted from the DOE screening doe-screening-20260812-073603: the
-# "aggressive_savings" cut-points won +26pp cost savings (68.7% -> 94.7%) for a
-# ~0.04 quality dip and no other factor moved quality above eval noise. See
+# The upper three came from the DOE screening doe-screening-20260812-073603, whose
+# "aggressive_savings" cut-points won +26pp cost savings (68.7% -> 94.7%) for what
+# the screening measured as a ~0.04 quality dip. See
 # docs/notes/doe-router-boundaries-inert.md and the screening report.
-COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.44"))
+#
+# COMPLEXITY_LOW was 0.44 and is now 0.25, because that "~0.04 quality dip" was a
+# DILUTION ARTEFACT. The screening scored a rubric MEAN over a mixed dataset, so
+# the damage to the 13 medium-band prompts was averaged away by 27 unaffected ones.
+# A PAIRED side-by-side on just the affected prompts (lite vs flash, same vendor,
+# flip-debiased, 4 samples) is far more sensitive and found flash winning
+# **18-1, p=0.0001** on Gemini-3 tiers and **14-2, p=0.0042** when re-run on the
+# gemini-2.5 pair the router actually serves — the boundary was costing real
+# quality, not 0.04 of a rubric point. See docs/notes/router-boundary-experiment.md
+# and src/eval/router_boundary_experiment.py.
+#
+# 0.25 is the MIDPOINT of the classifier's two observed score clusters (low
+# prompts score exactly 0.10, medium exactly 0.40), so it is maximally robust to
+# drift in either direction and — per the DOE note above — does not coincide with
+# an emitted score, which the router's strict `<` would mis-handle.
+#
+# COMPLEXITY_HIGH stays at 0.80 on the SAME evidence: the paired run on the high
+# band found the current sonnet routing beating the pro alternative 12-2
+# (p=0.0129), so lowering it would make answers worse.
+COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.25"))
 COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.80"))
 MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.60"))
 HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.95"))
