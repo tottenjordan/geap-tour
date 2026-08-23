@@ -61,7 +61,7 @@ def test_defaults(reloaded_config, monkeypatch):
     assert cfg.TRAVEL_MODEL == cfg.AGENT_MODEL
     assert cfg.EXPENSE_MODEL == cfg.AGENT_MODEL
     assert cfg.ROUTER_MODEL == cfg.LITE_MODEL
-    assert cfg.COMPLEXITY_LOW == 0.44
+    assert cfg.COMPLEXITY_LOW == 0.25
     assert cfg.COMPLEXITY_HIGH == 0.80
     assert cfg.MEDIUM_SPLIT == 0.60
     assert cfg.HIGH_SPLIT == 0.95
@@ -82,13 +82,15 @@ def test_model_overrides(reloaded_config, monkeypatch):
 
 
 def test_boundary_overrides(reloaded_config, monkeypatch):
-    monkeypatch.setenv("COMPLEXITY_LOW", "0.25")
+    # Deliberately none of the defaults — an override value that happens to equal
+    # the default cannot tell "the env var was read" from "the default was used".
+    monkeypatch.setenv("COMPLEXITY_LOW", "0.35")
     monkeypatch.setenv("COMPLEXITY_HIGH", "0.70")
     monkeypatch.setenv("MEDIUM_SPLIT", "0.40")
     monkeypatch.setenv("HIGH_SPLIT", "0.85")
     cfg = reloaded_config()
 
-    assert cfg.COMPLEXITY_LOW == 0.25
+    assert cfg.COMPLEXITY_LOW == 0.35
     assert cfg.COMPLEXITY_HIGH == 0.70
     assert cfg.MEDIUM_SPLIT == 0.40
     assert cfg.HIGH_SPLIT == 0.85

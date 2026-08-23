@@ -31,6 +31,7 @@ def _good_env(engine_id="111"):
         "FLASH_MODEL": "gemini-2.5-flash",
         "PRO_MODEL": "gemini-2.5-pro",
         "CLASSIFIER_MODEL": "gemini-2.5-flash-lite",
+        "COMPLEXITY_LOW": str(eb.COMPLEXITY_LOW),
     }
 
 
@@ -146,6 +147,24 @@ class TestRouterTrap:
         env["CLASSIFIER_MODEL"] = "gemini-3.5-flash"
         spec = _good_spec(display_name="router_agent", env=env)
         assert not _find(eb.evaluate(spec, "router"), "classifier_non_thinking").ok
+
+    def test_a_stale_complexity_boundary_is_critical(self):
+        """An engine deployed before the boundary experiment keeps routing every
+        0.40-scoring 'medium' prompt to lite — a measured 18-1 quality loss that
+        the engine serves happily, with nothing in the logs to show for it."""
+        env = _good_env()
+        env["COMPLEXITY_LOW"] = "0.44"
+        spec = _good_spec(display_name="router_agent", env=env)
+        f = _find(eb.evaluate(spec, "router"), "complexity_low_boundary")
+        assert not f.ok
+        assert f.observed == "0.44"
+
+    def test_an_unset_boundary_is_reported_as_unset(self):
+        """Absent is not the same as wrong, and the finding has to say which."""
+        env = _good_env()
+        del env["COMPLEXITY_LOW"]
+        spec = _good_spec(display_name="router_agent", env=env)
+        assert _find(eb.evaluate(spec, "router"), "complexity_low_boundary").observed == "(unset)"
 
 
 class TestAdvisories:

@@ -44,8 +44,14 @@ file; keep this index short (< 200 lines).
   one verdict by `run_bakeoff`; honest caveats (dataset ~50, Gemini-only judge,
   directional pricing, self-driven traffic split).
 - [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
-  — why the first screening's routing/cost metrics were identical across all 9
-  runs, and wiring the cost eval to the real 5-tier router so the factor moves.
+  — why the first screening's routing/cost metrics were identical across all 9 runs,
+  and wiring the cost eval to the real 5-tier router so the factor moves.
+- [The router boundary experiment](./router-boundary-experiment.md) — accuracy 50%
+  vs savings 94.3% looked like opposing goals; a paired SxS on both miscuts settled
+  it **in opposite directions** (flash beats lite 18-1 p=0.0001; sonnet beats pro
+  12-2 p=0.0129). `COMPLEXITY_LOW` 0.44 → 0.25 took accuracy to 82.5% for 0.3pp of
+  savings — they were never in conflict. The DOE's "~0.04 quality dip" was a
+  dataset-mean **dilution artefact**: measure a targeted change on its target.
 - [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
   — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
@@ -72,11 +78,10 @@ file; keep this index short (< 200 lines).
   booting 5.6s into the LiteLLM call. 8/8 empty → **0/8** at 16Gi. Since generalised
   to every backbone — see the field guide.
 - [The deployed-engine baseline](./deployed-engine-baseline.md) — what "configured
-  correctly" means, as **executable** rules (`engine_baseline.py`) plus a verifier
-  that diffs the live spec and exits non-zero (`verify_engine_config`). Catches the
-  silent class: 4Gi containers, router tiers regressed to Gemini-3 by a plain
-  `--update`, a thinking classifier collapsing all traffic to lite. First run found
-  the `.env` coordinator still on 4Gi — the fix had merged, the engine hadn't.
+  correctly" means, as **executable** rules (`engine_baseline.py`) plus a verifier that
+  diffs the live spec and exits non-zero (`verify_engine_config`). Catches the silent
+  class: 4Gi containers, tiers regressed to Gemini-3 by a plain `--update`, a thinking
+  classifier collapsing traffic to lite. First run: the `.env` coordinator was still on 4Gi.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
@@ -98,8 +103,8 @@ file; keep this index short (< 200 lines).
   `stream_query` trajectory to catch **hallucinated actions** — the gap
   `tool_use_judge` can't cover (`run_inference` yields text but no trajectory).
   Publishes `agent_eval/tool_faithfulness` + the online twin, floor 3.0. The
-  load-bearing trajectory-visibility fork **resolved live → Branch A** (nested MCP
-  calls are visible client-side, so faithfulness is action-level).
+  load-bearing trajectory-visibility fork **resolved live → Branch A**: nested MCP
+  calls are visible client-side, so faithfulness is action-level.
 - [Tool-call faithfulness — the console demo](./tool-faithfulness-demo.md) — a
   curated 5-case dataset (`src/eval/data/faithfulness_demo.json`) where look-alike
   confident responses differ only in the executed trajectory; the eval catches 3
@@ -120,14 +125,11 @@ file; keep this index short (< 200 lines).
   `per_turn_user_simulator_quality_v1` (grades the *simulated user*) and
   `rubric_based_multi_turn_trajectory_quality_v1` (grades the multi-turn *path*).
 - [Scoring the tool trajectory](./trajectory-criterion.md) — wires up
-  `run_trajectory_eval`, which was finished, tested and called by nothing because it
-  was pinned at zero **three** different ways: registry-prefixed names vs bare
-  references (0% raw → 68% normalized), `EvalTask`'s concurrent fan-out plus an API
-  that *rejects* an empty `predicted_trajectory` (`failure/mean 1.0`, all `nan`), and
-  args compared against names-only references. Now 1.0/1.0/1.0 with empties
-  partitioned out. The headline: ordering is **100% correct on every turn that calls
-  a tool** — the rest is the infra-empty problem. Optimizer criterion deliberately
-  deferred, with the unblocking experiment named.
+  `run_trajectory_eval`, finished and tested but called by nothing because it was
+  pinned at zero **three** ways: prefixed vs bare tool names, an API that *rejects*
+  an empty `predicted_trajectory`, and args compared against names-only references.
+  Now 1.0/1.0/1.0 with empties partitioned out; ordering is **100% correct on every
+  turn that calls a tool**. Optimizer criterion deferred, unblocking experiment named.
 - [GEPA sampler cases: what the optimizer was being taught](./gepa-sampler-case-audit.md)
   — the data behind that prompt defect. Swept all 13 evalsets: one case
   (`expense_over_limit_no_submit`) taught refuse-to-submit against a server that
@@ -137,11 +139,10 @@ file; keep this index short (< 200 lines).
 - [The "hallucination drift" was the judge being told the agent has no tools](./offline-eval-empty-turns.md)
   — `agent_data.agents` was `None`, so the judge graded real `function_call`s as
   contradictory; supplying a name-aligned `AgentInfo` took `tool_use_quality`
-  0.38 → **0.93** and decoupled hallucination from the empty rate. Also: answer-less
-  turns are now retried and every run reports its empty rate. Corrects two wrong
-  guesses (aiplatform judge drift; PR #66's `AgentConfig.tools`).
-  A 441-item sweep then showed the residual ~14% empty rate is **flat across
-  concurrency 1/4/8** — a steady-state engine defect, not contention.
+  0.38 → **0.93** and decoupled hallucination from the empty rate. Answer-less turns
+  are now retried and every run reports its empty rate. Corrects two wrong guesses
+  (aiplatform judge drift; PR #66's `AgentConfig.tools`). A 441-item sweep then showed
+  the residual ~14% empty rate is **flat across concurrency 1/4/8** — steady-state.
 - [Router `tool_use_quality_v1`: "no function_call events found"](./router-tool-use-quality.md)
   — the metric grades the `AgentData` **events**, not the response text, so a run
   where nothing calls a tool is unscorable and came back silently reporting five
@@ -165,9 +166,8 @@ file; keep this index short (< 200 lines).
   — a recycled engine streams NDJSON via `:streamQuery?alt=sse`, but the installed
   (latest) `google-api-core` ships an **array-only** REST parser, so `stream_query`
   raises `Can only parse array of JSON objects` on a **healthy** engine. Fix:
-  `src/eval/raw_stream.py`, a client-only raw-SSE reader yielding the same event
-  dicts; the online monitor, faithfulness capture, `demo_readiness`, and steady
-  traffic fall back to it on the skew. No redeploy; engine untouched.
+  `src/eval/raw_stream.py`, a client-only raw-SSE reader yielding the same event dicts;
+  online monitor, faithfulness, `demo_readiness` and traffic fall back to it. No redeploy.
 - [Gemini-3 native model resolution + family-aware Model Armor](./gemini3-native-model-resolution.md)
   — why `resolve_model()` now returns native ADK `Gemini` for Gemini-3 (LiteLlm mangles
   thought signatures) and attaches server-side Model Armor only for Gemini-2.x; the
@@ -196,4 +196,4 @@ file; keep this index short (< 200 lines).
   process (1000+ rows in 6h). Two emitters (our classifier + ADK's own call, which
   copies the agent's `generate_content_config` verbatim), one shared
   `src/models/afc.py:with_afc_disabled` stamp on every config we build. Invisible
-  locally: the string only exists in google-genai ≥ 2.18.1.
+  locally — the string only exists in google-genai ≥ 2.18.1, and the dev venv is older.

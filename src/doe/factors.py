@@ -75,10 +75,13 @@ FACTORS: list[Factor] = [
         name="router_boundaries",
         channel="runner_env",
         description="Complexity cut-points; 'aggressive_savings' pushes traffic "
-        "to cheaper tiers. NB: after screening doe-screening-20260812-073603 the "
-        "'aggressive_savings' values became the src/config.py default, so this "
-        "factor's 'baseline' level now contrasts the OLD default against the "
-        "current one (a meaningful 'should we revert?' probe), not default-vs-new.",
+        "to cheaper tiers. NB: screening doe-screening-20260812-073603 promoted the "
+        "'aggressive_savings' values to the src/config.py default, but the paired "
+        "boundary experiment then moved COMPLEXITY_LOW off it (0.44 -> 0.25) after "
+        "finding the 0.44 cut cost real quality that the screening's dataset-mean "
+        "had diluted away. So NEITHER level is the current default any more: this "
+        "factor now contrasts two historical settings, and a design point using it "
+        "overrides the shipped boundary rather than probing around it.",
         levels={
             "baseline": {
                 "COMPLEXITY_LOW": "0.30",

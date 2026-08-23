@@ -35,9 +35,14 @@ def test_default_cut_points(reloaded_complexity, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     cx = reloaded_complexity()
 
-    assert cx.THRESHOLDS == [0.44, 0.80]
-    assert cx.score_to_model_tier(0.43) == "lite"
-    assert cx.score_to_model_tier(0.44) == "flash"
+    assert cx.THRESHOLDS == [0.25, 0.80]
+    assert cx.score_to_model_tier(0.24) == "lite"
+    assert cx.score_to_model_tier(0.25) == "flash"
+    # The two scores the classifier actually emits below MEDIUM_SPLIT. 0.40 moving
+    # from lite to flash IS the boundary experiment's result; a regression here
+    # silently reinstates an 18-1 quality loss.
+    assert cx.score_to_model_tier(0.10) == "lite"
+    assert cx.score_to_model_tier(0.40) == "flash"
     assert cx.score_to_model_tier(0.60) == "sonnet"
     assert cx.score_to_model_tier(0.80) == "pro"
     assert cx.score_to_model_tier(0.95) == "opus"

@@ -143,16 +143,44 @@ ALL_MONITORED_METRICS = [
 # Cause, and it is not a broken classifier. Its scores separate the three bands
 # perfectly with zero overlap — low cases score exactly 0.10, medium exactly 0.40,
 # high 0.75-0.90 — but the cut-points slice between those levels by a hair:
-# `COMPLEXITY_LOW` is 0.44 so every 0.40 "medium" lands in lite, and
+# `COMPLEXITY_LOW` was 0.44 so every 0.40 "medium" landed in lite, and
 # `COMPLEXITY_HIGH` is 0.80 so 0.75 "high" cases land in the middle tier.
 #
-# That is the DOE tuning working as specified: the boundaries were "DOE-tuned for
-# cost savings", and they bought 94.3% savings by routing medium work to the lite
-# tier. So **routing_accuracy_pct and cost_savings_pct encode opposing goals**, and
-# an 80% accuracy floor contradicts the boundaries the DOE chose. Resolving that is
-# a product decision (retune for accuracy, or accept the trade and move the floor),
-# not a threshold tweak — so the thresholds are left alone and the conflict is
-# recorded rather than papered over.
+# That looked like a pure product trade-off — accuracy and savings encoding
+# opposing goals — because `routing_accuracy_pct` scores conformance to a
+# complexity LABEL and says nothing about whether the answer was any good.
+# **SETTLED WITH DATA 2026-08-23** by `src/eval/router_boundary_experiment.py`, a
+# paired SxS on both miscuts. It came back significant in OPPOSITE directions, so
+# the metric was half right and half wrong:
+#
+#   medium miscut (lite vs flash)   flash won 18-1, p=0.0001  -> the metric was
+#     RIGHT; 0.44 was costing real quality. Fixed: COMPLEXITY_LOW 0.44 -> 0.25.
+#     Replicated 14-2, p=0.0042 on the gemini-2.5 pair the router actually serves.
+#   high miscut (sonnet vs pro)     sonnet won 12-2, p=0.0129 -> the metric was
+#     WRONG; the tier these prompts already get beats the one the label wants.
+#     COMPLEXITY_HIGH deliberately left at 0.80.
+#
+# Re-measured after the COMPLEXITY_LOW fix, same 40 cases:
+#
+#   routing_accuracy_pct   50.0% -> 82.5%   (clears the 80% floor)
+#   cost_savings_pct       94.3% -> 94.0%   (unchanged for practical purposes)
+#   classifier_latency_ms  554.8 -> 597.5
+#
+# So the two metrics were never actually in conflict — **both pass at once**, and
+# the "opposing goals" reading was an artefact of one badly-placed cut-point. The
+# 32.5pp of accuracy cost 0.3pp of savings. No threshold was moved to achieve this.
+#
+# The residual 17.5% (7 of 40) is entirely the 0.75-scoring "high" cases above, and
+# it is NOT a routing defect — those prompts are measurably better off on the tier
+# they already get. The floor stays at 80% because it is now met on the merits. If
+# the case mix ever shifts those 7 into a breach, the honest fix is to re-scope the
+# metric (accuracy only over prompts where tier choice demonstrably changes quality),
+# not to lower the floor — see docs/notes/router-boundary-experiment.md.
+#
+# Caveat on the high result: sonnet (Claude) vs pro (Gemini preview) crosses
+# vendors, so "sonnet wins" does not establish "these prompts need less power".
+# The DECISION it supports is confound-free (do not lower COMPLEXITY_HIGH — the
+# alternative is worse); the interpretation is not, so the cases were NOT relabelled.
 #
 # Current thresholds and their original rationale:
 #   - routing_accuracy_pct  < 80%    (set ~12pp below a then-observed 92-100%;

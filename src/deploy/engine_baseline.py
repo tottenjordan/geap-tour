@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.armor.config import server_side_armor_enabled
+from src.config import COMPLEXITY_LOW
 from src.deploy.deploy_agents import LITELLM_CPU, LITELLM_MEMORY
 
 if TYPE_CHECKING:
@@ -335,6 +336,24 @@ ROUTER_CHECKS: tuple[Check, ...] = (
         predicate=lambda s: (
             _env(s, "CLASSIFIER_MODEL") in NON_THINKING_CLASSIFIERS,
             _env(s, "CLASSIFIER_MODEL") or "(unset)",
+        ),
+    ),
+    Check(
+        name="complexity_low_boundary",
+        severity="critical",
+        expected=f"COMPLEXITY_LOW == {COMPLEXITY_LOW}",
+        why=(
+            "The boundary is baked into the engine's env at deploy time, so a "
+            "served engine can keep routing on a cut-point the repo no longer "
+            "uses and nothing logs it. This one is measured, not a preference: a "
+            "paired side-by-side found the old 0.44 sent every 0.40-scoring "
+            "'medium' prompt to lite, where flash beat it 18-1 (p=0.0001). An "
+            "engine still on 0.44 is serving that quality loss. Imported from "
+            "src.config so the verifier cannot drift from the deployer."
+        ),
+        predicate=lambda s: (
+            _env(s, "COMPLEXITY_LOW") == str(COMPLEXITY_LOW),
+            _env(s, "COMPLEXITY_LOW") or "(unset)",
         ),
     ),
 )
