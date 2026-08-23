@@ -49,6 +49,10 @@ MANIFEST_PATH = "src/eval/data/dataset_manifest.json"
 # metric; CLAUDE.md warns about this and nothing enforced it. Keyed by a
 # `python:` pseudo-path so the manifest can hold both kinds without ambiguity.
 CODE_CASE_LISTS: dict[str, str] = {
+    # The coordinator set that produces the PUBLISHED agent_eval/* quality scores.
+    # It was the last untracked dataset in the repo, which made it the easiest one
+    # to change without noticing — editing it moves every published quality number.
+    "python:src.eval.batch_eval.EVAL_CASES": "regression",
     "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES": "regression",
     "python:src.eval.agent_eval_configs.TRAVEL_EVAL_CASES": "regression",
     "python:src.eval.agent_eval_configs.EXPENSE_EVAL_CASES": "regression",

@@ -18,6 +18,12 @@
       "role": "regression",
       "version": "1.0.0"
     },
+    "python:src.eval.batch_eval.EVAL_CASES": {
+      "checksum": "sha256:99ee3ed2aba2d8381957e66289ba0e2ec39540dda26e9c43310b36e901b742e0",
+      "n_cases": 61,
+      "role": "regression",
+      "version": "2.0.0"
+    },
     "src/agents/coordinator/coordinator_eval_set.evalset.json": {
       "checksum": "sha256:39a5b38f62545b0059e189db48f09d6adae3f6864576e36410a451f4cdbd59b1",
       "n_cases": 20,

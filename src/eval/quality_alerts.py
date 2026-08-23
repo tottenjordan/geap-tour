@@ -129,17 +129,38 @@ ALL_MONITORED_METRICS = [
 # routing accuracy / cost savings alert on the FLOOR (LT); classifier latency
 # alerts on the CEILING (GT).
 #
-# Thresholds are data-driven from the router eval set (observed: accuracy
-# 92-100%, cost savings 60-63% vs an all-Opus baseline, classifier avg latency
-# ~4200ms — the classifier makes a real LLM call to a thinking model, so
-# multi-second latency is normal). Chosen with headroom for normal variance so
-# alerts page on genuine degradation rather than noise:
-#   - routing_accuracy_pct  < 80%    (~12pp below observed; robust to single-
-#                                     case flips on a small eval set)
+# **MEASURED 2026-08-23, and the numbers moved a long way from the values these
+# thresholds were set against.** The comment here previously recorded "accuracy
+# 92-100%, cost savings 60-63%, classifier latency ~4200ms". A real run over the
+# 40-case set gives:
+#
+#   routing_accuracy_pct   50.0%   (20/40; the ORIGINAL 12 cases give 58.3%, so
+#                                   this is NOT caused by growing the set)
+#   cost_savings_pct       94.3%   (far ABOVE the 60-63% recorded)
+#   classifier_latency_ms  554.8   (not ~4200ms — the classifier is a
+#                                   non-thinking model now)
+#
+# Cause, and it is not a broken classifier. Its scores separate the three bands
+# perfectly with zero overlap — low cases score exactly 0.10, medium exactly 0.40,
+# high 0.75-0.90 — but the cut-points slice between those levels by a hair:
+# `COMPLEXITY_LOW` is 0.44 so every 0.40 "medium" lands in lite, and
+# `COMPLEXITY_HIGH` is 0.80 so 0.75 "high" cases land in the middle tier.
+#
+# That is the DOE tuning working as specified: the boundaries were "DOE-tuned for
+# cost savings", and they bought 94.3% savings by routing medium work to the lite
+# tier. So **routing_accuracy_pct and cost_savings_pct encode opposing goals**, and
+# an 80% accuracy floor contradicts the boundaries the DOE chose. Resolving that is
+# a product decision (retune for accuracy, or accept the trade and move the floor),
+# not a threshold tweak — so the thresholds are left alone and the conflict is
+# recorded rather than papered over.
+#
+# Current thresholds and their original rationale:
+#   - routing_accuracy_pct  < 80%    (set ~12pp below a then-observed 92-100%;
+#                                     now breached at 50%, resolved not noise —
+#                                     CI [35%, 65%] is entirely below the floor)
 #   - cost_savings_pct      < 50%    (~10pp margin; catches routing drifting
 #                                     toward expensive tiers)
-#   - classifier_latency_ms > 8000ms (~2x observed avg; catches a real slowdown
-#                                     without firing on the normal ~4200ms)
+#   - classifier_latency_ms > 8000ms (~14x the measured 555ms; very loose now)
 ROUTER_MONITORED_METRICS = [
     ("routing_accuracy_pct", 80.0, "LT"),
     ("cost_savings_pct", 50.0, "LT"),
