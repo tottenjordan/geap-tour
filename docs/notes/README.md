@@ -48,10 +48,10 @@ file; keep this index short (< 200 lines).
   and wiring the cost eval to the real 5-tier router so the factor moves.
 - [The router boundary experiment](./router-boundary-experiment.md) — accuracy 50%
   vs savings 94.3% looked like opposing goals; a paired SxS on both miscuts settled
-  it **in opposite directions** (flash beats lite 18-1 p=0.0001; sonnet beats pro
-  12-2 p=0.0129). `COMPLEXITY_LOW` 0.44 → 0.25 took accuracy to 82.5% for 0.3pp of
-  savings — they were never in conflict. The DOE's "~0.04 quality dip" was a
-  dataset-mean **dilution artefact**: measure a targeted change on its target.
+  it **in opposite directions**, then re-ran both bands on the models the router
+  actually serves (flash beats lite 14-2; sonnet beats pro 17-1). `COMPLEXITY_LOW`
+  0.44 → 0.25 took accuracy to 82.5% for 0.3pp of savings — never in conflict. The
+  DOE's "~0.04 quality dip" was a dataset-mean **dilution artefact**: measure on target.
 - [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
   — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
   managed runtime; rearchitected to one direct-tools agent that swaps its model per

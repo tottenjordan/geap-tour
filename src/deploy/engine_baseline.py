@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.armor.config import server_side_armor_enabled
-from src.config import COMPLEXITY_LOW
+from src.config import COMPLEXITY_HIGH, COMPLEXITY_LOW
 from src.deploy.deploy_agents import LITELLM_CPU, LITELLM_MEMORY
 
 if TYPE_CHECKING:
@@ -354,6 +354,23 @@ ROUTER_CHECKS: tuple[Check, ...] = (
         predicate=lambda s: (
             _env(s, "COMPLEXITY_LOW") == str(COMPLEXITY_LOW),
             _env(s, "COMPLEXITY_LOW") or "(unset)",
+        ),
+    ),
+    Check(
+        name="complexity_high_boundary",
+        severity="critical",
+        expected=f"COMPLEXITY_HIGH == {COMPLEXITY_HIGH}",
+        why=(
+            "Same silent-drift class as complexity_low_boundary, and equally "
+            "measured. 0.80 keeps the 0.75-scoring band on sonnet; the paired "
+            "side-by-side found sonnet beating the pro alternative 12-2 against a "
+            "gemini-3.1 preview and 17-1 (p=0.0001) against the gemini-2.5-pro the "
+            "router serves. An engine deployed with a lower cut routes that band to "
+            "pro and serves the worse answer, with nothing in the logs to show it."
+        ),
+        predicate=lambda s: (
+            _env(s, "COMPLEXITY_HIGH") == str(COMPLEXITY_HIGH),
+            _env(s, "COMPLEXITY_HIGH") or "(unset)",
         ),
     ),
 )
