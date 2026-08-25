@@ -1,6 +1,15 @@
 """Does the router's cost-tuned tier boundary actually cost us any quality?
 
-`agent_router/routing_accuracy_pct` sits at **50%** against an 80% floor while
+OUTCOME (2026-08-24): both bands settled, in opposite directions — ``COMPLEXITY_LOW``
+moved 0.44 -> 0.25 (flash beats lite 18-1, replicated 14-2 on the served models) and
+``COMPLEXITY_HIGH`` stayed at 0.80 (sonnet beats pro 12-2, replicated 17-1). The
+metric this module was arguing with, ``routing_accuracy_pct``, has since been
+re-scoped and renamed ``classifier_accuracy_pct``: it now grades the classifier on
+fixed reference bands instead of the tunable cut-points, so it no longer moves when
+routing is retuned. The motivating narrative below is kept as written, with the old
+metric name, because it is what was true at the time.
+
+`agent_router/routing_accuracy_pct` sat at **50%** against an 80% floor while
 `cost_savings_pct` sits at **94.3%** against a 50% floor. Both are working as
 specified, and they disagree, because they encode opposing goals: the DOE tuned
 the cut-points for savings and got them.
@@ -212,8 +221,8 @@ def verdict(result: dict) -> dict:
         return {
             "verdict": "NO_DIFFERENCE",
             "reading": (
-                "no meaningful quality difference — routing_accuracy_pct is scoring "
-                "label conformance, not answer quality"
+                "no meaningful quality difference — the cut-point is not what "
+                "decides answer quality on these prompts"
             ),
             "needed_decisive_n": None,
         }
@@ -221,6 +230,85 @@ def verdict(result: dict) -> dict:
         "verdict": "INCONCLUSIVE",
         "reading": "cannot tell at this sample size — change nothing",
         "needed_decisive_n": min_n_for_threshold(rate or 0.5, EQUIVALENCE_BOUND),
+    }
+
+
+def annotate_per_case(per_case: list[dict], *, classify=None) -> list[dict]:
+    """Add each prompt's classifier ``score`` and routed ``tier`` in place.
+
+    Without this a completed run is not re-analysable: ``per_case`` held only
+    ``{prompt, choice}``, so asking "did the winner hold on the *sub-band* the
+    router splits at ``COMPLEXITY_HIGH``?" needed a whole second paid run. A band
+    is not homogeneous — the high band spans 0.75/0.85/0.90 and the router sends
+    those to two different tiers — so the pooled win-rate can hide a split.
+
+    Best-effort by design: the classifier is a network call, and losing the
+    annotation must never cost a run whose expensive part already succeeded. On
+    failure the entry simply has no ``score``/``tier``.
+    """
+    import asyncio
+
+    from src.router.complexity import classify_complexity, score_to_model_tier
+
+    classify = classify or classify_complexity
+
+    async def _run() -> None:
+        for entry in per_case:
+            try:
+                res = await classify(entry["prompt"])
+                entry["score"] = res.score
+                entry["tier"] = score_to_model_tier(res.score)
+            except Exception as exc:  # never lose a completed run to annotation
+                entry["annotation_error"] = str(exc)[:120]
+
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        asyncio.run(_run())
+    return per_case
+
+
+def subband_split(result: dict, boundary: float) -> dict:
+    """Split one comparison's decisive cases at ``boundary`` and score each side.
+
+    The high band is the motivating case: the pooled run said sonnet beats pro
+    17-1, but the router sends only the sub-``COMPLEXITY_HIGH`` prompts to sonnet
+    and the rest to pro. If the win does not hold on the upper sub-band, those are
+    misrouted.
+
+    Each side gets its own :func:`win_rate_significance`, because a pooled result
+    is not evidence about a subset. Entries without a ``score`` are excluded and
+    counted in ``unscored`` — silently dropping them would shrink a denominator.
+    """
+    from src.eval.pairwise_eval import BASELINE, CANDIDATE
+    from src.eval.stats import win_rate_significance
+
+    sides: dict[str, dict[str, int]] = {
+        "below": {"wins": 0, "losses": 0},
+        "at_or_above": {"wins": 0, "losses": 0},
+    }
+    unscored = 0
+    for entry in result.get("per_case") or []:
+        score = entry.get("score")
+        if score is None:
+            unscored += 1
+            continue
+        side = sides["below" if score < boundary else "at_or_above"]
+        if entry.get("choice") == CANDIDATE:
+            side["wins"] += 1
+        elif entry.get("choice") == BASELINE:
+            side["losses"] += 1
+
+    return {
+        "boundary": boundary,
+        "unscored": unscored,
+        **{
+            name: {
+                **counts,
+                "significance": win_rate_significance(counts["wins"], counts["losses"]),
+            }
+            for name, counts in sides.items()
+        },
     }
 
 
@@ -253,15 +341,19 @@ def run_comparison(
         config=config or PairwiseConfig(sampling_count=4, flip_enabled=True),
     )
     judged = int(result.get("n_cases", 0))
+    annotate_per_case(result.get("per_case") or [])
     decided = verdict(result)
     if decided["verdict"] == "CANDIDATE_BETTER" and not comparison.miscut_active:
         # The cut already moved; the bigger model winning now CONFIRMS the shipped
         # boundary instead of arguing for a change.
         decided = {**decided, "reading": "confirms the current boundary — no change needed"}
+    from src import config
+
     return {
         **result,
         "band": comparison.band,
         "boundary": comparison.boundary,
+        "subband": subband_split(result, getattr(config, comparison.boundary_var)),
         "miscut_active": comparison.miscut_active,
         "baseline_agent": comparison.baseline_agent,
         "candidate_agent": comparison.candidate_agent,
@@ -292,8 +384,24 @@ def format_report(results: Sequence[dict]) -> str:
             f"  win rate:  {sig.get('win_rate_decisive', 0.0):.1%} for the bigger model "
             f"[95% CI {sig.get('ci_low', 0.0):.1%}-{sig.get('ci_high', 0.0):.1%}]",
             f"  p-value:   {sig.get('p_value', 1.0):.4f}",
-            f"  VERDICT:   {r['verdict']} — {r['reading']}",
         ]
+        # A band is not homogeneous: the router splits it at this very cut-point and
+        # sends the two halves to different tiers, so a pooled win can hide a side
+        # that goes the other way. Print both, with their own significance.
+        if sub := r.get("subband"):
+            for side, label in (("below", "below cut"), ("at_or_above", "at/above cut")):
+                s = sub[side]["significance"]
+                if not s["decisive"]:
+                    continue
+                verdict_word = "significant" if s["significant"] else "UNDERPOWERED"
+                lines.append(
+                    f"  {label:<13} {s['wins']}-{s['losses']} "
+                    f"({s['win_rate_decisive']:.0%} for the bigger model, "
+                    f"p={s['p_value']:.4f}, {verdict_word})"
+                )
+            if sub["unscored"]:
+                lines.append(f"  (unscored:  {sub['unscored']} cases had no classifier score)")
+        lines += [f"  VERDICT:   {r['verdict']} — {r['reading']}"]
         if r.get("needed_decisive_n"):
             lines.append(f"             needs ~{r['needed_decisive_n']} decisive cases to settle")
     lines += ["", "=" * 74, ""]

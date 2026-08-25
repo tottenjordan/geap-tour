@@ -107,7 +107,7 @@ def test_every_metric_type_appears_in_some_widget():
 def test_router_widgets_have_native_unit_titles():
     d = build_dashboard()
     titles = {tile.widget.title for tile in d.mosaic_layout.tiles}
-    assert "Router: Routing Accuracy (%)" in titles
+    assert "Router: Classifier Accuracy (%)" in titles
     assert "Router: Cost Savings vs All-Opus (%)" in titles
     assert "Router: Classifier Latency (ms)" in titles
 

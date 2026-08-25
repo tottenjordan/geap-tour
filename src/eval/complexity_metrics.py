@@ -5,7 +5,11 @@ import time
 
 from agentplatform import types as vtx_types
 
-from src.router.complexity import classify_complexity, score_to_model_tier
+from src.router.complexity import (
+    classify_complexity,
+    score_to_model_tier,
+    score_to_reference_band,
+)
 from src.router.cost_tracker import estimate_cost
 
 # ---------------------------------------------------------------------------
@@ -111,7 +115,22 @@ except ImportError:
 # Standalone complexity accuracy scorer
 # ---------------------------------------------------------------------------
 async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
-    """Classify each prompt and compare against expected complexity level.
+    """Grade the CLASSIFIER: does it score each prompt into the right band?
+
+    Graded with :func:`score_to_reference_band` — fixed thirds of the 0-1 range —
+    **not** with the router's ``COMPLEXITY_LOW``/``COMPLEXITY_HIGH`` cut-points.
+    That distinction is the whole point of this function: bucketing by the tunable
+    boundaries made the score move when *routing* was retuned, and it did — the
+    same 40 prompts and the same classifier read 50% and then 82.5% purely because
+    ``COMPLEXITY_LOW`` went 0.44 -> 0.25.
+
+    Whether the router then sends a band to the best tier is a **separate**
+    question, answered by paired side-by-side experiments
+    (:mod:`src.eval.router_boundary_experiment`) and pinned in
+    ``tests/test_routing_constraints.py`` — not by this metric.
+
+    ``level`` (the routing level) is still reported per case for diagnostics, so a
+    band/level disagreement is visible rather than hidden.
 
     Returns accuracy, confusion matrix, per-case details, and timing stats.
     """
@@ -133,13 +152,16 @@ async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
         latency_ms = (time.monotonic() - t0) * 1000
         latencies.append(latency_ms)
 
-        match = result.level == expected
-        confusion[expected][result.level] += 1
+        band = score_to_reference_band(result.score)
+        match = band == expected
+        confusion[expected][band] += 1
         results.append(
             {
                 "prompt": case["prompt"][:80],
                 "expected": expected,
-                "actual": result.level,
+                "actual": band,
+                "routing_level": result.level,
+                "tier": score_to_model_tier(result.score),
                 "score": result.score,
                 "reason": result.reason,
                 "match": match,

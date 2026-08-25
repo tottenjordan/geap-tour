@@ -54,7 +54,7 @@ def publish_router_efficiency(
     scores: dict[str, float] = {}
     accuracy = accuracy_results.get("accuracy")
     if accuracy is not None:
-        scores["routing_accuracy_pct"] = round(float(accuracy) * 100.0, 1)
+        scores["classifier_accuracy_pct"] = round(float(accuracy) * 100.0, 1)
     savings = cost_results.get("savings_pct")
     if savings is not None:
         scores["cost_savings_pct"] = round(float(savings), 1)
@@ -99,14 +99,53 @@ def _load_results(path: str) -> tuple[dict, dict]:
     return complexity.get("accuracy", {}), complexity.get("cost_efficiency", {})
 
 
+def run_results(cases=None) -> tuple[dict, dict]:
+    """Compute ``(accuracy, cost)`` fresh — what ``--run`` uses.
+
+    This exists so the hourly monitoring workflow can publish ``agent_router/*``
+    without a ``run_all_evals`` artifact. Before it, the only way to write these
+    series was a full eval run, so in practice they were written almost never: the
+    series sat at a handful of points, the rolling-baseline anomaly check in
+    ``verify_monitors`` could never reach its 5-point minimum, and the alert
+    policies watched a series that barely moved. Same failure shape as
+    ``tool_faithfulness``, which was wired up but never actually published.
+
+    Cheap enough to run hourly, and by a wide margin the cheapest thing in the
+    monitoring stack: both evals are **classifier-only** — no engine call, no
+    ``stream_query``, no judge. One short ``CLASSIFIER_MODEL`` call per case per
+    eval (~80 for the 40-case set).
+    """
+    import asyncio
+
+    from src.eval.agent_eval_configs import ROUTER_EVAL_CASES
+    from src.eval.complexity_metrics import (
+        run_complexity_accuracy_eval,
+        run_cost_efficiency_eval,
+    )
+
+    cases = list(cases if cases is not None else ROUTER_EVAL_CASES)
+
+    async def _both():
+        return await run_complexity_accuracy_eval(cases), await run_cost_efficiency_eval(cases)
+
+    return asyncio.run(_both())
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for the router-efficiency → ``agent_router/*`` bridge."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--from-json",
         metavar="PATH",
-        required=True,
         help="load a run_all_evals full_results.json (reads complexity.accuracy / .cost_efficiency)",
+    )
+    source.add_argument(
+        "--run",
+        action="store_true",
+        help="compute the scores fresh (classifier-only: no engine, no judge) — what "
+        "the hourly monitoring workflow uses, so these series accumulate history "
+        "instead of only moving on a manual full eval run",
     )
     parser.add_argument(
         "--label",
@@ -128,7 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    accuracy, cost = _load_results(args.from_json)
+    accuracy, cost = run_results() if args.run else _load_results(args.from_json)
 
     writer = None
     log_run_fn = None
@@ -148,7 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     prefix = "[dry-run] would publish" if args.dry_run else "published"
     print(f"{prefix}: {json.dumps(published, indent=2, sort_keys=True)}")
-    # routing_accuracy_pct is a proportion over the router eval cases, and its 80%
+    # classifier_accuracy_pct is a proportion over the router eval cases, and its 80%
     # alert is only meaningful if that sample can resolve it. Say which it is here,
     # where the number is produced, rather than leaving it to the reader.
     _print_accuracy_power(published, accuracy)
@@ -156,12 +195,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _print_accuracy_power(published: dict, accuracy_results) -> None:
-    """Note whether routing_accuracy_pct's sample can resolve its own 80% alert.
+    """Note whether classifier_accuracy_pct's sample can resolve its own 80% alert.
 
     At the historical n=12 it could not: the Wilson interval spanned 80% for every
     possible outcome, so a perfect score was indistinguishable from a failing one.
     """
-    accuracy = published.get("routing_accuracy_pct")
+    accuracy = published.get("classifier_accuracy_pct")
     if accuracy is None:
         return
     total = (accuracy_results or {}).get("total_cases")
@@ -171,19 +210,19 @@ def _print_accuracy_power(published: dict, accuracy_results) -> None:
     from src.eval.stats import power_report
 
     floor = next(
-        (t for name, t, _c in ROUTER_MONITORED_METRICS if name == "routing_accuracy_pct"), 80.0
+        (t for name, t, _c in ROUTER_MONITORED_METRICS if name == "classifier_accuracy_pct"), 80.0
     )
     report = power_report(round(accuracy / 100.0 * total), total, floor / 100.0)
     lo, hi = report["ci"]
     if report["resolved"]:
         print(
-            f"  routing_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — resolves the {floor:.0f}% alert"
+            f"  classifier_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — resolves the {floor:.0f}% alert"
         )
     else:
         needed = report["needed_n"]
         hint = f"~{needed} cases would" if needed else "no sample size will"
         print(
-            f"  routing_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — CANNOT resolve the "
+            f"  classifier_accuracy: n={total}, 95% CI [{lo:.0%}, {hi:.0%}] — CANNOT resolve the "
             f"{floor:.0f}% alert ({hint} settle it)"
         )
 

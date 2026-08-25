@@ -314,7 +314,7 @@ ROUTER_EVAL_CASES = [
         "description": "Simple policy inquiry phrased as question",
     },
     # ── Grown 2026-08-22: 12 -> 40 cases ──────────────────────────────────
-    # At n=12 the 80% `routing_accuracy_pct` alert was unresolvable: the Wilson
+    # At n=12 the 80% `classifier_accuracy_pct` alert was unresolvable: the Wilson
     # interval spanned 80% for EVERY possible outcome, including a perfect 12/12,
     # so a healthy router could not be distinguished from a failing one and one
     # case flipping moved the metric 8.3 points. `stats.min_n_for_threshold` puts

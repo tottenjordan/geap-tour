@@ -370,7 +370,7 @@ def build_report(results: dict) -> str:
                 "",
                 "| Metric | Value | Unit |",
                 "|--------|-------|------|",
-                f"| Routing accuracy | {router.get('routing_accuracy_pct', 'N/A')} | % |",
+                f"| Classifier accuracy | {router.get('classifier_accuracy_pct', 'N/A')} | % |",
                 f"| Cost savings vs all-Opus | {router.get('cost_savings_pct', 'N/A')} | % |",
                 f"| Classifier latency | {router.get('classifier_latency_ms', 'N/A')} | ms |",
                 "",

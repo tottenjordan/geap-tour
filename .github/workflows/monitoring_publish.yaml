@@ -115,6 +115,21 @@ jobs:
           uv run python -m src.eval.online_monitor \
             --agent-id "${{ vars.AGENT_ENGINE_ID }}"
 
+      # agent_router/* was the one monitored surface with no scheduled writer: it
+      # only moved when someone ran the full eval by hand, so the series sat at a
+      # few points, verify_monitors' rolling baseline never reached its 5-point
+      # minimum, and its alert policies watched something effectively static. Same
+      # shape as the faithfulness series above, which was wired up but unpublished.
+      #
+      # By far the cheapest step here — classifier-only, so no engine call, no
+      # stream_query and no judge; just ~80 short CLASSIFIER_MODEL calls. It needs
+      # no engine id, which is why it can run even when the others are skipped.
+      - name: Publish router efficiency (agent_router/*)
+        id: router
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.publish_router_efficiency --run
+
       - name: Summarize monitored surfaces
         if: always()
         run: |
@@ -130,6 +145,7 @@ jobs:
               f"| offline quality | ${{ steps.offline.outcome }} |",
               f"| tool faithfulness | ${{ steps.faithfulness.outcome }} |",
               f"| online quality | ${{ steps.online.outcome }} |",
+              f"| router efficiency | ${{ steps.router.outcome }} |",
               "",
           ]
           path = pathlib.Path("monitors.json")
@@ -163,7 +179,7 @@ jobs:
       # the other's result in the summary — but the JOB must still go red, or a
       # permanently-broken publish looks green forever in the Actions list.
       - name: Fail if every publish failed
-        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' && steps.faithfulness.outcome != 'success' }}
+        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' && steps.faithfulness.outcome != 'success' && steps.router.outcome != 'success' }}
         run: |
           echo "::error::No monitoring surface published — the series will go stale."
           exit 1

@@ -105,7 +105,7 @@ def test_publish_phase_populates_router_metrics(monkeypatch):
         seen["accuracy"] = accuracy_results
         seen["cost"] = cost_results
         return {
-            "routing_accuracy_pct": 92.0,
+            "classifier_accuracy_pct": 92.0,
             "cost_savings_pct": 60.0,
             "classifier_latency_ms": 150.0,
         }
@@ -137,7 +137,7 @@ def test_publish_phase_router_guards_exceptions(monkeypatch):
 def test_build_report_has_router_efficiency_section():
     results = _minimal_results()
     results["published_router_metrics"] = {
-        "routing_accuracy_pct": 92.0,
+        "classifier_accuracy_pct": 92.0,
         "cost_savings_pct": 60.0,
         "classifier_latency_ms": 150.0,
     }

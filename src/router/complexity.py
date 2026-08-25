@@ -77,6 +77,41 @@ def _score_to_level(score: float) -> str:
     return LEVELS[-1]
 
 
+# Fixed reference bands for scoring the CLASSIFIER, deliberately NOT the routing
+# cut-points above.
+#
+# `_score_to_level` buckets a score with THRESHOLDS — i.e. with COMPLEXITY_LOW and
+# COMPLEXITY_HIGH, which are tunable. Grading the classifier through those made a
+# "classifier accuracy" number that moved whenever we retuned *routing*: it read
+# 50% and then 82.5% on the same 40 prompts with the same classifier, purely
+# because COMPLEXITY_LOW went 0.44 -> 0.25. It was scoring cut-point placement and
+# reporting it as classifier skill.
+#
+# These are equal thirds of the 0-1 range: the classifier's job is to place a
+# prompt in the bottom, middle or top third of the complexity range, and that
+# judgement does not change when the router moves where it splits tiers.
+#
+# Equal thirds rather than the observed score clusters ON PURPOSE — midpoints
+# fitted to today's eval set would need re-deriving whenever the score
+# distribution shifted, reintroducing exactly the coupling this removes.
+#
+# NOTHING may wire these to COMPLEXITY_*; `tests/test_reference_bands.py` pins it.
+REFERENCE_BANDS = (1 / 3, 2 / 3)
+
+
+def score_to_reference_band(score: float) -> str:
+    """Bucket a 0-1 complexity score into low/medium/high on fixed thirds.
+
+    Used to grade the *classifier* (does it place a prompt in the right band?),
+    independent of where the router happens to split tiers today. Use
+    :func:`score_to_model_tier` for the routing decision itself.
+    """
+    for threshold, level in zip(REFERENCE_BANDS, LEVELS, strict=False):
+        if score < threshold:
+            return level
+    return LEVELS[-1]
+
+
 def score_to_model_tier(score: float) -> str:
     """Map a complexity score to a specific model tier for routing.
 

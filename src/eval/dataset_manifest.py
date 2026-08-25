@@ -45,7 +45,7 @@ MANIFEST_PATH = "src/eval/data/dataset_manifest.json"
 
 # In-code case lists that are NOT evalset JSON but still feed graded output — and
 # in the router's case a *monitored, alerting* series. `ROUTER_EVAL_CASES` drives
-# `agent_router/routing_accuracy_pct`, so editing it silently moves a published
+# `agent_router/classifier_accuracy_pct`, so editing it silently moves a published
 # metric; CLAUDE.md warns about this and nothing enforced it. Keyed by a
 # `python:` pseudo-path so the manifest can hold both kinds without ambiguity.
 CODE_CASE_LISTS: dict[str, str] = {

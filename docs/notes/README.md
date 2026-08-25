@@ -35,23 +35,23 @@ file; keep this index short (< 200 lines).
   the ADK span-content gate closed unless deployed with `AdkApp(enable_tracing=True)`
   (NOT a hard content strip); the opt-in `ENABLE_SPAN_CONTENT_CAPTURE` flag opens it,
   validated live (46/46 spans). Corrects the earlier "no lever" conclusion.
-- [DOE framework for scaling experimentation](./doe-framework.md) — factor
-  registry → fractional-factorial design → one PipelineJob per point → harvest →
-  main-effects report; factor channels, subprocess-per-point, cost caveat.
+- [DOE framework for scaling experimentation](./doe-framework.md) — factor registry →
+  fractional-factorial design → PipelineJob per point → harvest → main-effects report.
 - [Coordinator model bake-off: Gemini vs Claude](./coordinator-model-bakeoff.md)
-  — single-factor (`model_backend`) DOE deploying two coordinators, scored on
-  offline rubrics + pairwise SxS win-rate + per-model-labeled traffic, fused into
-  one verdict by `run_bakeoff`; honest caveats (dataset ~50, Gemini-only judge,
-  directional pricing, self-driven traffic split).
+  — single-factor (`model_backend`) DOE deploying two coordinators, scored on offline
+  rubrics + pairwise SxS win-rate + per-model-labeled traffic, fused into one verdict
+  by `run_bakeoff`; caveats (dataset ~50, Gemini-only judge, self-driven traffic).
 - [`router_boundaries` factor was inert (and the fix)](./doe-router-boundaries-inert.md)
-  — why the first screening's routing/cost metrics were identical across all 9 runs,
-  and wiring the cost eval to the real 5-tier router so the factor moves.
+  — the first screening's routing/cost metrics were identical across all 9 runs; fixed
+  by wiring the cost eval to the real 5-tier router.
 - [The router boundary experiment](./router-boundary-experiment.md) — accuracy 50%
   vs savings 94.3% looked like opposing goals; a paired SxS on both miscuts settled
   it **in opposite directions**, then re-ran both bands on the models the router
   actually serves (flash beats lite 14-2; sonnet beats pro 17-1). `COMPLEXITY_LOW`
-  0.44 → 0.25 took accuracy to 82.5% for 0.3pp of savings — never in conflict. The
-  DOE's "~0.04 quality dip" was a dataset-mean **dilution artefact**: measure on target.
+  0.44 → 0.25; the DOE's "~0.04 quality dip" was a dataset-mean **dilution artefact**.
+  That 50→82.5% jump with an unchanged classifier then exposed the metric itself: it
+  graded via the tunable cut-points, so it is re-scoped onto fixed reference bands and
+  renamed **`classifier_accuracy_pct`** — now invariant to boundary tuning.
 - [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
   — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
