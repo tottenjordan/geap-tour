@@ -45,7 +45,7 @@ def test_router_monitored_metrics_shape():
     from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
 
     names = {m[0] for m in ROUTER_MONITORED_METRICS}
-    assert names == {"routing_accuracy_pct", "cost_savings_pct", "classifier_latency_ms"}
+    assert names == {"classifier_accuracy_pct", "cost_savings_pct", "classifier_latency_ms"}
     # Every entry is (name, threshold, comparison) with a valid direction.
     for _name, threshold, comparison in ROUTER_MONITORED_METRICS:
         assert isinstance(threshold, float)
@@ -53,7 +53,7 @@ def test_router_monitored_metrics_shape():
     # Latency alerts on the ceiling (GT); accuracy/savings alert on the floor (LT).
     by_name = {m[0]: m[2] for m in ROUTER_MONITORED_METRICS}
     assert by_name["classifier_latency_ms"] == "GT"
-    assert by_name["routing_accuracy_pct"] == "LT"
+    assert by_name["classifier_accuracy_pct"] == "LT"
     assert by_name["cost_savings_pct"] == "LT"
 
 

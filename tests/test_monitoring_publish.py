@@ -143,3 +143,48 @@ class TestConfigCheckRunsFirst:
         cfg = next(i for i, n in enumerate(names) if "Verify engine config" in n)
         pub = next(i for i, n in enumerate(names) if "Publish offline quality" in n)
         assert cfg < pub
+
+
+class TestRouterEfficiencyIsScheduled:
+    """agent_router/* was the one monitored surface with no scheduled writer.
+
+    Its three series only moved when someone ran the full eval by hand, so they
+    held a handful of points: `verify_monitors`' rolling-baseline check never
+    reached its 5-point minimum and the alert policies on
+    `classifier_accuracy_pct` / `cost_savings_pct` / `classifier_latency_ms`
+    watched something effectively static. Exactly the failure the faithfulness
+    tests above exist to prevent, on a different surface.
+    """
+
+    def test_router_efficiency_has_its_own_publishing_step(self):
+        assert _step(_load_steps(), "Publish router efficiency")
+
+    def test_that_step_actually_publishes(self):
+        run = _step(_load_steps(), "Publish router efficiency")["run"]
+        assert "publish_router_efficiency" in run
+        assert "--run" in run, "--from-json needs an artifact the cron does not have"
+        assert "--dry-run" not in run, "a dry run would leave the series empty"
+
+    def test_it_does_not_depend_on_an_engine_id(self):
+        """Classifier-only, so it must keep publishing on an hour when the engine
+        is down or the online step is skipped — those are exactly the hours when
+        knowing the router still classifies correctly is worth most."""
+        step = _step(_load_steps(), "Publish router efficiency")
+        assert "AGENT_ENGINE_ID" not in step["run"]
+        assert "if" not in step, "no condition should gate the cheapest surface"
+
+    def test_one_surface_failing_does_not_hide_the_others(self):
+        step = _step(_load_steps(), "Publish router efficiency")
+        assert step.get("continue-on-error") is True
+
+    def test_the_job_still_goes_red_when_every_surface_fails(self):
+        """continue-on-error means a permanently-broken publish looks green in the
+        Actions list unless the guard counts every surface."""
+        guard = _step(_load_steps(), "Fail if every publish failed")["if"]
+        for step_id in ("offline", "online", "faithfulness", "router"):
+            assert f"steps.{step_id}." in guard, f"{step_id} missing from the fail guard"
+
+    def test_the_summary_reports_it(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert "router efficiency" in run
+        assert "steps.router.outcome" in run

@@ -102,6 +102,40 @@ So `COMPLEXITY_HIGH` stays at 0.80 — the same decision as before, but no longe
 resting on a model the router doesn't serve. **The hypothesis that motivated the
 re-run was refuted, which is the point of running it rather than assuming.**
 
+### The high band is not homogeneous — and the router splits it
+
+A pooled win-rate says nothing about a subset, and the high band is exactly where
+that bites: the router sends prompts scoring `< COMPLEXITY_HIGH` to **sonnet** and
+the rest to **pro** — the tier that just lost 17–1. `per_case` originally held only
+`{prompt, choice}`, so answering this needed another paid run; it now carries each
+prompt's classifier score and routed tier (`annotate_per_case`), and
+`subband_split` scores each side separately.
+
+| split at `COMPLEXITY_HIGH=0.80` | routes to | sonnet–pro | win rate for pro | p | significant |
+| --- | --- | --- | --- | --- | --- |
+| below (score 0.75) | sonnet | 11–1 | 8% | 0.0063 | yes |
+| **at/above (0.85, 0.90)** | **pro** | **6–0** | **0%** | **0.0312** | **yes** |
+
+**Sonnet beats pro on both sides of the cut**, including the sub-band the router
+currently routes to pro. Tier distribution over the 20 prompts: sonnet 11, pro 8,
+flash 1 (one "high"-labelled prompt scores 0.45 — a genuine classifier
+disagreement, not a boundary artefact).
+
+Three things temper this before anyone acts on it:
+
+1. **n=6 with zero losses is the thinnest significance obtainable.** 6–0 gives
+   p=0.0312; a single loss would make it 5–1, p=0.219, not significant. It clears
+   the pre-registered bar, but only just.
+2. **Raising `COMPLEXITY_HIGH` costs money**, unlike the medium fix. Sonnet is
+   **$0.0081/case** against pro's **$0.00525** — moving the upper sub-band to sonnet
+   *reduces* `cost_savings_pct`.
+3. **It would empty the pro tier.** With opus already unreachable (`HIGH_SPLIT`=0.95
+   above the top observed score), the 5-tier router would populate three.
+
+Note what does *not* enter this trade any more: `classifier_accuracy_pct` is now
+invariant to the boundaries, so it neither improves nor degrades. That is the
+re-scope working — the decision is being made on quality and cost alone.
+
 **The accuracy metric was half right and half wrong.**
 
 * **Medium:** the metric was right. `COMPLEXITY_LOW=0.44` was costing real quality —
@@ -132,6 +166,41 @@ Tier distribution moved from `lite 27 / sonnet 8 / pro 5` to
 
 **The two metrics were never in conflict.** 32.5pp of accuracy cost 0.3pp of
 savings. No threshold was moved to achieve it.
+
+### `routing_accuracy_pct` → `classifier_accuracy_pct` (2026-08-24)
+
+That 50% → 82.5% jump is itself the evidence that the metric was broken. **The
+classifier never changed** — only `COMPLEXITY_LOW` did. The metric graded the
+classifier by bucketing its score with `complexity._score_to_level`, which uses the
+*tunable routing cut-points*, so it was scoring cut-point placement and reporting it
+as classifier skill. Two live consequences: 33/40 = 82.5% sat **one misroute from a
+false page** against its 80% floor, and every future boundary change — including one
+made *because* a paired experiment said so — perturbed an alerting series.
+
+Two questions had been conflated, and they now have separate homes:
+
+| question | instrument |
+| --- | --- |
+| Does the classifier score prompts into the right band? | `complexity.score_to_reference_band` — fixed thirds of 0-1, wired to nothing tunable |
+| Does the router send a band to the best tier? | the paired experiments here, pinned in `tests/test_routing_constraints.py` |
+
+The series is renamed because the name was part of the bug. **Points are not
+comparable across the changeover.** Measured after:
+
+```
+COMPLEXITY_LOW=0.25  ->  classifier_accuracy_pct 100.0%  (40/40)
+COMPLEXITY_LOW=0.44  ->  classifier_accuracy_pct 100.0%  (40/40)   # invariant
+```
+
+Under the old code those two differ by 32.5pp. 100% is the *true* reading — the
+classifier separates the bands with zero overlap — and it is still a working alarm:
+a thinking `CLASSIFIER_MODEL` returns empty text, every prompt takes the low-score
+fallback, and every medium/high case goes wrong.
+
+Equal thirds rather than the observed cluster midpoints on purpose: midpoints fitted
+to today's eval set would need re-deriving whenever the score distribution shifted,
+reintroducing the same coupling somewhere new. `tests/test_reference_bands.py` pins
+the invariance directly.
 
 ## The finding worth remembering
 

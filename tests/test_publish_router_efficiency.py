@@ -39,12 +39,12 @@ def test_extract_and_publish_native_units():
 
     # Returned dict is in native units — accuracy scaled to percent, others verbatim.
     assert published == {
-        "routing_accuracy_pct": 92.0,
+        "classifier_accuracy_pct": 92.0,
         "cost_savings_pct": 60.0,
         "classifier_latency_ms": 145.0,
     }
     vals = _by_type(client)
-    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 92.0
+    assert vals["custom.googleapis.com/agent_router/classifier_accuracy_pct"] == 92.0
     assert vals["custom.googleapis.com/agent_router/cost_savings_pct"] == 60.0
     assert vals["custom.googleapis.com/agent_router/classifier_latency_ms"] == 145.0
 
@@ -64,9 +64,9 @@ def test_missing_keys_do_not_crash():
     client = FakeMetricClient()
     # Only accuracy present, no latency, no cost block at all.
     published = publish_router_efficiency({"accuracy": 0.8}, None, writer=_writer(client))
-    assert published == {"routing_accuracy_pct": 80.0}
+    assert published == {"classifier_accuracy_pct": 80.0}
     vals = _by_type(client)
-    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 80.0
+    assert vals["custom.googleapis.com/agent_router/classifier_accuracy_pct"] == 80.0
     assert "custom.googleapis.com/agent_router/cost_savings_pct" not in vals
 
 
@@ -130,7 +130,66 @@ def test_label_flag_forwarded_as_extra_labels(tmp_path, monkeypatch):
     monkeypatch.setattr(
         router_pub,
         "publish_router_efficiency",
-        lambda acc, cost, **k: captured.update(k) or {"routing_accuracy_pct": 90.0},
+        lambda acc, cost, **k: captured.update(k) or {"classifier_accuracy_pct": 90.0},
     )
     router_pub.main(["--from-json", str(path), "--label", "model=gemini-3.6-flash"])
     assert captured["extra_labels"] == {"model": "gemini-3.6-flash"}
+
+
+class TestRunMode:
+    """`--run` is what puts agent_router/* on the hourly cron.
+
+    Before it, `--from-json` was REQUIRED, so the only writer was a manual full
+    eval. The series therefore held a handful of points: `verify_monitors`'
+    rolling baseline never reached its 5-point minimum and the alert policies
+    watched something effectively static — the same shape as the faithfulness
+    series that was wired up but never published.
+    """
+
+    def test_run_computes_scores_without_a_results_file(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(router_pub, "run_results", lambda: ({"accuracy": 1.0}, {}))
+        monkeypatch.setattr(
+            router_pub,
+            "publish_router_efficiency",
+            lambda acc, cost, **k: captured.update(acc=acc) or {"classifier_accuracy_pct": 100.0},
+        )
+        assert router_pub.main(["--run"]) == 0
+        assert captured["acc"] == {"accuracy": 1.0}
+
+    def test_run_and_from_json_are_mutually_exclusive(self, tmp_path):
+        """Two sources would silently publish whichever the code happened to pick."""
+        import pytest
+
+        with pytest.raises(SystemExit):
+            router_pub.main(["--run", "--from-json", str(tmp_path / "x.json")])
+
+    def test_a_source_is_still_required(self):
+        """Removing `required=True` from --from-json must not make a bare
+        invocation publish nothing silently."""
+        import pytest
+
+        with pytest.raises(SystemExit):
+            router_pub.main([])
+
+    def test_run_is_classifier_only(self, monkeypatch):
+        """The cost argument for running this hourly: no engine, no stream_query,
+        no judge. If someone wires an engine call in here, the step stops being
+        nearly free and this test should be the thing that objects."""
+        calls = []
+
+        async def fake_accuracy(cases):
+            calls.append("accuracy")
+            return {"accuracy": 1.0, "total_cases": len(cases), "avg_latency_ms": 1.0}
+
+        async def fake_cost(cases):
+            calls.append("cost")
+            return {"savings_pct": 94.0}
+
+        import src.eval.complexity_metrics as cm
+
+        monkeypatch.setattr(cm, "run_complexity_accuracy_eval", fake_accuracy)
+        monkeypatch.setattr(cm, "run_cost_efficiency_eval", fake_cost)
+        acc, cost = router_pub.run_results(cases=[{"prompt": "p", "expected_complexity": "low"}])
+        assert calls == ["accuracy", "cost"]
+        assert acc["accuracy"] == 1.0 and cost["savings_pct"] == 94.0

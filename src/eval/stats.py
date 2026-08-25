@@ -170,7 +170,7 @@ def win_rate_significance(
 # ---------------------------------------------------------------------------
 # A sample-size floor like MIN_SAMPLES is threshold-blind: it asks "are there
 # enough observations?" when the question that matters is "enough *for this
-# threshold*?". Those diverge badly. `routing_accuracy_pct` is computed from 12
+# threshold*?". Those diverge badly. `classifier_accuracy_pct` is computed from 12
 # router eval cases and alerts below 80%; at n=12 the Wilson interval spans 80%
 # for EVERY possible outcome, including a perfect 12/12 — a perfect score cannot
 # be distinguished from a failing one. `is_low_confidence(12)` is False, so the

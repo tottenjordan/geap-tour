@@ -133,7 +133,7 @@ class TestPreRegisteredDecisionRule:
     def test_an_even_split_over_many_cases_establishes_equivalence(self):
         v = verdict(_result([CANDIDATE] * 30 + [BASELINE] * 30))
         assert v["verdict"] == "NO_DIFFERENCE"
-        assert "label conformance" in v["reading"]
+        assert "not what decides answer quality" in v["reading"]
 
     def test_all_ties_is_inconclusive(self):
         """Zero decisive cases must not read as a 0% win rate for the baseline."""
@@ -251,6 +251,91 @@ class TestRunComparisonAccounting:
         )
         assert captured["config"].flip_enabled is True
         assert captured["config"].sampling_count == 4
+
+
+class TestSubBandSplit:
+    """A pooled win-rate is not evidence about a subset, and the high band is the
+    live example: the router splits it at COMPLEXITY_HIGH and sends the two halves
+    to different tiers, so 17-1 overall can coexist with the upper half going the
+    other way."""
+
+    @staticmethod
+    def _result(entries):
+        return {"per_case": [{"prompt": f"q{i}", **e} for i, e in enumerate(entries)]}
+
+    def test_each_side_gets_its_own_significance(self):
+        from src.eval.router_boundary_experiment import subband_split
+
+        out = subband_split(
+            self._result(
+                [{"score": 0.75, "choice": CANDIDATE}] * 12
+                + [{"score": 0.90, "choice": BASELINE}] * 4
+            ),
+            0.80,
+        )
+        assert out["below"]["wins"] == 12 and out["below"]["losses"] == 0
+        assert out["at_or_above"]["wins"] == 0 and out["at_or_above"]["losses"] == 4
+        assert out["below"]["significance"]["significant"] is True
+        # 0-4 is a clean sweep the other way but n=4 cannot reach p<0.05.
+        assert out["at_or_above"]["significance"]["significant"] is False
+
+    def test_a_pooled_win_can_hide_a_reversed_subset(self):
+        """THE reason this exists. Overall 12-4 for the candidate, but every one of
+        the losses is on one side of the cut."""
+        from src.eval.router_boundary_experiment import subband_split
+
+        out = subband_split(
+            self._result(
+                [{"score": 0.75, "choice": CANDIDATE}] * 12
+                + [{"score": 0.90, "choice": BASELINE}] * 4
+            ),
+            0.80,
+        )
+        assert out["below"]["significance"]["win_rate_decisive"] == 1.0
+        assert out["at_or_above"]["significance"]["win_rate_decisive"] == 0.0
+
+    def test_unscored_cases_are_counted_not_silently_dropped(self):
+        from src.eval.router_boundary_experiment import subband_split
+
+        out = subband_split(
+            self._result([{"choice": CANDIDATE}, {"score": 0.9, "choice": CANDIDATE}]), 0.80
+        )
+        assert out["unscored"] == 1
+        assert out["at_or_above"]["wins"] == 1
+
+    def test_ties_count_toward_neither_side(self):
+        from src.eval.router_boundary_experiment import subband_split
+
+        out = subband_split(self._result([{"score": 0.9, "choice": TIE}] * 5), 0.80)
+        assert out["at_or_above"]["significance"]["decisive"] == 0
+
+
+class TestPerCaseAnnotation:
+    def test_score_and_tier_are_attached(self):
+        from types import SimpleNamespace
+
+        from src.eval.router_boundary_experiment import annotate_per_case
+
+        async def fake(_prompt):
+            return SimpleNamespace(score=0.40, level="medium", reason="")
+
+        per_case = [{"prompt": "q", "choice": CANDIDATE}]
+        annotate_per_case(per_case, classify=fake)
+        assert per_case[0]["score"] == 0.40
+        assert per_case[0]["tier"] == "flash"
+
+    def test_a_classifier_failure_never_costs_the_completed_run(self):
+        """The expensive part (engines + judge) is already paid for by this point.
+        Losing annotation must degrade, not raise."""
+        from src.eval.router_boundary_experiment import annotate_per_case
+
+        async def boom(_prompt):
+            raise RuntimeError("classifier down")
+
+        per_case = [{"prompt": "q", "choice": CANDIDATE}]
+        annotate_per_case(per_case, classify=boom)
+        assert "score" not in per_case[0]
+        assert "classifier down" in per_case[0]["annotation_error"]
 
 
 class TestReportAndCli:

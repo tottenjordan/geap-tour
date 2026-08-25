@@ -129,76 +129,57 @@ ALL_MONITORED_METRICS = [
 # routing accuracy / cost savings alert on the FLOOR (LT); classifier latency
 # alerts on the CEILING (GT).
 #
-# **MEASURED 2026-08-23, and the numbers moved a long way from the values these
-# thresholds were set against.** The comment here previously recorded "accuracy
-# 92-100%, cost savings 60-63%, classifier latency ~4200ms". A real run over the
-# 40-case set gives:
+# **`classifier_accuracy_pct` was renamed from `routing_accuracy_pct` (2026-08-24),
+# and it is a different measurement, not just a different name.** Do not compare
+# points across the changeover.
 #
-#   routing_accuracy_pct   50.0%   (20/40; the ORIGINAL 12 cases give 58.3%, so
-#                                   this is NOT caused by growing the set)
-#   cost_savings_pct       94.3%   (far ABOVE the 60-63% recorded)
-#   classifier_latency_ms  554.8   (not ~4200ms — the classifier is a
-#                                   non-thinking model now)
+# The old metric graded the classifier by bucketing its score with
+# `complexity._score_to_level`, which uses THRESHOLDS — i.e. the *tunable routing
+# cut-points*. So it moved whenever routing was retuned, and it did: over the same
+# 40 prompts with the same classifier it read 50.0%, then 82.5%, purely because
+# COMPLEXITY_LOW went 0.44 -> 0.25. It was scoring cut-point placement and
+# reporting it as classifier skill, which also meant every future boundary change —
+# including one made BECAUSE a paired experiment said so — perturbed an alerting
+# series.
 #
-# Cause, and it is not a broken classifier. Its scores separate the three bands
-# perfectly with zero overlap — low cases score exactly 0.10, medium exactly 0.40,
-# high 0.75-0.90 — but the cut-points slice between those levels by a hair:
-# `COMPLEXITY_LOW` was 0.44 so every 0.40 "medium" landed in lite, and
-# `COMPLEXITY_HIGH` is 0.80 so 0.75 "high" cases land in the middle tier.
+# It now grades on `complexity.score_to_reference_band` (fixed thirds of the 0-1
+# range, wired to nothing tunable), so it answers only "did the classifier put this
+# prompt in the right band?" and is invariant to boundary tuning. On the 40-case set
+# it reads ~100%: the classifier separates the bands with zero overlap (low exactly
+# 0.10, medium 0.40, high 0.75-0.90). That is the true value; the old numbers were
+# measuring the boundaries. It still craters on the documented failure mode — a
+# thinking CLASSIFIER_MODEL returns empty text, every prompt takes the low-score
+# fallback, and every medium/high case goes wrong.
 #
-# That looked like a pure product trade-off — accuracy and savings encoding
-# opposing goals — because `routing_accuracy_pct` scores conformance to a
-# complexity LABEL and says nothing about whether the answer was any good.
-# **SETTLED WITH DATA 2026-08-23** by `src/eval/router_boundary_experiment.py`, a
-# paired SxS on both miscuts. It came back significant in OPPOSITE directions, so
-# the metric was half right and half wrong:
+# **The question the old metric was conflating** — is the router sending each band
+# to the best TIER? — is answered by paired side-by-side experiments
+# (`src/eval/router_boundary_experiment.py`) and pinned offline in
+# `tests/test_routing_constraints.py`, not by a monitored series:
 #
-#   medium miscut (lite vs flash)   flash won 18-1, p=0.0001  -> the metric was
-#     RIGHT; 0.44 was costing real quality. Fixed: COMPLEXITY_LOW 0.44 -> 0.25.
-#     Replicated 14-2, p=0.0042 on the gemini-2.5 pair the router actually serves.
-#   high miscut (sonnet vs pro)     sonnet won 12-2, p=0.0129 -> the metric was
-#     WRONG; the tier these prompts already get beats the one the label wants.
-#     COMPLEXITY_HIGH deliberately left at 0.80. Re-run against the gemini-2.5-pro
-#     the router actually serves (the first run used a 3.1 *preview*): sonnet won
-#     by MORE, 17-1, p=0.0001.
+#   medium (lite vs flash)   flash won 18-1 (p=0.0001) on Gemini-3 tiers and
+#     14-2 (p=0.0042) on the gemini-2.5 pair served -> COMPLEXITY_LOW 0.44 -> 0.25.
+#   high (sonnet vs pro)     sonnet won 12-2 (p=0.0129) on gemini-3.1-pro-preview
+#     and 17-1 (p=0.0001) on the gemini-2.5-pro served -> COMPLEXITY_HIGH stays 0.80.
 #
-# Re-measured after the COMPLEXITY_LOW fix, same 40 cases:
+# Caveat carried forward: the high comparison crosses vendors (Claude sonnet vs
+# Gemini pro), so it supports a routing DECISION, not a claim about how much "power"
+# those prompts need — which is why those cases were never relabelled.
 #
-#   routing_accuracy_pct   50.0% -> 82.5%   (clears the 80% floor)
-#   cost_savings_pct       94.3% -> 94.0%   (unchanged for practical purposes)
-#   classifier_latency_ms  554.8 -> 597.5
+# Other two, measured 2026-08-23 (previously recorded as "60-63%" and "~4200ms"):
 #
-# So the two metrics were never actually in conflict — **both pass at once**, and
-# the "opposing goals" reading was an artefact of one badly-placed cut-point. The
-# 32.5pp of accuracy cost 0.3pp of savings. No threshold was moved to achieve this.
+#   cost_savings_pct       94.0%   (far ABOVE the 60-63% recorded)
+#   classifier_latency_ms  597.5   (not ~4200ms — the classifier is non-thinking now)
 #
-# The residual 17.5% (7 of 40) is entirely the 0.75-scoring "high" cases above, and
-# it is NOT a routing defect — those prompts are measurably better off on the tier
-# they already get, now confirmed against BOTH pro models tested. The floor stays at
-# 80% because it is met on the merits.
-#
-# **But note the margin: 33/40 = 82.5% against an 80% floor is ONE misroute from
-# breaching**, and the 7 that are "wrong" are provably routed correctly. So this
-# series is one case-mix change away from paging on behaviour we have twice measured
-# as right. When that happens the fix is to re-scope the metric — accuracy over
-# prompts where tier choice demonstrably changes quality — NOT to lower the floor to
-# fit. Moving a threshold to match the number it polices is how the metric stopped
-# meaning anything the first time. See docs/notes/router-boundary-experiment.md.
-#
-# Caveat on the high result: sonnet (Claude) vs pro (Gemini preview) crosses
-# vendors, so "sonnet wins" does not establish "these prompts need less power".
-# The DECISION it supports is confound-free (do not lower COMPLEXITY_HIGH — the
-# alternative is worse); the interpretation is not, so the cases were NOT relabelled.
-#
-# Current thresholds and their original rationale:
-#   - routing_accuracy_pct  < 80%    (set ~12pp below a then-observed 92-100%;
-#                                     now breached at 50%, resolved not noise —
-#                                     CI [35%, 65%] is entirely below the floor)
+# Current thresholds and their rationale:
+#   - classifier_accuracy_pct  < 80%    (at n=40 that permits 8 misclassifications
+#                                     against an observed ~100%; `stats.
+#                                     resolves_threshold` confirms n=40 can resolve
+#                                     it, which n=12 could not)
 #   - cost_savings_pct      < 50%    (~10pp margin; catches routing drifting
 #                                     toward expensive tiers)
-#   - classifier_latency_ms > 8000ms (~14x the measured 555ms; very loose now)
+#   - classifier_latency_ms > 8000ms (~13x the measured 598ms; very loose now)
 ROUTER_MONITORED_METRICS = [
-    ("routing_accuracy_pct", 80.0, "LT"),
+    ("classifier_accuracy_pct", 80.0, "LT"),
     ("cost_savings_pct", 50.0, "LT"),
     ("classifier_latency_ms", 8000.0, "GT"),
 ]

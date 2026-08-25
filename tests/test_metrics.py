@@ -216,7 +216,7 @@ def test_write_router_metrics_emits_native_units():
     w = MetricsWriter(project_id="proj-x", client=client)
     metrics.write_router_metrics(
         {
-            "routing_accuracy_pct": 92.0,
+            "classifier_accuracy_pct": 92.0,
             "cost_savings_pct": 60.0,
             "classifier_latency_ms": 145.0,
         },
@@ -225,7 +225,7 @@ def test_write_router_metrics_emits_native_units():
     )
     vals = _by_type(client)
     assert vals["custom.googleapis.com/agent_router/cost_savings_pct"] == 60.0
-    assert vals["custom.googleapis.com/agent_router/routing_accuracy_pct"] == 92.0
+    assert vals["custom.googleapis.com/agent_router/classifier_accuracy_pct"] == 92.0
     assert vals["custom.googleapis.com/agent_router/classifier_latency_ms"] == 145.0
     for ts in client.flatten():
         assert ts.metric.labels["eval_mode"] == "offline"

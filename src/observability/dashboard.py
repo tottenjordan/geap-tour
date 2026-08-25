@@ -50,7 +50,7 @@ _TITLES = {
     "custom.googleapis.com/agent_online_eval/tool_use_accuracy": "Online Eval: Tool-Use Accuracy",
     "custom.googleapis.com/agent_online_eval/policy_compliance": "Online Eval: Policy Compliance",
     "custom.googleapis.com/agent_online_eval/tool_faithfulness": "Online Eval: Tool-Call Faithfulness",
-    "custom.googleapis.com/agent_router/routing_accuracy_pct": "Router: Routing Accuracy (%)",
+    "custom.googleapis.com/agent_router/classifier_accuracy_pct": "Router: Classifier Accuracy (%)",
     "custom.googleapis.com/agent_router/cost_savings_pct": ("Router: Cost Savings vs All-Opus (%)"),
     "custom.googleapis.com/agent_router/classifier_latency_ms": ("Router: Classifier Latency (ms)"),
 }

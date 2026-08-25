@@ -152,7 +152,7 @@ class TestCli:
 class TestCodeCaseListsAreTracked:
     """`ROUTER_EVAL_CASES` drives a MONITORED, ALERTING series but lived in Python,
     outside the evalset-JSON the manifest covered — so editing it silently moved
-    `agent_router/routing_accuracy_pct`. CLAUDE.md warned about it; nothing enforced it."""
+    `agent_router/classifier_accuracy_pct`. CLAUDE.md warned about it; nothing enforced it."""
 
     def test_the_router_cases_are_checksummed(self):
         assert "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES" in dm.TRACKED

@@ -164,7 +164,7 @@ def test_verify_reads_coordinator_quality_surface():
 def test_verify_reads_router_efficiency_surface_with_directions():
     series = [
         # accuracy floor is 80.0 (LT): 75.0 is out of bounds, 92.0 is fine.
-        _make_series("custom.googleapis.com/agent_router/routing_accuracy_pct", [92.0, 75.0]),
+        _make_series("custom.googleapis.com/agent_router/classifier_accuracy_pct", [92.0, 75.0]),
         # latency ceiling is 8000.0 (GT): 9000.0 is out of bounds.
         _make_series("custom.googleapis.com/agent_router/classifier_latency_ms", [150.0, 9000.0]),
     ]
@@ -177,9 +177,9 @@ def test_verify_reads_router_efficiency_surface_with_directions():
     # but the suppression must be visible, never silent.
     assert router["status"] == "underpowered"
     suppressed = {i["metric"] for i in data["insufficient_power"]}
-    assert {"routing_accuracy_pct", "classifier_latency_ms"} <= suppressed
-    assert router["metrics"]["routing_accuracy_pct"]["out_of_bounds"] == 1
-    assert router["metrics"]["routing_accuracy_pct"]["direction"] == "LT"
+    assert {"classifier_accuracy_pct", "classifier_latency_ms"} <= suppressed
+    assert router["metrics"]["classifier_accuracy_pct"]["out_of_bounds"] == 1
+    assert router["metrics"]["classifier_accuracy_pct"]["direction"] == "LT"
     assert router["metrics"]["classifier_latency_ms"]["out_of_bounds"] == 1
     assert router["metrics"]["classifier_latency_ms"]["direction"] == "GT"
 

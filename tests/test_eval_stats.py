@@ -121,7 +121,7 @@ class TestResolvesThreshold:
     """A sample-size floor is threshold-blind; this asks the question that matters."""
 
     def test_the_real_router_case_cannot_resolve_its_own_alert(self):
-        """routing_accuracy_pct: 12 cases against an 80% alert. At n=12 the Wilson
+        """classifier_accuracy_pct: 12 cases against an 80% alert. At n=12 the Wilson
         interval spans 80% for EVERY outcome — a perfect 12/12 is statistically
         indistinguishable from a failing 9/12."""
         for k in range(9, 13):
