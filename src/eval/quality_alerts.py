@@ -158,7 +158,9 @@ ALL_MONITORED_METRICS = [
 #     Replicated 14-2, p=0.0042 on the gemini-2.5 pair the router actually serves.
 #   high miscut (sonnet vs pro)     sonnet won 12-2, p=0.0129 -> the metric was
 #     WRONG; the tier these prompts already get beats the one the label wants.
-#     COMPLEXITY_HIGH deliberately left at 0.80.
+#     COMPLEXITY_HIGH deliberately left at 0.80. Re-run against the gemini-2.5-pro
+#     the router actually serves (the first run used a 3.1 *preview*): sonnet won
+#     by MORE, 17-1, p=0.0001.
 #
 # Re-measured after the COMPLEXITY_LOW fix, same 40 cases:
 #
@@ -172,10 +174,16 @@ ALL_MONITORED_METRICS = [
 #
 # The residual 17.5% (7 of 40) is entirely the 0.75-scoring "high" cases above, and
 # it is NOT a routing defect — those prompts are measurably better off on the tier
-# they already get. The floor stays at 80% because it is now met on the merits. If
-# the case mix ever shifts those 7 into a breach, the honest fix is to re-scope the
-# metric (accuracy only over prompts where tier choice demonstrably changes quality),
-# not to lower the floor — see docs/notes/router-boundary-experiment.md.
+# they already get, now confirmed against BOTH pro models tested. The floor stays at
+# 80% because it is met on the merits.
+#
+# **But note the margin: 33/40 = 82.5% against an 80% floor is ONE misroute from
+# breaching**, and the 7 that are "wrong" are provably routed correctly. So this
+# series is one case-mix change away from paging on behaviour we have twice measured
+# as right. When that happens the fix is to re-scope the metric — accuracy over
+# prompts where tier choice demonstrably changes quality — NOT to lower the floor to
+# fit. Moving a threshold to match the number it polices is how the metric stopped
+# meaning anything the first time. See docs/notes/router-boundary-experiment.md.
 #
 # Caveat on the high result: sonnet (Claude) vs pro (Gemini preview) crosses
 # vendors, so "sonnet wins" does not establish "these prompts need less power".

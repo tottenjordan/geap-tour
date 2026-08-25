@@ -32,6 +32,7 @@ def _good_env(engine_id="111"):
         "PRO_MODEL": "gemini-2.5-pro",
         "CLASSIFIER_MODEL": "gemini-2.5-flash-lite",
         "COMPLEXITY_LOW": str(eb.COMPLEXITY_LOW),
+        "COMPLEXITY_HIGH": str(eb.COMPLEXITY_HIGH),
     }
 
 
@@ -165,6 +166,17 @@ class TestRouterTrap:
         del env["COMPLEXITY_LOW"]
         spec = _good_spec(display_name="router_agent", env=env)
         assert _find(eb.evaluate(spec, "router"), "complexity_low_boundary").observed == "(unset)"
+
+    def test_a_lowered_high_boundary_is_critical(self):
+        """Dropping COMPLEXITY_HIGH below 0.75 routes that band to pro, which lost
+        12-2 to sonnet on a preview pro and 17-1 on the served gemini-2.5-pro. The
+        engine serves the worse answer happily."""
+        env = _good_env()
+        env["COMPLEXITY_HIGH"] = "0.70"
+        spec = _good_spec(display_name="router_agent", env=env)
+        f = _find(eb.evaluate(spec, "router"), "complexity_high_boundary")
+        assert not f.ok
+        assert f.observed == "0.70"
 
 
 class TestAdvisories:

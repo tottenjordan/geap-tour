@@ -72,17 +72,35 @@ defaults — but the router's tiers are deliberately pinned to **Gemini-2.5**. S
 repeated, in a new form, the dilution mistake below: acting on a number measured
 against a system that is not the one being changed.
 
-The lite and flash tier engines were re-pinned to `gemini-2.5-flash-lite` /
-`gemini-2.5-flash` (in-place `--update`, same engine ids) and the medium band re-run:
+Every tier engine the experiment drives was re-pinned to the router's model (in-place
+`--update`, same engine ids) and **both bands re-run**. `sonnet_agent` needed no
+change — it already served `claude-sonnet-4-6`.
 
-| medium band | lite | flash | decisive | win rate | 95% CI | p |
+**Medium — replicated.**
+
+| medium band | lite | flash | decisive | win rate for flash | 95% CI | p |
 | --- | --- | --- | --- | --- | --- | --- |
 | Gemini-3 | `3.1-flash-lite` | `3.5-flash` | 19 (18–1) | 94.7% | 75–99% | 0.0001 |
-| **Gemini-2.5 (what the router serves)** | `2.5-flash-lite` | `2.5-flash` | 16 (14–2) | **87.5%** | 64–97% | **0.0042** |
+| **Gemini-2.5 (served)** | `2.5-flash-lite` | `2.5-flash` | 16 (14–2) | **87.5%** | 64–97% | **0.0042** |
 
-**Replicated.** Weaker at 2.5 (3 ties instead of 0, and the CI reaches down to 64%)
-but unambiguous, and 0 cases dropped in both runs. The high band was **not** re-run —
-its conclusion is "change nothing", which is the safe default either way.
+Weaker at 2.5 (3 ties instead of 0, CI reaching down to 64%) but unambiguous.
+
+**High — replicated, and *more* strongly.** The working hypothesis was that a Gemini
+*preview* pro losing 12–2 might be a preview-model artefact, and that the shipped
+`gemini-2.5-pro` could win — which would have taken accuracy to ~100% at lower cost
+(pro is ~35% cheaper per case than sonnet). **It did not.** Swapping to the served
+model roughly doubled sonnet's margin:
+
+| high band | sonnet | pro | decisive | win rate for pro | 95% CI | p |
+| --- | --- | --- | --- | --- | --- | --- |
+| first run | `claude-sonnet-4-6` | `3.1-pro-preview` | 14 (2–12) | 14.3% | 4–40% | 0.0129 |
+| **Gemini-2.5 (served)** | `claude-sonnet-4-6` | `2.5-pro` | 18 (1–17) | **5.6%** | 1–26% | **0.0001** |
+
+0 cases dropped in any of the four runs.
+
+So `COMPLEXITY_HIGH` stays at 0.80 — the same decision as before, but no longer
+resting on a model the router doesn't serve. **The hypothesis that motivated the
+re-run was refuted, which is the point of running it rather than assuming.**
 
 **The accuracy metric was half right and half wrong.**
 
@@ -130,19 +148,25 @@ diffing two independent means.
 
 ## Caveats
 
-* **The high-band result crosses vendors AND generations** — sonnet is
-  `claude-sonnet-4-6` (which the router does serve), but pro was measured as
-  `gemini-3.1-pro-preview` while the router serves `gemini-2.5-pro`. "Sonnet wins"
-  therefore does **not** establish "these prompts need less power". The *decision*
-  it supports is confound-free (do not lower `COMPLEXITY_HIGH`; the alternative
-  measured worse), but the interpretation is not — so the 7 disputed cases were
-  **not** relabelled, even though the pre-registered rule's `BASELINE_BETTER` branch
-  nominally called for it. It must not be cited as evidence that 0.80 is *optimal*.
-  De-confounding needs a same-vendor, same-generation contrast.
-* **Re-pinning the tier engines changed shared infrastructure.** `lite_agent` and
-  `flash_agent` now run Gemini-2.5, matching the router; `pro_agent` and
-  `sonnet_agent` are still on the Gemini-3 defaults. Anything driving those engines
-  (`cross_model_experiment`, future boundary runs) now measures a mixed set.
+* **The high-band result still crosses vendors** (Claude sonnet vs Gemini pro). The
+  re-run fixed the *generation* mismatch, not the vendor one, so "sonnet wins" does
+  **not** establish "these prompts need less power" — it may say more about the two
+  specific models. The *decision* it supports is sound (do not lower
+  `COMPLEXITY_HIGH`; the alternative measured worse on both pro models tested), but
+  it must not be cited as evidence that 0.80 is *optimal*. That is why the 7
+  disputed cases were **not** relabelled, even though the pre-registered rule's
+  `BASELINE_BETTER` branch nominally called for it.
+* **Re-pinning the tier engines changed shared infrastructure.** `lite_agent`,
+  `flash_agent` and `pro_agent` now run Gemini-2.5 rather than the repo's Gemini-3
+  defaults, so anything driving them (`cross_model_experiment`, future boundary runs)
+  measures the router's models rather than `src/config.py`'s.
+* **`routing_accuracy_pct` has only 2.5pp of headroom, and the shortfall is
+  correct.** 33/40 = 82.5% against an 80% floor: **one more misroute breaches it.**
+  The 7 that are "wrong" are the 0.75-scoring prompts, now measured twice, on two
+  different pro models, as being better off exactly where the router puts them. The
+  metric is provably penalising correct routing, so the fix when it does breach is to
+  re-scope it — accuracy over prompts where tier choice demonstrably changes quality
+  — **not** to lower the floor. See the recommendation in `quality_alerts.py`.
 * **Gemini-only judge**, as everywhere in this repo — a Claude judge 404s on the
   `publishers/google` path.
 * **Answer quality only.** Latency and per-token cost are not in this measurement;

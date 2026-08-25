@@ -230,9 +230,14 @@ ROUTER_MODEL = os.environ.get("ROUTER_MODEL", LITE_MODEL)
 # drift in either direction and — per the DOE note above — does not coincide with
 # an emitted score, which the router's strict `<` would mis-handle.
 #
-# COMPLEXITY_HIGH stays at 0.80 on the SAME evidence: the paired run on the high
-# band found the current sonnet routing beating the pro alternative 12-2
-# (p=0.0129), so lowering it would make answers worse.
+# COMPLEXITY_HIGH stays at 0.80 on the SAME evidence, measured twice. The paired run
+# on the high band found the current sonnet routing beating the pro alternative
+# **12-2 (p=0.0129)** against gemini-3.1-pro-preview and **17-1 (p=0.0001)** against
+# the gemini-2.5-pro the router actually serves. The re-run was motivated by the
+# hypothesis that a *preview* pro losing was an artefact and the shipped model might
+# win — which would have taken routing accuracy to ~100% at ~35% lower cost per case.
+# It was refuted: the served model lost by more. Lowering this cut would make answers
+# worse, so it does not move.
 COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.25"))
 COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.80"))
 MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.60"))
