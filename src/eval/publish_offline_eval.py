@@ -74,9 +74,19 @@ def publish_offline_scores(
 
     labels = {"eval_mode": "offline", **(extra_labels or {})}
     published = publish_eval_metrics(raw, writer=writer, extra_labels=labels)
-    published.update(
-        publish_offline_infra_rate(batch_results, coordinator_agent, writer=writer, labels=labels)
-    )
+    # Best-effort, and it has to be: the rubrics are the payload, the empty rate is
+    # an additive signal. Unguarded, the FIRST write to this series took the whole
+    # step down — Cloud Monitoring 500s while materializing a brand-new custom
+    # metric descriptor, so the rubrics published and then the process died on
+    # exit 1. An extra signal must never cost the primary one.
+    try:
+        published.update(
+            publish_offline_infra_rate(
+                batch_results, coordinator_agent, writer=writer, labels=labels
+            )
+        )
+    except Exception as exc:  # never let an additive metric fail the run
+        print(f"  infra_empty_rate: not published ({type(exc).__name__}: {str(exc)[:120]})")
     return published
 
 

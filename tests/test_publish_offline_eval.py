@@ -526,3 +526,58 @@ class TestOfflineInfraEmptyRate:
 
         assert OFFLINE_INFRA_METRICS == ONLINE_INFRA_METRICS
         assert OFFLINE_INFRA_METRICS[0] == ("infra_empty_rate", 0.2, "GT")
+
+
+class TestInfraRateNeverBreaksTheRubricPublish:
+    """An additive signal must not be able to cost the primary one.
+
+    This is not hypothetical: the first live write to `agent_eval/infra_empty_rate`
+    got a 500 from Cloud Monitoring while it materialized the new custom metric
+    descriptor. Unguarded, that exception propagated — the three rubrics published
+    and then the whole step exited 1 (masked in the Actions API's `conclusion`
+    because the step is continue-on-error; only `outcome` showed the failure).
+    """
+
+    class _Boom:
+        def create_time_series(self, name=None, time_series=None):
+            from google.api_core import exceptions as gexc
+
+            raise gexc.InternalServerError("500 Internal error encountered.")
+
+    def test_a_failing_rate_write_still_returns_the_rubrics(self, monkeypatch):
+        from src.eval import publish_offline_eval as off
+
+        monkeypatch.setattr(off, "publish_eval_metrics", lambda raw, **k: {"helpfulness": 4.3})
+        monkeypatch.setattr(
+            off,
+            "publish_offline_infra_rate",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("500 Internal error")),
+        )
+        out = off.publish_offline_scores(
+            {"agents": {"coordinator_agent": {"metrics": {}, "empty_rate": 0.0}}}
+        )
+        assert out == {"helpfulness": 4.3}
+
+    def test_the_failure_is_reported_not_swallowed_silently(self, monkeypatch, capsys):
+        """A metric that quietly stops publishing is how a monitoring gap is made."""
+        from src.eval import publish_offline_eval as off
+
+        monkeypatch.setattr(off, "publish_eval_metrics", lambda raw, **k: {})
+        monkeypatch.setattr(
+            off,
+            "publish_offline_infra_rate",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        off.publish_offline_scores({"agents": {"coordinator_agent": {"metrics": {}}}})
+        assert "infra_empty_rate: not published" in capsys.readouterr().out
+
+    def test_a_real_monitoring_500_does_not_propagate(self):
+        """End-to-end through the real writer, with the client raising what Cloud
+        Monitoring actually raised."""
+        from src.eval.publish_offline_eval import publish_offline_scores
+
+        out = publish_offline_scores(
+            {"agents": {"coordinator_agent": {"metrics": {}, "empty_rate": 0.1}}},
+            writer=MetricsWriter(project_id="p", client=self._Boom()),
+        )
+        assert "infra_empty_rate" not in out
