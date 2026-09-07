@@ -115,6 +115,24 @@ jobs:
           uv run python -m src.eval.online_monitor \
             --agent-id "${{ vars.AGENT_ENGINE_ID }}"
 
+      # agent_online_eval/tool_faithfulness is in ONLINE_MONITORED_METRICS (alert
+      # < 3.0) but had NO scheduled writer — the online step above runs without
+      # --faithfulness, so a policy was watching a series nothing wrote. Identical
+      # to the agent_eval/tool_faithfulness gap closed in #84, on the online twin;
+      # found by the `unpublished` check added alongside this step, not by luck.
+      #
+      # Its own bounded step for the same reason the offline one has one: this is
+      # the priciest judge here (a live stream_query trajectory + a judge call per
+      # case), so it is capped with --samples rather than folded into another step.
+      - name: Publish online tool-call faithfulness (agent_online_eval/*)
+        id: online_faithfulness
+        if: ${{ inputs.skip_online != 'true' }}
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.online_monitor \
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --faithfulness --samples 6
+
       # agent_router/* was the one monitored surface with no scheduled writer: it
       # only moved when someone ran the full eval by hand, so the series sat at a
       # few points, verify_monitors' rolling baseline never reached its 5-point
@@ -145,6 +163,7 @@ jobs:
               f"| offline quality | ${{ steps.offline.outcome }} |",
               f"| tool faithfulness | ${{ steps.faithfulness.outcome }} |",
               f"| online quality | ${{ steps.online.outcome }} |",
+              f"| online faithfulness | ${{ steps.online_faithfulness.outcome }} |",
               f"| router efficiency | ${{ steps.router.outcome }} |",
               "",
           ]
@@ -171,6 +190,13 @@ jobs:
                           f"| {surface} | {block.get('status')} | {name}{flag} | "
                           f"{m.get('eval_count')} | {m.get('avg_score')} | {base} |"
                       )
+              for u in data.get("unpublished") or []:
+                  # An alert watching a series nothing writes reads as healthy.
+                  # This is the check that would have caught #84 on its own.
+                  print(
+                      f"::warning title=Alerted but unpublished::{u['surface']}/{u['metric']} "
+                      "has an alert policy but no data in the window"
+                  )
               fired = data.get("anomalies") or []
               for a in fired:
                   # Advisory, not a failure: the detector has one catch to its name

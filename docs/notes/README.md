@@ -58,15 +58,14 @@ file; keep this index short (< 200 lines).
   tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
   platform-wide" claim is falsified — see the note below.)
 - [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) — **start here** for
-  any zero-character HTTP 200. Five causes and the signature separating each. Cause 5
-  is now resolved: the 4Gi platform default OOM-kills **Gemini-only** engines too, not
-  just LiteLlm ones — 15% empty → **0%** at 16Gi, after concurrency, recycling, the
-  SDK parser, sessions, Model Armor and the preload cache were each measured and
-  refuted. If no client-side lever moves an empty rate, check `resourceLimits` first.
+  any zero-character HTTP 200. Five causes and the signature separating each. Cause 5:
+  the 4Gi default OOM-kills **Gemini-only** engines too — 15% empty → **0%** at 16Gi,
+  after concurrency, recycling, the SDK parser, sessions, Model Armor and the preload
+  cache were each measured and refuted. If no client-side lever moves it, check
+  `resourceLimits` first.
 - [Router empty responses: an oversized tool payload burning the quota](./router-empty-responses-quota.md)
-  — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED`, driven
-  by an unbounded `get_expenses` payload (96 records/26KB) that a direct-tools
-  agent must absorb and re-emit; fixed by capping the tool payload and retrying +
+  — the router's ~40% empty-at-200 rate was HTTP 429 `RESOURCE_EXHAUSTED` from an
+  unbounded `get_expenses` payload (96 records/26KB); fixed by capping it and
   labelling 429s instead of returning silence. Includes the falsified hypotheses.
 - [The residual empty-at-200: wrapping LiteLlm strips Anthropic's tool-call ids](./router-empty-stream-retry.md)
   — the leftover 14% was **not** platform-level: `TierRoutingLlm`/`RetryingLlm` hide
@@ -74,9 +73,12 @@ file; keep this index short (< 200 lines).
   Anthropic pairs results by and a multi-step, mixed-tier Claude turn dies on
   `AnthropicError: 'tool_call_id'`. Fixed by `restore_tool_call_ids()`.
 - [The Claude tiers were OOM-killed: 4Gi is not enough](./router-claude-tier-oom.md)
-  — first sighting of the OOM: a missing enclosing span, no traceback, a worker
-  booting 5.6s into the LiteLLM call. 8/8 empty → **0/8** at 16Gi. Since generalised
-  to every backbone — see the field guide.
+  — first sighting: a missing enclosing span, no traceback, a worker booting 5.6s into
+  the LiteLLM call. 8/8 empty → **0/8** at 16Gi. Now generalised — see the field guide.
+- [Checks that cannot detect their own failure](./checks-that-cannot-detect-their-own-failure.md)
+  — a sweep after hitting the same shape five times: a check whose broken state reads
+  identical to its healthy one. Found two more (a second alerted-but-unpublished series,
+  an orphaned policy) plus the meta-gap that `verify_monitors` couldn't report it.
 - [The deployed-engine baseline](./deployed-engine-baseline.md) — what "configured
   correctly" means, as **executable** rules (`engine_baseline.py`) plus a verifier that
   diffs the live spec and exits non-zero (`verify_engine_config`). Catches the silent
@@ -84,13 +86,11 @@ file; keep this index short (< 200 lines).
   classifier collapsing traffic to lite. First run: the `.env` coordinator was still on 4Gi.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
-  instrumentation; ports the payload cap (booking), a shared `RetryingLlm` 429
-  wrapper (insurance — the coordinator took 0 of the 215 429s), domain spans for
-  the un-traced 3-5s Memory Bank preload + the silently-swallowed save, and drops
-  both AgentTools (0 calls measured across 10 traces).
-- [DOE harvest `--wait` path hang](./doe-harvest-wait-path.md) — a transient live-poll
-  stall could hang unattended for the 2h timeout with no output; fixed via GCS
-  ground-truth fall-through, a heartbeat, and a download timeout.
+  instrumentation; ports the payload cap, a shared `RetryingLlm` 429 wrapper, domain
+  spans for the un-traced Memory Bank preload + silently-swallowed save, and drops
+  both AgentTools (0 calls across 10 traces).
+- [DOE harvest `--wait` path hang](./doe-harvest-wait-path.md) — a transient live-poll stall
+  could hang for the 2h timeout with no output; fixed via GCS fall-through + a heartbeat.
 - [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
   — one-time provisioning checklist + run-of-show for the four demo money-shots
   (observability, trace debugging, periodic-snapshot eval, governance blocking).

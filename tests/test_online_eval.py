@@ -525,3 +525,67 @@ def test_lookback_survives_a_slow_cron_day():
     assert DEFAULT_LOOKBACK_HOURS >= 48
     observed_runs_per_day = 7
     assert (DEFAULT_LOOKBACK_HOURS / 24) * observed_runs_per_day >= MIN_BASELINE * 2
+
+
+class TestAlertedButUnpublishedIsReported:
+    """The failure this module could not previously see, and has now hit twice.
+
+    `agent_eval/tool_faithfulness` was alerted while going unpublished for days
+    (#84). The identical thing was true of `agent_online_eval/tool_faithfulness`
+    until the cron gained its own bounded step — the online monitor ran without
+    `--faithfulness`, so a policy watched a series nothing wrote.
+
+    Both were found by chance. A metric with no points simply never appeared in
+    `metrics`, so the surface rendered healthy. Naming the state is what makes the
+    next one findable by the tooling instead of by luck.
+    """
+
+    def test_a_metric_with_no_points_is_listed_as_missing(self):
+        """THE regression. Only one of the coordinator rubrics has data here."""
+        series = [_make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0])]
+        data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+        missing = data["coordinator_quality"]["missing"]
+        assert "tool_faithfulness" in missing
+        assert "helpfulness" not in missing, "a metric WITH data must not be listed"
+
+    def test_it_is_hoisted_to_a_top_level_list(self):
+        series = [_make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0])]
+        data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+        pairs = {(u["surface"], u["metric"]) for u in data["unpublished"]}
+        assert ("coordinator_quality", "tool_faithfulness") in pairs
+
+    def test_a_fully_published_surface_reports_nothing_missing(self):
+        """Not vacuous: the detector must also be able to say 'clean'. A checker
+        that always fires is as useless as one that never does."""
+        from src.eval.quality_alerts import ALL_MONITORED_METRICS, OFFLINE_INFRA_METRICS
+
+        names = [n for n, _ in ALL_MONITORED_METRICS] + [n for n, _, _ in OFFLINE_INFRA_METRICS]
+        series = [
+            _make_series(f"custom.googleapis.com/agent_eval/{n}", [4.0, 4.1, 4.2]) for n in names
+        ]
+        data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+        assert data["coordinator_quality"]["missing"] == []
+
+    def test_every_alerted_metric_is_accounted_for(self):
+        """missing + present must equal the alerted set — no metric may fall
+        through the gap between them."""
+        from src.eval.quality_alerts import ALL_MONITORED_METRICS, OFFLINE_INFRA_METRICS
+
+        alerted = {n for n, _ in ALL_MONITORED_METRICS} | {n for n, _, _ in OFFLINE_INFRA_METRICS}
+        series = [_make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0])]
+        data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient(series))
+        surface = data["coordinator_quality"]
+        assert set(surface["missing"]) | set(surface["metrics"]) == alerted
+
+    def test_the_key_is_present_even_when_empty(self):
+        """Absent reads as 'not checked'; empty reads as 'checked, nothing found'."""
+        data = vm.verify_monitor_results(output_format="json", client=FakeMonitoringClient([]))
+        assert data["unpublished"] is not None
+        assert isinstance(data["unpublished"], list)
+
+    def test_the_text_report_says_so_loudly(self, capsys):
+        series = [_make_series("custom.googleapis.com/agent_eval/helpfulness", [4.0, 4.1, 4.2])]
+        vm.verify_monitor_results(output_format="text", client=FakeMonitoringClient(series))
+        out = capsys.readouterr().out
+        assert "ALERTED BUT UNPUBLISHED" in out
+        assert "nothing wrote" in out
