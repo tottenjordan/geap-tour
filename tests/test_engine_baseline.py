@@ -336,3 +336,39 @@ class TestBaselineIsSharedWithTheDeployer:
             for check in eb.checks_for(role):
                 assert len(check.why) > 40, check.name
                 assert check.severity in ("critical", "advisory")
+
+
+class TestUnreachableEnginesAreNotReportedAsHealthy:
+    """An engine that could not be fetched has NO findings.
+
+    So the tally counted zero criticals and zero advisories and printed
+    "0 critical, 0 advisory" — a clean bill of health for an engine that was never
+    inspected. That is exactly how the CI step went unnoticed while it reported
+    every engine UNREACHABLE for weeks (a scoping bug in the ADC token; see
+    tests/test_auth.py).
+    """
+
+    @staticmethod
+    def _boom(_engine_id):
+        raise RuntimeError("Unable to acquire impersonated credentials")
+
+    def test_the_tally_says_unreachable_instead_of_all_clear(self):
+        results = [v.check_engine("123", "coordinator", fetch=self._boom)]
+        out = v.render(results)
+        assert "1 UNREACHABLE (not checked)" in out
+        assert out.count("0 critical, 0 advisory") == 1, "must not read as a clean pass"
+
+    def test_it_still_names_the_engine_and_the_error(self):
+        out = v.render([v.check_engine("123", "coordinator", fetch=self._boom)])
+        assert "123  UNREACHABLE" in out
+        assert "impersonated credentials" in out
+
+    def test_an_unreachable_engine_is_not_ok_and_exits_non_zero(self):
+        results = [v.check_engine("123", "coordinator", fetch=self._boom)]
+        assert results[0]["ok"] is False
+        assert v.main(["--engine-id", "123"], fetch=self._boom) == 1
+
+    def test_a_healthy_run_does_not_mention_unreachable(self):
+        spec = _good_spec()
+        out = v.render([v.check_engine("111", "coordinator", fetch=lambda _e: spec)])
+        assert "UNREACHABLE" not in out

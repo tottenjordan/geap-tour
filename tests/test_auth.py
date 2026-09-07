@@ -97,35 +97,94 @@ class TestBothCallersShareIt:
     def test_no_module_still_calls_default_without_scopes(self):
         """A new hand-rolled copy would reintroduce this.
 
-        Parsed with `ast`, not grepped: a regex also matches the prose in this
-        file and in src/auth.py that *explains* the bug, which would make the
-        guard fail on its own documentation.
-
         `src/mcp_servers/**` is exempt — it runs on Cloud Run under a real service
         account, so there is no impersonation step to reject empty scopes.
         """
-        import ast
         import pathlib
 
-        def _dotted(node) -> str:
-            parts = []
-            while isinstance(node, ast.Attribute):
-                parts.append(node.attr)
-                node = node.value
-            if isinstance(node, ast.Name):
-                parts.append(node.id)
-            return ".".join(reversed(parts))
-
         root = pathlib.Path(__file__).resolve().parents[1] / "src"
-        offenders = []
-        for path in root.rglob("*.py"):
-            if "mcp_servers" in path.parts:
-                continue
-            for node in ast.walk(ast.parse(path.read_text())):
-                if (
-                    isinstance(node, ast.Call)
-                    and _dotted(node.func).endswith("auth.default")
-                    and not any(kw.arg == "scopes" for kw in node.keywords)
-                ):
-                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+        offenders = [
+            f"{path.relative_to(root)}:{line}"
+            for path in root.rglob("*.py")
+            if "mcp_servers" not in path.parts
+            for line in unscoped_adc_calls(path.read_text())
+        ]
         assert not offenders, f"unscoped google.auth.default() will 400 under WIF: {offenders}"
+
+
+def unscoped_adc_calls(source: str) -> list[int]:
+    """Line numbers of `google.auth.default()` calls with no `scopes=`.
+
+    Parsed with `ast`, not grepped, for two reasons. A regex matches the prose in
+    this file and in `src/auth.py` that *explains* the bug, so a grep-based guard
+    fails on its own documentation. And a regex anchored on `google.auth.default`
+    misses the `from google.auth import default` form entirely — which is the same
+    bug, spelled differently, and would sail past the guard.
+
+    Handles all three spellings: the attribute form, the from-import, and an
+    aliased from-import. `TestTheGuardItself` exercises each, because a scanner
+    that silently matches nothing passes the repo-wide check vacuously — which is
+    exactly how the first version of this guard shipped broken.
+    """
+    import ast
+
+    def dotted(node) -> str:
+        parts = []
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        if isinstance(node, ast.Name):
+            parts.append(node.id)
+        return ".".join(reversed(parts))
+
+    tree = ast.parse(source)
+
+    # Names bound locally to google.auth.default via `from ... import default`.
+    local_aliases = {
+        (alias.asname or alias.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("google.auth")
+        for alias in node.names
+        if alias.name == "default"
+    }
+
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or any(kw.arg == "scopes" for kw in node.keywords):
+            continue
+        name = dotted(node.func)
+        if name.endswith("auth.default") or (
+            isinstance(node.func, ast.Name) and name in local_aliases
+        ):
+            out.append(node.lineno)
+    return out
+
+
+class TestTheGuardItself:
+    """The scanner must be shown to catch things, not merely to pass.
+
+    Its first version matched only the attribute form, so
+    `from google.auth import default; default()` — the identical bug — would have
+    reintroduced the outage and left the suite green.
+    """
+
+    def test_it_catches_the_attribute_form(self):
+        assert unscoped_adc_calls("import google.auth\nx = google.auth.default()") == [2]
+
+    def test_it_catches_the_from_import_form(self):
+        assert unscoped_adc_calls("from google.auth import default\nx = default()") == [2]
+
+    def test_it_catches_an_aliased_from_import(self):
+        assert unscoped_adc_calls("from google.auth import default as gad\nx = gad()") == [2]
+
+    def test_it_ignores_a_correctly_scoped_call(self):
+        assert unscoped_adc_calls('import google.auth\nx = google.auth.default(scopes=["s"])') == []
+
+    def test_it_ignores_prose_about_the_bug(self):
+        """This file and src/auth.py both describe `google.auth.default()` in
+        docstrings; a grep-based guard would fail on its own explanation."""
+        assert unscoped_adc_calls('"""we used to call google.auth.default() here"""') == []
+
+    def test_an_unrelated_default_is_not_flagged(self):
+        """`default()` only counts when it was imported FROM google.auth."""
+        assert unscoped_adc_calls("from collections import default\nx = default()") == []
