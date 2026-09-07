@@ -67,13 +67,15 @@ def _endpoint_base(resource_name: str) -> str:
 
 
 def _default_token() -> str:
-    """ADC bearer token (works from this env's application-default credentials)."""
-    import google.auth
-    import google.auth.transport.requests as gart
+    """ADC bearer token. Shared with src/deploy/verify_engine_config.py — see src/auth.py.
 
-    creds, _ = google.auth.default()
-    creds.refresh(gart.Request())
-    return creds.token
+    Carried the same unscoped-``default()`` bug: harmless locally, 400s under WIF
+    impersonation. Latent here only because this reader is a *fallback* for the
+    SSE-parse skew, so CI rarely reaches it — it would have failed the same way.
+    """
+    from src.auth import adc_bearer_token
+
+    return adc_bearer_token()
 
 
 def _default_post(url: str, *, headers: dict, json_body: dict, stream: bool):

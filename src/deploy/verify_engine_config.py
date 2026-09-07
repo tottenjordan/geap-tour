@@ -41,13 +41,15 @@ _API_VERSION = "v1beta1"
 
 
 def _default_token() -> str:
-    """ADC bearer token (mirrors src/eval/raw_stream.py's auth)."""
-    import google.auth
-    import google.auth.transport.requests as gart
+    """ADC bearer token. Shared with src/eval/raw_stream.py — see src/auth.py.
 
-    creds, _ = google.auth.default()
-    creds.refresh(gart.Request())
-    return creds.token
+    Previously this called ``google.auth.default()`` with no scopes, which works
+    locally and 400s under CI's WIF impersonation. This step reported every engine
+    ``UNREACHABLE`` on every scheduled run for weeks because of it.
+    """
+    from src.auth import adc_bearer_token
+
+    return adc_bearer_token()
 
 
 def _default_fetch(engine_id: str) -> dict:
@@ -160,7 +162,14 @@ def render(results: list[dict], *, show_why: bool = False) -> str:
                 lines.append(f"       why: {f.why}")
     crit = [f for r in results for f in r["findings"] if not f.ok and f.severity == "critical"]
     adv = [f for r in results for f in r["findings"] if not f.ok and f.severity == "advisory"]
-    lines += ["", f"  {len(crit)} critical, {len(adv)} advisory"]
+    # An unreachable engine has NO findings, so it used to tally "0 critical, 0
+    # advisory" — which reads as a clean bill of health for an engine that was
+    # never actually inspected. Count it explicitly.
+    unreachable = [r for r in results if r.get("error")]
+    tally = f"  {len(crit)} critical, {len(adv)} advisory"
+    if unreachable:
+        tally += f", {len(unreachable)} UNREACHABLE (not checked)"
+    lines += ["", tally]
     if crit and not show_why:
         lines.append("  (re-run with --why for the rationale behind each check)")
     return "\n".join(lines)
