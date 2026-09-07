@@ -7,11 +7,19 @@ touch code or configuration.
 ## Git & commits
 
 - **Never** add `Co-Authored-By` trailers to commits or PRs.
-- Branch before committing when on `main`. Once a PR is open and you are
-  actively working on it, commit and push to that PR as needed so the user can
-  review commits as they land — you do not need to ask before each commit/push.
-  **Never** merge or mark a PR approved: PR approval/merge always requires the
-  user's review.
+- **Every code change reaches `main` through a PR. No exceptions.** Branch before
+  committing when on `main`. Once a PR is open and you are actively working on
+  it, commit and push to that PR as needed so the user can review commits as they
+  land — you do not need to ask before each commit/push. **Never** merge or mark a
+  PR approved: PR approval/merge always requires the user's review.
+- **Never push directly to `main`** — not `git push origin main`, not
+  `git push origin HEAD:main`, not a hotfix, not a one-line follow-up to a PR that
+  just merged. This has actually happened here: two fixes (`59d3aa6`, `fec355c`)
+  went straight to `main` during post-merge deployment work, skipping review
+  entirely. "It's a small fix and the branch is already merged" is exactly the
+  rationalisation to distrust — a follow-up fix is a *new* change and needs a
+  *new* branch and PR. If a change feels too urgent to review, say so and let the
+  user decide; do not decide it unilaterally.
 
 ## Python tooling
 
