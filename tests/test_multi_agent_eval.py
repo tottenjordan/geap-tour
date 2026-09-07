@@ -846,3 +846,76 @@ class TestRouterEvalsetComplexityLevels:
                 counts[complexity] += 1
         for level, count in counts.items():
             assert count >= 2, f"Need at least 2 cases for {level}, got {count}"
+
+
+class TestEmptyResponsesArePartitionedOutOfScoring:
+    """Counting empties was never enough — the judges still graded them.
+
+    `count_empty_response_items` reported the rate to stdout while the empty
+    string went to the rubrics anyway, so an engine returning zero characters
+    scored as *low quality* on the same 3.0 floor as a genuinely bad answer. P2.8
+    fixed exactly this for the ONLINE surface and never came back for offline.
+    """
+
+    class _Result:
+        """Minimal stand-in for the SDK inference result (it holds a DataFrame)."""
+
+        def __init__(self, df):
+            self.eval_dataset_df = df
+
+    @staticmethod
+    def _df(*responses):
+        import pandas as pd
+
+        return pd.DataFrame({"response": list(responses), "prompt": list(range(len(responses)))})
+
+    def test_empty_rows_are_dropped_before_scoring(self):
+        from src.eval.multi_agent_batch_eval import partition_empty_responses
+
+        r = self._Result(self._df("good", "", "also good", '{"error": "x"}'))
+        assert partition_empty_responses(r) == 2
+        assert list(r.eval_dataset_df["response"]) == ["good", "also good"]
+
+    def test_a_clean_run_is_untouched(self):
+        from src.eval.multi_agent_batch_eval import partition_empty_responses
+
+        df = self._df("a", "b")
+        r = self._Result(df)
+        assert partition_empty_responses(r) == 2
+        assert r.eval_dataset_df is df, "no empties means no reason to rebuild the frame"
+
+    def test_an_all_empty_run_is_left_alone_for_the_caller_to_report(self):
+        """Filtering to zero rows would make the eval fail obscurely. The caller
+        needs to say 'infra failure', not publish a mean over nothing."""
+        from src.eval.multi_agent_batch_eval import partition_empty_responses
+
+        r = self._Result(self._df("", "  "))
+        assert partition_empty_responses(r) == 0
+        assert len(r.eval_dataset_df) == 2
+
+    def test_index_is_reset_so_downstream_positional_reads_line_up(self):
+        from src.eval.multi_agent_batch_eval import partition_empty_responses
+
+        r = self._Result(self._df("", "kept", ""))
+        partition_empty_responses(r)
+        assert list(r.eval_dataset_df.index) == [0]
+
+    def test_missing_column_or_empty_frame_is_a_no_op(self):
+        import pandas as pd
+
+        from src.eval.multi_agent_batch_eval import partition_empty_responses
+
+        assert partition_empty_responses(self._Result(pd.DataFrame({"other": ["x"]}))) == 1
+        assert partition_empty_responses(self._Result(None)) == 0
+
+    def test_it_agrees_with_the_counter_it_partners(self):
+        """Two functions reading the same column with the same emptiness rule; if
+        they ever disagree the printed denominator stops describing the sample."""
+        from src.eval.multi_agent_batch_eval import (
+            count_empty_response_items,
+            partition_empty_responses,
+        )
+
+        df = self._df("a", "", "b", '{"error": "y"}', "   ")
+        n_empty, n_total = count_empty_response_items(df)
+        assert partition_empty_responses(self._Result(df)) == n_total - n_empty

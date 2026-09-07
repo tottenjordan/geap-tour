@@ -238,6 +238,17 @@ ONLINE_INFRA_METRICS = [
     ("infra_empty_rate", 0.2, "GT"),
 ]
 
+# The OFFLINE twin, on ``agent_eval/*``. Same axis, same 0.2 ceiling, same reason —
+# and it should have shipped with the online one. P2.8 partitioned empty-at-200 out
+# of the ONLINE quality mean and gave it its own series, but the offline surface
+# kept grading the empty string: `multi_agent_batch_eval` computed the rate, printed
+# it to stdout, and published nothing. So an offline `helpfulness` dip could be an
+# engine returning zero characters and there was no series to check it against —
+# exactly the confusion the online split was created to end.
+OFFLINE_INFRA_METRICS = [
+    ("infra_empty_rate", 0.2, "GT"),
+]
+
 
 # ---------------------------------------------------------------------------
 # Managed engine-health alerts — the platform's OWN Reasoning Engine metrics

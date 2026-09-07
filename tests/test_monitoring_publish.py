@@ -188,3 +188,63 @@ class TestRouterEfficiencyIsScheduled:
         run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
         assert "router efficiency" in run
         assert "steps.router.outcome" in run
+
+
+class TestAnomaliesReachTheOperator:
+    """A detector nobody can see is not monitoring.
+
+    The rolling baseline's first real catch — `cost_savings_pct` at 60.0, z=-2.27,
+    with the static 50% floor clean — rendered in this summary as `base=ok`,
+    because the column showed the baseline *status* ("a baseline was computed")
+    rather than whether one FIRED. Nothing warned and nothing exited non-zero.
+    """
+
+    def test_the_summary_shows_the_z_score_when_one_fires(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert "is_anomaly" in run, "the summary must branch on is_anomaly, not just status"
+        assert "z=" in run
+
+    def test_the_warning_flag_covers_anomalies_not_only_the_static_floor(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        flag_line = next(ln for ln in run.splitlines() if 'flag = " ⚠"' in ln)
+        assert "out_of_bounds" in flag_line and "is_anomaly" in flag_line
+
+    def test_each_anomaly_emits_a_github_annotation(self):
+        """A row in a collapsed summary table is not a notification."""
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert "::warning" in run
+        assert 'data.get("anomalies")' in run
+
+    def test_an_anomaly_warns_rather_than_failing_the_job(self):
+        """Deliberate: the detector has one catch to its name and it was a
+        transient. Failing on z>2 over a 5-point baseline would teach everyone to
+        ignore a red X. The fail guard stays about publishing, not anomalies."""
+        guard = _step(_load_steps(), "Fail if every publish failed")["if"]
+        assert "anomal" not in guard.lower()
+
+    def test_the_router_step_prints_a_diagnostic(self):
+        """`cost_savings_pct` dropped to 60.0 and the run's log held only the three
+        published scalars, so that point is permanently un-diagnosable. The tier
+        distribution and score histogram cost nothing — they are already computed."""
+        from src.eval.publish_router_efficiency import format_distribution
+
+        out = format_distribution(
+            {"per_case": [{"score": 0.1}, {"score": 0.9}, {"score": 0.9}]},
+            {"per_case": [{"tier": "lite"}, {"tier": "opus"}, {"tier": "opus"}]},
+        )
+        assert "lite=1" in out and "opus=2" in out
+        assert "0.9x2" in out
+
+    def test_the_diagnostic_orders_tiers_cheapest_first(self):
+        """Cost-ordered, so a shift toward the expensive end reads at a glance."""
+        from src.eval.publish_router_efficiency import format_distribution
+
+        out = format_distribution({}, {"per_case": [{"tier": "opus"}, {"tier": "lite"}]})
+        assert out.index("lite") < out.index("opus")
+
+    def test_the_diagnostic_survives_missing_inputs(self):
+        """It runs right after a successful publish; it must never be what fails."""
+        from src.eval.publish_router_efficiency import format_distribution
+
+        assert format_distribution(None, None) == ""
+        assert format_distribution({}, {"per_case": [{}]}) == ""

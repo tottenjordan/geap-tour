@@ -160,12 +160,29 @@ jobs:
                       lines.append(f"| {surface} | {block.get('status')} | — | — | — | — |")
                       continue
                   for name, m in sorted(metrics.items()):
-                      base = (m.get("baseline") or {}).get("status", "?")
-                      flag = " ⚠" if m.get("out_of_bounds") else ""
+                      b = m.get("baseline") or {}
+                      # `baseline.status == "ok"` only means "a baseline was
+                      # computed" — it says nothing about whether one FIRED. The
+                      # detector's first real catch rendered here as `ok` and was
+                      # missed, so show the z-score when is_anomaly is set.
+                      base = f"⚠ z={b['z']:+.2f}" if b.get("is_anomaly") else b.get("status", "?")
+                      flag = " ⚠" if (m.get("out_of_bounds") or b.get("is_anomaly")) else ""
                       lines.append(
                           f"| {surface} | {block.get('status')} | {name}{flag} | "
                           f"{m.get('eval_count')} | {m.get('avg_score')} | {base} |"
                       )
+              fired = data.get("anomalies") or []
+              for a in fired:
+                  # Advisory, not a failure: the detector has one catch to its name
+                  # and it was a transient. Failing the job on z>2 over a 5-point
+                  # baseline would teach everyone to ignore a red X.
+                  print(
+                      f"::warning title=Baseline anomaly::{a['surface']}/{a['metric']} "
+                      f"= {a['current_score']} (z={a['z']:+.2f} vs mean "
+                      f"{a['baseline_mean']}, n={a['n_baseline']})"
+                  )
+              lines += ["", f"**Baseline anomalies fired: {len(fired)}**" if fired
+                        else "_No baseline anomalies._"]
               lines += ["", "_Anomaly detection stays inert until `baseline` leaves "
                         "`insufficient_history` (needs n >= 5)._"]
           else:

@@ -256,6 +256,25 @@ def write_online_infra_metrics(
         writer.write_gauge(f"agent_online_eval/{name}", value, labels)
 
 
+def write_offline_infra_metrics(
+    scores: Mapping[str, float],
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> None:
+    """Emit ``agent_eval/<name>`` gauges for offline *infra* signals.
+
+    The offline twin of :func:`write_online_infra_metrics`: same ``infra_empty_rate``
+    on the same 0-1 verbatim axis, but on the coordinator's offline family. It has
+    to be a separate writer from :func:`write_quality_scores` for the same reason
+    the online pair is separate — that one rescales 0-1 to 1-5, which would turn a
+    20% empty rate into a "1.8 quality score".
+    """
+    writer = writer or MetricsWriter()
+    labels = _default_labels(extra_labels)
+    for name, value in scores.items():
+        writer.write_gauge(f"agent_eval/{name}", value, labels)
+
+
 def write_router_metrics(
     scores: Mapping[str, float],
     writer: MetricsWriter | None = None,

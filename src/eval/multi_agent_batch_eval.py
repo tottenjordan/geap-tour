@@ -105,6 +105,39 @@ def count_empty_response_items(inference_df) -> tuple[int, int]:
     return sum(1 for cell in inference_df[_RESPONSE_COLUMN] if is_infra_empty(cell)), total
 
 
+def partition_empty_responses(inference_result) -> int:
+    """Drop infra-empty rows from the dataset the rubrics will score; return the count kept.
+
+    The offline half of the P2.8 split. Online traffic has had empties partitioned
+    out of the quality mean since then (:func:`online_monitor.partition_interactions`),
+    but offline kept handing them to the judges, which grade the empty string rather
+    than skipping it. So an engine returning zero characters showed up as *low
+    quality*, on the same 3.0 floor as a genuinely bad answer.
+
+    It also removes an asymmetry inside a single run: the standalone judges that
+    overwrite ``policy_compliance`` and ``tool_use_accuracy`` already skip empties
+    (``policy_judge._is_error_response``), so before this only ``helpfulness`` — the
+    one metric still scored by the SDK rubric — carried the contamination.
+
+    Mutates ``inference_result.eval_dataset_df`` because that object is what gets
+    handed to ``create_evaluation_run``; there is no filtered-copy seam in the SDK.
+    Deliberately does **not** filter when every row is empty: an empty frame would
+    make the eval fail obscurely, and the caller needs to report "all empty" as an
+    infra outcome rather than a quality one.
+    """
+    df = getattr(inference_result, "eval_dataset_df", None)
+    if df is None or not len(df) or _RESPONSE_COLUMN not in getattr(df, "columns", []):
+        return len(df) if df is not None else 0
+
+    from src.eval.online_monitor import is_infra_empty
+
+    keep = [not is_infra_empty(cell) for cell in df[_RESPONSE_COLUMN]]
+    n_keep = sum(keep)
+    if n_keep and n_keep < len(df):
+        inference_result.eval_dataset_df = df[keep].reset_index(drop=True)
+    return n_keep
+
+
 def count_tool_call_items(inference_df) -> tuple[int, int]:
     """``(items with >=1 tool event, total items)`` in an inference dataframe.
 
@@ -295,15 +328,43 @@ def _run_single_agent_eval(
     # every rubric mean. Reported so an infra failure can't read as a quality
     # regression (the offline twin of agent_online_eval/infra_empty_rate).
     n_empty, n_total = count_empty_response_items(inference_df)
+    n_scored = partition_empty_responses(inference_result)
     if n_total:
         pct = 100.0 * n_empty / n_total
-        print(f"  Empty responses: {n_empty}/{n_total} ({pct:.0f}%) — these depress every rubric")
-        if pct >= 20:
-            print(
-                "    WARNING: a high empty rate means these scores measure infra "
-                "health, not answer quality. See docs/notes/offline-eval-empty-turns.md"
-            )
+        # Always print the denominator, even at 0 empties. A sample that silently
+        # shrinks is how a halved run reads as a clean one.
+        print(
+            f"  Empty responses: {n_empty}/{n_total} ({pct:.0f}%) — partitioned OUT "
+            f"of rubric scoring; {n_scored}/{n_total} items scored"
+        )
+    if n_total and not n_scored:
+        # Nothing left to grade. Publishing a mean over zero items would render as
+        # a quality score; say what actually happened instead.
+        print("  SKIPPED: every response was empty — this run measures infra, not quality.")
+        return {
+            "agent": agent_name,
+            "status": "SKIPPED",
+            "reason": "all responses empty (infra failure, not a quality result)",
+            "test_cases": len(cases),
+            "empty_responses": n_empty,
+            "empty_rate": 1.0,
+            "metrics": {},
+        }
+    if n_total and pct >= 20:
+        # The rubrics are now clean, but the *sample* is not: a fifth of the run
+        # never produced an answer, so the remaining mean rests on far fewer
+        # items than the case count suggests, and the engine has a real problem.
+        print(
+            "    WARNING: >=20% empty. The rubric means exclude these, but they "
+            "are computed over a much smaller sample than the case count, and "
+            "the empty rate itself is the finding. "
+            "See docs/notes/offline-eval-empty-turns.md"
+        )
 
+    # Re-read: partition_empty_responses replaced the frame, and this decides
+    # whether tool_use_quality is scorable — it must reflect the SCORED items, not
+    # the discarded ones.
+    inference_df = getattr(inference_result, "eval_dataset_df", None)
     with_calls, total_items = count_tool_call_items(inference_df)
     print(f"  Tool calls: {with_calls}/{total_items} items invoked at least one tool")
     if total_items and not with_calls:
