@@ -249,6 +249,7 @@ def test_verify_queries_one_exact_metric_per_request():
 
     # One request per monitored metric across ALL THREE surfaces, each an exact match.
     from src.eval.quality_alerts import (
+        OFFLINE_INFRA_METRICS,
         ONLINE_INFRA_METRICS,
         ONLINE_MONITORED_METRICS,
         ROUTER_MONITORED_METRICS,
@@ -256,6 +257,7 @@ def test_verify_queries_one_exact_metric_per_request():
 
     expected_requests = (
         len(ALL_MONITORED_METRICS)
+        + len(OFFLINE_INFRA_METRICS)
         + len(ONLINE_MONITORED_METRICS)
         + len(ONLINE_INFRA_METRICS)
         + len(ROUTER_MONITORED_METRICS)
@@ -424,3 +426,102 @@ def test_suppressed_metrics_report_the_sample_size_needed():
     assert item["metric"] == "helpfulness"
     assert item["eval_count"] == 2
     assert item["ci"] is not None
+
+
+class TestAnomaliesAreHoisted:
+    """The detector's first real catch was invisible.
+
+    `cost_savings_pct` dipped to 60.0 with z=-2.27 and `is_anomaly: true`, while
+    `out_of_bounds` stayed 0 because 60 clears the static 50% floor. The only
+    consumer of `is_anomaly` was one printed line, and the workflow summary showed
+    the baseline *status* — "ok", meaning "a baseline was computed" — so a fired
+    anomaly rendered as healthy. A top-level list makes it impossible to miss.
+    """
+
+    @staticmethod
+    def _data(**baseline):
+        return {
+            "router_efficiency": {
+                "status": "ok",
+                "metrics": {
+                    "cost_savings_pct": {
+                        # `eval_count` is what _flat_metrics uses to tell a summary
+                        # from the --group-by nesting; every real summary has it.
+                        "eval_count": 8,
+                        "current_score": 60.0,
+                        "out_of_bounds": 0,
+                        "baseline": baseline,
+                    }
+                },
+            }
+        }
+
+    def test_a_fired_anomaly_is_hoisted_with_its_numbers(self):
+        from src.eval.verify_monitors import anomalies
+
+        out = anomalies(
+            self._data(
+                status="ok",
+                is_anomaly=True,
+                z=-2.268,
+                z_threshold=2.0,
+                baseline_mean=89.2,
+                n_baseline=7,
+            )
+        )
+        assert len(out) == 1
+        assert out[0]["surface"] == "router_efficiency"
+        assert out[0]["metric"] == "cost_savings_pct"
+        assert out[0]["z"] == -2.268
+        assert out[0]["current_score"] == 60.0
+
+    def test_it_fires_even_when_the_static_floor_is_clean(self):
+        """THE case. 60.0 is above the 50.0 floor, so out_of_bounds is 0 — this is
+        precisely the drift the rolling baseline exists to catch."""
+        from src.eval.verify_monitors import anomalies
+
+        out = anomalies(self._data(status="ok", is_anomaly=True, z=-2.27, baseline_mean=89.2))
+        assert out and out[0]["out_of_bounds"] == 0
+
+    def test_a_healthy_baseline_yields_nothing(self):
+        from src.eval.verify_monitors import anomalies
+
+        assert anomalies(self._data(status="ok", is_anomaly=False, z=0.3)) == []
+
+    def test_an_unwarmed_baseline_yields_nothing(self):
+        from src.eval.verify_monitors import anomalies
+
+        assert anomalies(self._data(status="insufficient_history", n_baseline=2)) == []
+
+    def test_non_surface_keys_are_skipped(self):
+        """`status`, `insufficient_power` and `anomalies` itself sit at the top
+        level alongside the surfaces."""
+        from src.eval.verify_monitors import anomalies
+
+        data = {
+            **self._data(status="ok", is_anomaly=True, z=-3.0),
+            "status": "ok",
+            "insufficient_power": [],
+            "anomalies": [],
+        }
+        assert len(anomalies(data)) == 1
+
+    def test_the_key_is_always_present_in_a_real_read(self):
+        """Mirrors insufficient_power: an absent key reads as 'not checked', an
+        empty list as 'checked, nothing fired'."""
+        client = FakeMonitoringClient([])
+        data = vm.verify_monitor_results(output_format="json", client=client)
+        assert data["anomalies"] == []
+
+
+def test_lookback_survives_a_slow_cron_day():
+    """The publishing cron is scheduled hourly but GitHub drops runs under load —
+    measured ~7/day over two weeks. At the old 24h window that left ~7 points
+    against a 5-point baseline minimum, so one slow day silently disabled the
+    detector."""
+    from src.eval.baseline import MIN_BASELINE
+    from src.eval.verify_monitors import DEFAULT_LOOKBACK_HOURS
+
+    assert DEFAULT_LOOKBACK_HOURS >= 48
+    observed_runs_per_day = 7
+    assert (DEFAULT_LOOKBACK_HOURS / 24) * observed_runs_per_day >= MIN_BASELINE * 2

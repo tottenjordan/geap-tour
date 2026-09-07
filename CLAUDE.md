@@ -59,18 +59,24 @@ uv run python -m src.eval.publish_offline_eval --latest       # bridge newest co
 uv run python -m src.eval.publish_offline_eval --run          # fresh coordinator batch, then publish
 uv run python -m src.eval.publish_offline_eval --run --no-faithfulness  # bridge WITHOUT faithfulness — the scheduled workflow publishes it in its own bounded step, so this avoids two writers on one series
 uv run python -m src.eval.tool_faithfulness --agent-id <ENGINE_ID> --limit 6 --publish  # the faithfulness series itself (priciest judge: one stream_query trajectory + one judge call per case, so bound it)
+# NOTE ON CADENCE: scheduled `23 * * * *`, but GitHub DROPS scheduled runs under
+# load rather than queueing them — measured ~7 runs/day over two weeks (99 successes,
+# 0 failures). verify_monitors' lookback is 48h (DEFAULT_LOOKBACK_HOURS) so the
+# rolling baseline keeps >= 5 points through a slow day.
 # The scheduled publish covers FOUR steps: coordinator quality, tool faithfulness,
 # online quality, and (added 2026-08-25) router efficiency via
-# `publish_router_efficiency --run`. agent_router/* previously had no scheduled
-# writer at all — it moved only on a manual full eval, so the series never
+# `publish_router_efficiency --run` (which also logs the tier/score distribution, so
+# an anomalous point is diagnosable from its own run log). agent_router/* previously
+# had no scheduled writer at all — it moved only on a manual full eval, so the series never
 # accumulated enough points for verify_monitors' rolling baseline (min 5) and its
 # alerts watched something effectively static.
-# The scheduled publish itself is .github/workflows/monitoring_publish.yaml (hourly at :23 UTC,
+# The scheduled publish itself is .github/workflows/monitoring_publish.yaml (scheduled :23 UTC hourly, ~7/day in practice,
 # workflow_dispatch for a manual run). It runs unattended — an in-session scheduler only fires
 # while a REPL is open and idle, so the series silently stop the moment the terminal closes.
 uv run python -m src.eval.publish_router_efficiency --run   # router efficiency → agent_router/* (native units); classifier-only (no engine/judge), so the hourly workflow runs it
 uv run python -m src.eval.publish_router_efficiency --from-json <full_results.json>  # same, from a run_all_evals artifact
-uv run python -m src.eval.verify_monitors --format json       # summarize all three surfaces: coordinator_quality + online_quality + router_efficiency
+uv run python -m src.eval.verify_monitors --format json       # summarize all three surfaces; top-level `anomalies` lists every fired rolling-baseline z-score (the static floors miss drift that stays inside them)
+uv run python -m src.eval.verify_monitors --format json --hours 24   # narrow the 48h default window
 
 # Native Online Evaluators (opt-in) — deploy with span content capture so call_llm spans carry real prompt/response (else INSUFFICIENT_DATA)
 ENABLE_SPAN_CONTENT_CAPTURE=1 uv run python -m src.deploy.deploy_agents coordinator --update  # AdkApp(enable_tracing=True) opens the content gate; native-Gemini backbone; see docs/notes/online-eval-content-capture.md

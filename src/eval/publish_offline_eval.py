@@ -73,7 +73,41 @@ def publish_offline_scores(
     }
 
     labels = {"eval_mode": "offline", **(extra_labels or {})}
-    return publish_eval_metrics(raw, writer=writer, extra_labels=labels)
+    published = publish_eval_metrics(raw, writer=writer, extra_labels=labels)
+    published.update(
+        publish_offline_infra_rate(batch_results, coordinator_agent, writer=writer, labels=labels)
+    )
+    return published
+
+
+def publish_offline_infra_rate(
+    batch_results: Mapping,
+    coordinator_agent: str = DEFAULT_COORDINATOR_AGENT,
+    writer: MetricsWriter | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> dict[str, float]:
+    """Publish ``agent_eval/infra_empty_rate`` (0-1 verbatim) alongside the rubrics.
+
+    The batch run has always computed ``empty_rate``; it just went nowhere but
+    stdout, so an offline quality dip had no infra series to be checked against.
+    This is the offline twin of ``agent_online_eval/infra_empty_rate``.
+
+    Deliberately NOT routed through :func:`publish_eval_metrics`: that filters to
+    ``ALL_MONITORED_METRICS`` and rescales 0-1 to 1-5, which would both drop this
+    metric and, if it didn't, render a 20% empty rate as a 1.8 "quality score".
+
+    Absent key -> publish nothing. A run that never measured the rate must not
+    report a confident 0.0.
+    """
+    from src.observability.metrics import write_offline_infra_metrics
+
+    agent = batch_results.get("agents", {}).get(coordinator_agent, {})
+    rate = agent.get("empty_rate")
+    if rate is None:
+        return {}
+    scores = {"infra_empty_rate": round(float(rate), 4)}
+    write_offline_infra_metrics(scores, writer=writer, extra_labels=dict(labels or {}))
+    return scores
 
 
 # --------------------------------------------------------------------------- #

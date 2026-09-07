@@ -37,12 +37,26 @@ from typing import NamedTuple
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
 from src.eval.quality_alerts import (
     ALL_MONITORED_METRICS,
+    OFFLINE_INFRA_METRICS,
     ONLINE_INFRA_METRICS,
     ONLINE_MONITORED_METRICS,
     ROUTER_MONITORED_METRICS,
 )
 
 DEFAULT_THRESHOLD = 3.0
+
+# Trailing window for every surface query.
+#
+# 48h, not 24h, and the reason is measured rather than preferred. The publishing
+# cron is scheduled `23 * * * *` but GitHub *drops* scheduled runs under load
+# rather than queueing them: over two weeks it produced 99 successes, i.e. **~7
+# runs/day, not 24**. At 24h that left ~7 points against `baseline.MIN_BASELINE`
+# of 5 — one slow day below the minimum and the rolling-baseline detector goes
+# silently inert, which is the failure mode it exists to prevent.
+#
+# Widening trades a little sensitivity to a genuine sustained shift for a
+# baseline that survives a slow day. Revisit if the cron ever really runs hourly.
+DEFAULT_LOOKBACK_HOURS = 48
 
 
 class Surface(NamedTuple):
@@ -59,7 +73,11 @@ class Surface(NamedTuple):
 SURFACES = {
     "coordinator_quality": Surface(
         prefix="custom.googleapis.com/agent_eval/",
-        metrics=[(name, threshold, "LT") for name, threshold in ALL_MONITORED_METRICS],
+        # 1-5 quality rubrics (LT floor) + the infra_empty_rate ceiling (GT), the
+        # offline twin of the online split — so an offline quality dip can be
+        # checked against the empty rate instead of guessed at.
+        metrics=[(name, threshold, "LT") for name, threshold in ALL_MONITORED_METRICS]
+        + list(OFFLINE_INFRA_METRICS),
     ),
     "online_quality": Surface(
         prefix="custom.googleapis.com/agent_online_eval/",
@@ -306,6 +324,45 @@ def insufficient_power(data: dict) -> list[dict]:
     return out
 
 
+def anomalies(data: dict) -> list[dict]:
+    """Every metric the rolling baseline flagged, hoisted to one list.
+
+    The detector's first real catch was invisible: ``cost_savings_pct`` dipped to
+    60.0 with ``z=-2.27`` while ``out_of_bounds`` stayed 0 (the static 50% floor
+    never saw it), and the only consumer of ``is_anomaly`` was one printed line
+    buried in the per-metric text output. The workflow summary rendered the
+    baseline *status* — ``"ok"``, meaning "baseline computed" — so a fired anomaly
+    displayed as healthy.
+
+    Mirrors :func:`insufficient_power`: a top-level list is always present, so an
+    absent key reads as "not checked" and an empty list as "checked, nothing
+    fired". A caller should not have to walk every metric to find one.
+    """
+    out = []
+    for surface_key, surface in data.items():
+        if not isinstance(surface, dict) or "metrics" not in surface:
+            continue
+        for name, summary in _flat_metrics(surface["metrics"]):
+            base = summary.get("baseline") or {}
+            if not base.get("is_anomaly"):
+                continue
+            out.append(
+                {
+                    "surface": surface_key,
+                    "metric": name,
+                    "z": base.get("z"),
+                    "z_threshold": base.get("z_threshold"),
+                    "baseline_mean": base.get("baseline_mean"),
+                    "current_score": summary.get("current_score"),
+                    "n_baseline": base.get("n_baseline"),
+                    # An anomaly that is ALSO past its static floor is a different
+                    # (louder) situation than one the floor never saw.
+                    "out_of_bounds": summary.get("out_of_bounds"),
+                }
+            )
+    return out
+
+
 def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None) -> dict:
     client = client or _monitoring_client()
     data: dict[str, object] = {}
@@ -324,6 +381,7 @@ def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None
     # Always present, even when empty: an absent key reads as "not checked",
     # a present empty list reads as "checked, nothing suppressed".
     data["insufficient_power"] = insufficient_power(data)
+    data["anomalies"] = anomalies(data)
     return data
 
 
@@ -400,7 +458,7 @@ def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> dict:
 def verify_monitor_results(
     output_format: str = "text",
     source: str = "monitoring",
-    hours: int = 24,
+    hours: int = DEFAULT_LOOKBACK_HOURS,
     threshold: float = DEFAULT_THRESHOLD,
     client=None,
     bq_client=None,
@@ -589,6 +647,12 @@ if __name__ == "__main__":
         if idx + 1 < len(sys.argv):
             group_by = sys.argv[idx + 1]
 
-    result = verify_monitor_results(output_format=fmt, source=src, group_by=group_by)
+    hours = DEFAULT_LOOKBACK_HOURS
+    if "--hours" in sys.argv:
+        idx = sys.argv.index("--hours")
+        if idx + 1 < len(sys.argv):
+            hours = int(sys.argv[idx + 1])
+
+    result = verify_monitor_results(output_format=fmt, source=src, group_by=group_by, hours=hours)
     if fmt == "json" and result:
         print(json.dumps(result, indent=2, default=str))

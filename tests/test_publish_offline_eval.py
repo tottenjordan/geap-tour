@@ -454,3 +454,75 @@ def test_dry_run_writes_nothing(tmp_path, capsys):
     off.main(["--from-json", str(path), "--dry-run"])
     out = capsys.readouterr().out
     assert "helpfulness" in out
+
+
+class TestOfflineInfraEmptyRate:
+    """The offline twin of agent_online_eval/infra_empty_rate.
+
+    The batch run has always computed `empty_rate`; it went nowhere but stdout, so
+    an offline quality dip had no infra series to be checked against and looked
+    like a model regression. P2.8 gave the online surface this split and never
+    came back for offline.
+    """
+
+    @staticmethod
+    def _batch(rate, agent="coordinator_agent"):
+        return {"agents": {agent: {"metrics": {}, "empty_rate": rate}}}
+
+    def test_the_rate_is_published_verbatim(self):
+        """0-1, NOT rescaled to 1-5. Routing it through publish_eval_metrics would
+        both drop it (not in ALL_MONITORED_METRICS) and, if it didn't, render a 20%
+        empty rate as a 1.8 'quality score'."""
+        from src.eval.publish_offline_eval import publish_offline_infra_rate
+
+        client = FakeMetricClient()
+        writer = MetricsWriter(project_id="p", client=client)
+        out = publish_offline_infra_rate(self._batch(0.2), writer=writer)
+        assert out == {"infra_empty_rate": 0.2}
+        emitted = {ts.metric.type: ts.points[0].value.double_value for ts in client.flatten()}
+        assert emitted["custom.googleapis.com/agent_eval/infra_empty_rate"] == 0.2
+
+    def test_it_lands_on_the_offline_family_not_the_online_one(self):
+        from src.eval.publish_offline_eval import publish_offline_infra_rate
+
+        client = FakeMetricClient()
+        publish_offline_infra_rate(
+            self._batch(0.1), writer=MetricsWriter(project_id="p", client=client)
+        )
+        types_ = {ts.metric.type for ts in client.flatten()}
+        assert all("agent_online_eval" not in t for t in types_)
+
+    def test_a_missing_rate_publishes_nothing(self):
+        """Absent is not zero. A run that never measured the rate must not report a
+        confident 0.0 — that would read as 'no empties observed'."""
+        from src.eval.publish_offline_eval import publish_offline_infra_rate
+
+        client = FakeMetricClient()
+        out = publish_offline_infra_rate(
+            {"agents": {"coordinator_agent": {"metrics": {}}}},
+            writer=MetricsWriter(project_id="p", client=client),
+        )
+        assert out == {}
+        assert client.calls == []
+
+    def test_the_main_bridge_emits_it_alongside_the_rubrics(self):
+        from src.eval.publish_offline_eval import publish_offline_scores
+
+        client = FakeMetricClient()
+        batch = {
+            "agents": {
+                "coordinator_agent": {
+                    "metrics": {"helpfulness": {"score": 0.8}},
+                    "empty_rate": 0.15,
+                }
+            }
+        }
+        out = publish_offline_scores(batch, writer=MetricsWriter(project_id="p", client=client))
+        assert out["infra_empty_rate"] == 0.15
+        assert "helpfulness" in out
+
+    def test_it_is_monitored_on_a_ceiling_like_its_online_twin(self):
+        from src.eval.quality_alerts import OFFLINE_INFRA_METRICS, ONLINE_INFRA_METRICS
+
+        assert OFFLINE_INFRA_METRICS == ONLINE_INFRA_METRICS
+        assert OFFLINE_INFRA_METRICS[0] == ("infra_empty_rate", 0.2, "GT")

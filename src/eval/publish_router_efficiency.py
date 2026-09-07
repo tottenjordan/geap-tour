@@ -191,7 +191,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     # alert is only meaningful if that sample can resolve it. Say which it is here,
     # where the number is produced, rather than leaving it to the reader.
     _print_accuracy_power(published, accuracy)
+    print(format_distribution(accuracy, cost))
     return 0
+
+
+def format_distribution(accuracy_results, cost_results) -> str:
+    """Tier distribution + score histogram, for the log next to the published numbers.
+
+    An anomaly is only useful if it can be explained. ``cost_savings_pct`` dipped
+    to 60.0 on one cron run (baseline ``z=-2.27``; the static 50% floor never saw
+    it) and the run's log held nothing but the three published scalars — no way to
+    tell whether the classifier had scored high and pushed traffic to the pricey
+    tiers, or something else entirely. That point is permanently un-diagnosable.
+
+    Both inputs already carry per-case ``tier`` and ``score``, so this is pure
+    formatting on numbers that were computed anyway — no extra classifier calls.
+    """
+    from collections import Counter
+
+    lines = []
+    tiers = Counter(
+        c.get("tier") for c in (cost_results or {}).get("per_case", []) if c.get("tier")
+    )
+    if tiers:
+        order = ["lite", "flash", "sonnet", "pro", "opus"]
+        ranked = sorted(tiers.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99)
+        lines.append("  tiers:  " + "  ".join(f"{t}={n}" for t, n in ranked))
+    scores = Counter(
+        c.get("score")
+        for c in (accuracy_results or {}).get("per_case", [])
+        if c.get("score") is not None
+    )
+    if scores:
+        lines.append("  scores: " + "  ".join(f"{s}x{n}" for s, n in sorted(scores.items())))
+    return "\n".join(lines)
 
 
 def _print_accuracy_power(published: dict, accuracy_results) -> None:
