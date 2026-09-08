@@ -49,6 +49,48 @@ policy on a descriptor nothing writes (its only code reference is an eval rubric
 name, which `publish_eval_metrics` filters out). Deleted. Same class as the
 `routing_accuracy_pct` policy orphaned by the rename, which was also deleted.
 
+### A fourth instance: the engine nobody was comparing against anything
+
+`sonnet_agent` `8467456143491334144` — a deployment of this repo, abandoned
+2026-05-21, deleted 2026-09-08. Zero traffic for 30 days, on the 4Gi default that
+OOM-kills workers, superseded by `sonnet_agent_jt1`. It survived **~3.5 months**
+because nothing compared *what is deployed* against *what is referenced*, and it was
+found by accident while chasing an unrelated doc reference.
+
+The instructive part is the design trap. The obvious detector — reconcile
+*labelled-ours* against *config-referenced* — **would have missed it**, because it
+had no label. It predated `RESOURCE_LABELS`. A detector that cannot catch its own
+founding case is this note's thesis applied to the fix rather than the bug.
+
+So `src/deploy/find_orphan_engines.py` decides ownership by an **env fingerprint**
+(the engine carries our Agent Registry MCP resource names), which a deployment of
+this repo cannot lack — `src/registry.py` needs them to resolve any tool. Measured
+against the live project before committing to it:
+
+| signal | engines |
+| --- | --- |
+| labelled **and** fingerprint | 8 — the fleet, both signals agreeing |
+| labelled only | 0 |
+| **fingerprint only** | **1** — what a label-only detector misses |
+| neither | 30 — other teams', correctly excluded |
+
+Zero false positives across 30 foreign engines. Three properties were non-obvious:
+
+* **It lists a shared project**, which `verify_engine_config.default_targets`
+  deliberately refuses to do ("listing would invite reporting on — or worse, acting
+  on — engines that are not ours"). The exception is earned rather than ignored: no
+  delete path, and it **never names an engine that fails the fingerprint** — foreign
+  ones appear only in a count, asserted by a test.
+* **A `KNOWN_UNREFERENCED` allowlist**, because the first live run flagged the demo
+  probe, which is deliberately kept and deliberately absent from `.env`. A check that
+  fires on known-good state every run is one people learn to skim. Entries are
+  *displayed* with their reason rather than filtered away — a suppression you cannot
+  see is indistinguishable from a bug.
+* **The detector detects its own incompleteness.** `ENGINE_ID_VARS` is
+  hand-maintained, and a new engine-id variable added elsewhere would turn a *live*
+  engine into a reported orphan. A test walks `src/` with `ast` and fails if the list
+  does not cover every `*_ENGINE_ID` / `*_AGENT_ID` read.
+
 ## What was checked and found sound
 
 Recording these so the next sweep does not re-litigate them:
@@ -79,6 +121,10 @@ Four questions that each caught something here:
    this now.
 4. **Does every live alert policy correspond to a declared metric?** Renames and
    deletions leave policies behind, watching nothing, enabled.
+5. **Does every deployed artifact trace back to something that references it?** Not
+   "is it labelled ours" — the thing you are hunting is precisely the one that
+   predates whatever convention you would filter on. Pick an identifier the artifact
+   cannot be missing.
 
 ## Where each is pinned
 
@@ -91,3 +137,4 @@ Four questions that each caught something here:
 | offline faithfulness published | `tests/test_monitoring_publish.py::TestFaithfulnessIsActuallyPublished` |
 | online faithfulness published | `tests/test_monitoring_publish.py::TestOnlineFaithfulnessIsScheduled` |
 | alerted-but-unpublished, generally | `tests/test_online_eval.py::TestAlertedButUnpublishedIsReported` |
+| orphaned engines | `tests/test_find_orphan_engines.py` (fingerprint-not-label, no foreign ids named, allowlist explains itself, `ENGINE_ID_VARS` completeness) |

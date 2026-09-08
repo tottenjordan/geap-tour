@@ -148,6 +148,22 @@ jobs:
         run: |
           uv run python -m src.eval.publish_router_efficiency --run
 
+      # Fleet hygiene, not a metric: reconciles engines DEPLOYED against engines
+      # REFERENCED. `sonnet_agent` 8467456143491334144 was a deployment of this repo
+      # abandoned for ~3.5 months on the 4Gi default, found only by accident while
+      # chasing something else — nothing had ever compared the two sets.
+      #
+      # One list API call: no engine invocation, no judge, and no AGENT_ENGINE_ID,
+      # so it keeps working on an hour when the engine is down. Advisory — an engine
+      # can be legitimately unreferenced for days (a bake-off deploy in flight), and
+      # going red for normal work is how a signal gets ignored.
+      - name: Find orphaned engines
+        id: orphans
+        continue-on-error: true
+        run: |
+          uv run python -m src.deploy.find_orphan_engines --json > orphans.json
+          uv run python -m src.deploy.find_orphan_engines
+
       - name: Summarize monitored surfaces
         if: always()
         run: |
@@ -165,6 +181,7 @@ jobs:
               f"| online quality | ${{ steps.online.outcome }} |",
               f"| online faithfulness | ${{ steps.online_faithfulness.outcome }} |",
               f"| router efficiency | ${{ steps.router.outcome }} |",
+              f"| orphaned engines | ${{ steps.orphans.outcome }} |",
               "",
           ]
           path = pathlib.Path("monitors.json")
@@ -197,6 +214,25 @@ jobs:
                       f"::warning title=Alerted but unpublished::{u['surface']}/{u['metric']} "
                       "has an alert policy but no data in the window"
                   )
+              orphan_path = pathlib.Path("orphans.json")
+              if orphan_path.exists() and orphan_path.stat().st_size:
+                  fleet = json.loads(orphan_path.read_text())
+                  for o in fleet.get("orphans") or []:
+                      # An abandoned engine is worse than idle: the last one was on
+                      # the 4Gi default, which OOMs into empty-at-200.
+                      print(
+                          f"::warning title=Orphaned engine::{o['engine_id']} "
+                          f"({o.get('display_name')}) is ours but no config references it "
+                          f"— min={o.get('min_instances')} mem={o.get('memory')}"
+                      )
+                  for u in fleet.get("dangling") or []:
+                      print(
+                          f"::warning title=Dangling engine reference::{u['env_var']}="
+                          f"{u['engine_id']} names an engine that does not exist"
+                      )
+                  lines += ["", f"_Fleet: {fleet.get('ours')} engines ours of "
+                            f"{fleet.get('total_engines')}; {len(fleet.get('orphans') or [])} "
+                            f"orphaned, {len(fleet.get('dangling') or [])} dangling._"]
               fired = data.get("anomalies") or []
               for a in fired:
                   # Advisory, not a failure: the detector has one catch to its name
@@ -222,7 +258,7 @@ jobs:
       # the other's result in the summary — but the JOB must still go red, or a
       # permanently-broken publish looks green forever in the Actions list.
       - name: Fail if every publish failed
-        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' && steps.faithfulness.outcome != 'success' && steps.router.outcome != 'success' }}
+        if: ${{ steps.offline.outcome == 'failure' && steps.online.outcome != 'success' && steps.faithfulness.outcome != 'success' && steps.router.outcome != 'success' && steps.orphans.outcome != 'success' }}
         run: |
           echo "::error::No monitoring surface published — the series will go stale."
           exit 1

@@ -292,3 +292,43 @@ class TestUnpublishedMetricsAreAnnounced:
         run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
         assert 'data.get("unpublished")' in run
         assert "Alerted but unpublished" in run
+
+
+class TestOrphanedEnginesAreDetectedOnSchedule:
+    """`sonnet_agent` 8467456143491334144 was a deployment of this repo abandoned for
+    ~3.5 months on the 4Gi default, and it was found by accident. Nothing had ever
+    compared engines DEPLOYED against engines REFERENCED."""
+
+    def test_it_has_its_own_step(self):
+        assert _step(_load_steps(), "Find orphaned engines")
+
+    def test_that_step_runs_the_detector(self):
+        run = _step(_load_steps(), "Find orphaned engines")["run"]
+        assert "find_orphan_engines" in run
+        assert "--json" in run, "the summary needs machine-readable output to warn from"
+
+    def test_it_needs_no_engine_id(self):
+        """One list call against the control plane — so it keeps working on an hour
+        when the engine itself is down, which is when a fleet check is worth most."""
+        step = _step(_load_steps(), "Find orphaned engines")
+        assert "AGENT_ENGINE_ID" not in step["run"]
+        assert "if" not in step
+
+    def test_it_never_deletes(self):
+        """Read-only is the condition on which listing a shared project is
+        acceptable at all — the objection `default_targets` raises."""
+        run = _step(_load_steps(), "Find orphaned engines")["run"]
+        assert "--delete" not in run and "delete" not in run.lower()
+
+    def test_one_surface_failing_does_not_hide_the_others(self):
+        assert _step(_load_steps(), "Find orphaned engines").get("continue-on-error") is True
+
+    def test_the_job_still_goes_red_when_every_step_fails(self):
+        guard = _step(_load_steps(), "Fail if every publish failed")["if"]
+        assert "steps.orphans." in guard
+
+    def test_findings_are_announced_and_summarised(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert "Orphaned engine" in run
+        assert "Dangling engine reference" in run
+        assert "steps.orphans.outcome" in run
