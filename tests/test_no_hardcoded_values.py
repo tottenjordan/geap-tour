@@ -36,8 +36,23 @@ PROJECT_ID = "hybrid-vertex"
 PROJECT_NUMBER = "934903580331"
 
 
+SCRIPTS = _REPO_ROOT / "scripts"
+
+
 def _py_files():
-    return sorted(SRC.rglob("*.py"))
+    """Both src/ AND scripts/.
+
+    The first version of this guard scanned only src/, and `scripts/generate_pptx.py`
+    consequently kept a bare `GCP_PROJECT = "hybrid-vertex"` with no env path at all
+    — every console deep-link in the generated deck pointed at one project
+    regardless of configuration. A guard that covers half the repo reports clean on
+    the other half.
+    """
+    return sorted(SRC.rglob("*.py")) + sorted(SCRIPTS.rglob("*.py"))
+
+
+def _rel(path: pathlib.Path) -> str:
+    return str(path.relative_to(_REPO_ROOT))
 
 
 def _string_constants(path: pathlib.Path):
@@ -68,7 +83,7 @@ class TestNoHardcodedProjectIdentifiers:
         the one legitimate home. Anywhere else and a fork silently talks to our
         project — or, more likely, fails with a permission error nobody expects."""
         offenders = [
-            f"{p.relative_to(SRC)}:{line}"
+            f"{_rel(p)}:{line}"
             for p in _py_files()
             if p.name != "config.py"
             for line, value in _string_constants(p)
@@ -83,7 +98,7 @@ class TestNoHardcodedProjectIdentifiers:
         in one project, and a wrong SA fails deep inside a PipelineJob rather than
         at submit time. Derive it from PROJECT_NUMBER."""
         offenders = [
-            f"{p.relative_to(SRC)}:{line}"
+            f"{_rel(p)}:{line}"
             for p in _py_files()
             for line, value in _string_constants(p)
             if PROJECT_NUMBER in value
@@ -99,16 +114,16 @@ class TestNoHardcodedEngineIds:
     # An id IS the key of the allowlist, and the module docstrings deliberately name
     # the engines they were written about. Both are recorded here so the exemption
     # is visible rather than implicit in a loose pattern.
-    ALLOWED: ClassVar[set[str]] = {"deploy/find_orphan_engines.py"}
+    ALLOWED: ClassVar[set[str]] = {"src/deploy/find_orphan_engines.py"}
 
     def test_no_module_embeds_a_19_digit_engine_id(self):
         offenders = []
         for p in _py_files():
-            if str(p.relative_to(SRC)) in self.ALLOWED:
+            if str(_rel(p)) in self.ALLOWED:
                 continue
             for line, value in _string_constants(p):
                 if re.fullmatch(r"\d{19}", value.strip()):
-                    offenders.append(f"{p.relative_to(SRC)}:{line} = {value}")
+                    offenders.append(f"{_rel(p)}:{line} = {value}")
         assert not offenders, (
             "engine ids hardcoded — read them from .env via config, and use "
             f"<AGENT_ENGINE_ID>-style placeholders in docstrings: {offenders}"
@@ -120,6 +135,49 @@ class TestNoHardcodedEngineIds:
 
         assert KNOWN_UNREFERENCED, "the exemption exists for this mapping's keys"
         assert all(re.fullmatch(r"\d{19}", k) for k in KNOWN_UNREFERENCED)
+
+
+class TestShellScriptsAreEnvDriven:
+    """Only 3 of 14 scripts ever sourced .env; the rest re-derived their own
+    defaults, so a project configured in .env was ignored by most of the tooling
+    that acts on it. And ten copies of a default are ten chances for one to rot —
+    `setup_apphub.sh` carried a hardcoded project number next to two engine ids
+    that had both been deleted."""
+
+    @staticmethod
+    def _shell_scripts():
+        return sorted(SCRIPTS.glob("*.sh"))
+
+    @staticmethod
+    def _needs_gcp(text: str) -> bool:
+        return "gcloud" in text or "PROJECT_ID" in text
+
+    def test_only_the_shared_loader_names_the_project_default(self):
+        offenders = []
+        for p in self._shell_scripts():
+            for i, line in enumerate(p.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue  # prose explaining an example path is not a default
+                if PROJECT_ID in line or PROJECT_NUMBER in line:
+                    offenders.append(f"{_rel(p)}:{i}")
+        assert not offenders, (
+            f"hardcoded project id/number in shell scripts — source lib/config.sh: {offenders}"
+        )
+
+    def test_every_gcp_script_loads_dotenv_through_the_loader(self):
+        offenders = [
+            _rel(p)
+            for p in self._shell_scripts()
+            if self._needs_gcp(p.read_text()) and "lib/config.sh" not in p.read_text()
+        ]
+        assert not offenders, f"scripts using GCP but never loading .env: {offenders}"
+
+    def test_the_loader_derives_the_project_number(self):
+        """A literal project number only works in one project and fails deep inside
+        an App Hub call rather than at the point of error."""
+        text = (SCRIPTS / "lib" / "config.sh").read_text()
+        assert "gcloud projects describe" in text
+        assert "project_number()" in text
 
 
 class TestDeploymentOutputsAreWrittenBack:
