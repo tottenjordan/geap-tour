@@ -22,12 +22,29 @@ import os
 from google.cloud import aiplatform
 from kfp import compiler  # ty: ignore[unresolved-import]
 
-from src.config import GCP_PROJECT_ID, GCP_REGION, GCP_STAGING_BUCKET, RESOURCE_LABELS
+from src.config import (
+    GCP_PROJECT_ID,
+    GCP_REGION,
+    GCP_STAGING_BUCKET,
+    PROJECT_NUMBER,
+    RESOURCE_LABELS,
+)
 from src.pipelines.optimize_pipeline import optimize_pipeline
 
 # Reuse the project compute SA (same as the eval pipeline; least-privilege
 # scope-down is a tracked follow-up).
-DEFAULT_SERVICE_ACCOUNT = "934903580331-compute@developer.gserviceaccount.com"
+# Derived from PROJECT_NUMBER rather than hardcoded: the literal
+# 934903580331-compute@... only works in one project, and a wrong SA fails deep in
+# the PipelineJob rather than at submit time.
+#
+# The override is NAMESPACED deliberately. The obvious name,
+# `PIPELINE_SERVICE_ACCOUNT`, is already exported in this environment by unrelated
+# tooling (pointing at another team's SA), so honouring it would have silently
+# submitted our pipelines under the wrong identity — found by printing the resolved
+# value instead of assuming it. Generic env-var names collide; prefix ours.
+DEFAULT_SERVICE_ACCOUNT = os.environ.get("GEAP_PIPELINE_SERVICE_ACCOUNT") or (
+    f"{PROJECT_NUMBER}-compute@developer.gserviceaccount.com" if PROJECT_NUMBER else ""
+)
 # Compiled specs are build artifacts (gitignored), kept out of the repo root.
 PIPELINE_SPEC = "build/pipeline_specs/optimize_pipeline.yaml"
 

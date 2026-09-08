@@ -7,10 +7,11 @@
 #
 # Usage: bash scripts/verify_deployment.sh
 # =============================================================================
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
-REGION="${GCP_REGION:-us-central1}"
 REPORT_DIR="docs/verification"
 SCREENSHOT_DIR="docs/screenshots"
 

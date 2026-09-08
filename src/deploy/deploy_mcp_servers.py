@@ -6,9 +6,24 @@ import sys
 from src.config import GCP_PROJECT_ID, GCP_REGION, resource_labels_gcloud
 
 SERVERS = [
-    {"name": "search-mcp", "path": "src/mcp_servers/search", "port": 8001},
-    {"name": "booking-mcp", "path": "src/mcp_servers/booking", "port": 8002},
-    {"name": "expense-mcp", "path": "src/mcp_servers/expense", "port": 8003},
+    {
+        "name": "search-mcp",
+        "path": "src/mcp_servers/search",
+        "port": 8001,
+        "env_var": "SEARCH_MCP_URL",
+    },
+    {
+        "name": "booking-mcp",
+        "path": "src/mcp_servers/booking",
+        "port": 8002,
+        "env_var": "BOOKING_MCP_URL",
+    },
+    {
+        "name": "expense-mcp",
+        "path": "src/mcp_servers/expense",
+        "port": 8003,
+        "env_var": "EXPENSE_MCP_URL",
+    },
 ]
 
 
@@ -71,11 +86,25 @@ def deploy_server(server: dict) -> str:
     return service_url
 
 
-def deploy_all_servers() -> dict[str, str]:
-    """Deploy all MCP servers and return a map of name → URL."""
+def deploy_all_servers(*, write_env: bool = True) -> dict[str, str]:
+    """Deploy all MCP servers, record their URLs in ``.env``, return name → URL.
+
+    The write-back is the point. These URLs previously only ever reached stdout, so
+    ``SEARCH_MCP_URL`` and friends had to be copy-pasted by hand after every deploy
+    — and ``src/config.py`` defaults them to ``http://localhost:800x/mcp``, so a
+    missed paste does not fail loudly, it silently points the registry fallback at
+    a local port that is not listening.
+    """
+    from src.deploy.env_file import set_env_var
+
     urls: dict[str, str] = {}
     for server in SERVERS:
-        urls[str(server["name"])] = deploy_server(server)
+        url = deploy_server(server)
+        urls[str(server["name"])] = url
+        # Only on a URL we actually got back: recording an empty value would
+        # replace a working URL with nothing.
+        if write_env and url:
+            set_env_var(str(server["env_var"]), f"{url}/mcp")
     return urls
 
 

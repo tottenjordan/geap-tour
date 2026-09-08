@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Cleanup — tear down all deployed GEAP workshop resources
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
-REGION="${GCP_REGION:-us-central1}"
 
 echo "=== GEAP Workshop Cleanup ==="
 echo "Project: $PROJECT_ID"

@@ -10,9 +10,11 @@
 # + auto "Agent Runtime Overview" dashboard requires roles/monitoring.viewer. See
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/logging
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/monitoring
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
 DATASET_NAME="${BQ_DATASET:-geap_workshop_logs}"
 SINK_NAME="${SINK_NAME:-geap-agent-traces}"
 # Principal to grant the observability Viewer roles (logging + monitoring).
