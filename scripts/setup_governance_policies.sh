@@ -39,15 +39,6 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-# Source .env for project config, gateway paths, and agent engine IDs
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [ -f "${REPO_ROOT}/.env" ]; then
-    set -a
-    source "${REPO_ROOT}/.env"
-    set +a
-fi
-
 # Extract gateway names from full resource paths in .env
 # e.g. projects/hybrid-vertex/locations/us-central1/agentGateways/geap-workshop-gateway → geap-workshop-gateway
 GATEWAY_NAME="$(echo "${AGENT_GATEWAY_PATH:-}" | awk -F'/' '{print $NF}')"
@@ -84,7 +75,35 @@ run_cmd() {
     fi
 }
 
-PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+# ─────────────────────────────────────────────────────────────
+# Engine ids — resolved BEFORE any network call, and never aliased
+# ─────────────────────────────────────────────────────────────
+#
+# THE TWO NAMES MUST STAY DISTINCT. This used to read:
+#
+#   AGENT_ENGINE_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+#   ROUTER_ENGINE_ID="${ROUTER_ENGINE_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+#
+# The second line's fallback read AGENT_ENGINE_ID *after* the first line had
+# overwritten it with the coordinator's id, so an unset ROUTER_ENGINE_ID silently
+# resolved the router TO THE COORDINATOR. Everything downstream then did the wrong
+# thing quietly: grant_registry_read granted roles/agentregistry.viewer to the
+# coordinator twice and to the router never (that grant is the documented fix for
+# the router's 403 MCP-resolution fallback), and attach_gateway patched the
+# coordinator's identityType a second time — both printing "Router ... ok".
+#
+# Both fallback literals were also engines that had since been DELETED, so an unset
+# variable did not fail, it acted on a resource that no longer existed. There is no
+# safe default for a deployed engine id: require it, or stop.
+COORDINATOR_ENGINE_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-}}"
+if [ -z "$COORDINATOR_ENGINE_ID" ]; then
+    echo "ERROR: COORDINATOR_AGENT_ID (or AGENT_ENGINE_ID) is unset. Source .env or" >&2
+    echo "       export it — this script does not fall back to a hardcoded engine id." >&2
+    exit 1
+fi
+ROUTER_ENGINE_ID="$(require_var ROUTER_ENGINE_ID)"
+
+PROJECT_NUMBER="$(project_number)"
 RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
 ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
 
@@ -141,8 +160,6 @@ echo ""
 # This step is best-effort: if the project lacks private preview enrollment,
 # the LRO will fail with INTERNAL and the script continues.
 
-AGENT_ENGINE_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-2479350891879071744}}"
-ROUTER_ENGINE_ID="${ROUTER_ENGINE_ID:-${AGENT_ENGINE_ID:-6023683798619652096}}"
 INGRESS_GW="projects/${PROJECT_ID}/locations/${REGION}/agentGateways/${GATEWAY_NAME}"
 
 attach_gateway() {
@@ -220,8 +237,8 @@ attach_gateway() {
 step "Step 0: Agent-to-Gateway Attachment"
 GW_ATTACHED=0
 if ! $DRY_RUN; then
-    info "Attaching ingress gateway to coordinator agent (${AGENT_ENGINE_ID})..."
-    if attach_gateway "Coordinator" "$AGENT_ENGINE_ID"; then
+    info "Attaching ingress gateway to coordinator agent (${COORDINATOR_ENGINE_ID})..."
+    if attach_gateway "Coordinator" "$COORDINATOR_ENGINE_ID"; then
         GW_ATTACHED=$((GW_ATTACHED + 1))
     fi
     info "Attaching ingress gateway to router agent (${ROUTER_ENGINE_ID})..."
@@ -233,7 +250,7 @@ if ! $DRY_RUN; then
         warn "This likely means the project needs agentGatewayConfig private preview enrollment."
     fi
 else
-    info "[dry-run] Would attach ingress gateway to coordinator (${AGENT_ENGINE_ID}) and router (${ROUTER_ENGINE_ID})"
+    info "[dry-run] Would attach ingress gateway to coordinator (${COORDINATOR_ENGINE_ID}) and router (${ROUTER_ENGINE_ID})"
 fi
 
 # ─────────────────────────────────────────────────────────────
@@ -280,7 +297,7 @@ grant_registry_read() {
 }
 
 step "Step 0b: Agent Registry read for agent identity"
-grant_registry_read "Coordinator" "$AGENT_ENGINE_ID"
+grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID"
 grant_registry_read "Router" "$ROUTER_ENGINE_ID"
 
 # ─────────────────────────────────────────────────────────────
