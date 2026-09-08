@@ -273,38 +273,79 @@ class TestTheLoaderDoesNotClobberTheEnvironment:
     granted IAM in `hybrid-vertex` instead. The loader's comment claimed the correct
     behaviour while the code did the opposite, and nothing tested it. It also has to
     agree with `src/config.py`, whose `load_dotenv()` defaults to `override=False`.
+
+    These run against a THROWAWAY repo root with a `.env` they control, never the
+    developer's. CI has no `.env`, and without one every assertion here passes for
+    the wrong reason: the loader's job is to read a file, and with no file to read a
+    broken loader and a correct one agree. The first version of this class was green
+    in CI for exactly that reason.
     """
 
+    @pytest.fixture
+    def sandbox(self, tmp_path):
+        import shutil
+
+        (tmp_path / "scripts" / "lib").mkdir(parents=True)
+        shutil.copy(SCRIPTS / "lib" / "config.sh", tmp_path / "scripts" / "lib" / "config.sh")
+        (tmp_path / ".env").write_text(
+            'GCP_PROJECT_ID=from-dotenv\nLABEL_KEY="solution"\nPLAIN=bare\n'
+        )
+        return tmp_path
+
     @staticmethod
-    def _resolve(var, **env_overrides):
+    def _resolve(sandbox, var, *, unset=(), **env_overrides):
+        """`unset` removes a name from the child's environment entirely.
+
+        Passing `VAR=""` is NOT the same thing: the loader treats set-but-empty as
+        set, on purpose, so the caller can blank a value deliberately. Using "" to
+        mean "unset" is what made the first version of these tests fail.
+        """
         import os
         import subprocess
 
+        env = {k: v for k, v in os.environ.items() if k not in unset}
+        env.update(env_overrides)
         return subprocess.run(
             ["bash", "-c", f'source scripts/lib/config.sh; printf "%s" "${var}"'],
             capture_output=True,
             text=True,
-            env={**os.environ, **env_overrides},
-            cwd=_REPO_ROOT,
+            env=env,
+            cwd=sandbox,
             timeout=60,
         ).stdout
 
-    def test_an_explicit_variable_wins_over_the_file(self):
-        assert self._resolve("PROJECT_ID", GCP_PROJECT_ID="some-other-project") == (
+    def test_the_sandbox_dotenv_is_really_being_read(self, sandbox):
+        """Non-vacuity: if the loader read nothing, the tests below would still pass
+        by falling through to their defaults."""
+        assert self._resolve(sandbox, "PROJECT_ID", unset=("GCP_PROJECT_ID",)) == "from-dotenv"
+
+    def test_an_explicit_variable_wins_over_the_file(self, sandbox):
+        """THE regression. Was: the file clobbered it and IAM landed elsewhere."""
+        assert self._resolve(sandbox, "PROJECT_ID", GCP_PROJECT_ID="some-other-project") == (
             "some-other-project"
         )
 
-    def test_the_file_still_fills_in_what_is_unset(self):
-        assert self._resolve("PROJECT_ID", GCP_PROJECT_ID="") == PROJECT_ID
+    def test_the_file_still_fills_in_what_is_unset(self, sandbox):
+        assert self._resolve(sandbox, "PROJECT_ID", unset=("GCP_PROJECT_ID",)) == "from-dotenv"
 
-    def test_quoted_values_are_unquoted_as_sourcing_did(self):
+    def test_a_deliberately_blanked_variable_is_respected(self, sandbox):
+        """Set-but-empty counts as set, so `.env` does not quietly refill it. This is
+        also what lets a caller force a script's own error path."""
+        assert self._resolve(sandbox, "LABEL_KEY", LABEL_KEY="") == ""
+
+    def test_quoted_values_are_unquoted_as_sourcing_did(self, sandbox):
         """`.env` holds `LABEL_KEY="solution"`; a naive line-splitting reader would
         export the quotes along with the value."""
-        assert self._resolve("LABEL_KEY") == "solution"
+        assert self._resolve(sandbox, "LABEL_KEY", unset=("LABEL_KEY",)) == "solution"
+        assert self._resolve(sandbox, "PLAIN", unset=("PLAIN",)) == "bare"
 
-    def test_python_and_bash_agree(self):
+    def test_python_and_bash_agree(self, sandbox):
         """The two halves of the repo resolved the same variable differently: Python
-        honoured the environment, bash let the file win."""
+        honoured the environment, bash let the file win.
+
+        Bash reads the sandbox `.env` (which sets a *different* project, so a
+        regressed loader would disagree); Python reads the repo as it normally does.
+        Both must return what the environment asked for."""
         import os
         import subprocess
         import sys
@@ -322,7 +363,7 @@ class TestTheLoaderDoesNotClobberTheEnvironment:
         )
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.strip() == self._resolve(
-            "PROJECT_ID", GCP_PROJECT_ID="some-other-project"
+            sandbox, "PROJECT_ID", GCP_PROJECT_ID="some-other-project"
         )
 
 
