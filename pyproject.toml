@@ -83,7 +83,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.2",
-    "ty>=0.0.70",
+    "ty>=0.0.79",
 ]
 doe = [
     "numpy>=2.5.2",
