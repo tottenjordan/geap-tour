@@ -15,6 +15,9 @@
 #   bash scripts/setup_apphub.sh
 #   bash scripts/setup_apphub.sh --dry-run
 
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,9 +28,7 @@ if [ -f "${REPO_ROOT}/.env" ]; then
     set +a
 fi
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
-PROJECT_NUMBER="${PROJECT_NUMBER:-934903580331}"
-REGION="${GCP_REGION:-us-central1}"
+PROJECT_NUMBER="$(project_number)"
 APP_NAME="${APPHUB_APP_NAME:-geap-workshop}"
 # NO hardcoded engine-id fallbacks. Both of the ones that used to live here
 # (8296365537139621888, 4709107696450666496) pointed at engines that have since been

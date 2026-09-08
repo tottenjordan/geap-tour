@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Setup Model Armor templates for Agent Armor — input and output screening
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
-REGION="${GCP_REGION:-us-central1}"
 PROMPT_TEMPLATE_NAME="geap-workshop-prompt"
 RESPONSE_TEMPLATE_NAME="geap-workshop-response"
 

@@ -25,9 +25,11 @@
 #   bash scripts/setup_model_armor_floor_settings.sh
 #   GCP_PROJECT_ID=my-project bash scripts/setup_model_armor_floor_settings.sh
 # =============================================================================
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
 # Floor settings are a GLOBAL, per-project singleton (not regional like templates).
 FLOOR_URI="projects/${PROJECT_ID}/locations/global/floorSetting"
 
