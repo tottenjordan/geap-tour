@@ -133,6 +133,13 @@ def default_targets() -> list[tuple[str, str]]:
     Sourced from config (``.env``) rather than by listing the project: the
     project is shared with other solutions, and listing would invite reporting
     on — or worse, acting on — engines that are not ours.
+
+    :mod:`src.deploy.find_orphan_engines` DOES list, deliberately, and earns the
+    exception rather than contradicting this: it is read-only with no delete path,
+    and it never names an engine that fails an ownership fingerprint. It exists
+    because this function's approach — trusting config — cannot by construction see
+    an engine that config has stopped mentioning, which is how one sat abandoned for
+    3.5 months.
     """
     targets = [(AGENT_ENGINE_ID, "coordinator")]
     if ROUTER_ENGINE_ID and ROUTER_ENGINE_ID != AGENT_ENGINE_ID:
