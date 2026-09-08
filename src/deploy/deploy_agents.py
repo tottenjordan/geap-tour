@@ -31,6 +31,7 @@ import vertexai
 # See docs/notes/agentplatform-client-migration.md.
 from vertexai import agent_engines
 
+from src.armor.config import model_armor_plugin
 from src.config import (
     AGENT_ANALYTICS_TABLE,
     AGENT_ENGINE_ID,
@@ -49,6 +50,7 @@ from src.config import (
     ENABLE_AGENT_ANALYTICS,
     ENABLE_MEMORY_BANK,
     ENABLE_MEMORY_PRELOAD_CACHE,
+    ENABLE_MODEL_ARMOR_PLUGIN,
     ENABLE_SPAN_CONTENT_CAPTURE,
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
@@ -120,6 +122,15 @@ REQUIREMENTS = [
     "opentelemetry-instrumentation-google-genai",
     "opentelemetry-instrumentation-grpc",
     "opentelemetry-instrumentation-httpx",
+    # Required by ADK 2.8.0's first-party ModelArmorPlugin (see
+    # src/armor/config.py:model_armor_plugin). Shipped even though
+    # ENABLE_MODEL_ARMOR_PLUGIN defaults off — unlike the BigQuery analytics deps
+    # below, which are omitted because that plugin is PROVEN broken on the managed
+    # runtime, this one is expected to work, and a flag that silently degrades to
+    # "client-side guardrail only" because a package is missing is exactly the
+    # failure mode we keep finding. ADK suggests `google-adk[gcp]` for it; that
+    # extra caps google-cloud-aiplatform <2, so depend on the package directly.
+    "google-cloud-modelarmor>=0.2",
     # NB: the BigQuery Agent Analytics plugin's serving deps
     # (google-cloud-bigquery-storage / google-cloud-storage / pyarrow) are
     # DELIBERATELY NOT here. Task 1.4 proved content-logging fails on the managed
@@ -308,8 +319,12 @@ def _build_app(agent):
     builders = {"session_service_builder": _session_service_builder}
     if _wants_memory(agent):
         builders["memory_service_builder"] = _memory_service_builder
-    plugin = _analytics_plugin()
-    plugins = [plugin] if plugin else None
+    # Two independent, both-optional plugins. Model Armor is listed second only
+    # because it was added later; order does not matter, but "no plugins" must stay
+    # `None` rather than `[]` so the disabled path is byte-identical to before.
+    plugins = [
+        p for p in (_analytics_plugin(), model_armor_plugin(getattr(agent, "model", None))) if p
+    ] or None
     if ENABLE_SPAN_CONTENT_CAPTURE:
         builders["enable_tracing"] = True
     # ty can't track the heterogeneous **builders dict against AdkApp's typed
@@ -463,6 +478,14 @@ def _build_config(
     # default deploys keep byte-identical env.
     if ENABLE_MEMORY_PRELOAD_CACHE:
         env_vars["ENABLE_MEMORY_PRELOAD_CACHE"] = "1"
+
+    # Model Armor plugin (opt-in server-side layer). Baked so a deployed engine's
+    # spec records which armor layers it actually serves with — engine_baseline's
+    # `server_side_armor` check reads it back, and without it a plugin-armored
+    # Gemini-3 engine is indistinguishable from an unarmored one. Only baked when
+    # enabled, so default deploys keep byte-identical env.
+    if ENABLE_MODEL_ARMOR_PLUGIN:
+        env_vars["ENABLE_MODEL_ARMOR_PLUGIN"] = "1"
 
     # Model Armor template names for server-side screening (read by
     # src/armor/config.get_model_armor_config). Only bake when explicitly set so

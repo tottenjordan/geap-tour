@@ -271,26 +271,43 @@ COORDINATOR_CHECKS: tuple[Check, ...] = (
     Check(
         name="server_side_armor",
         severity="advisory",
-        expected="COORDINATOR_MODEL on the regional-Gemini path",
+        expected="a server-side armor layer: templates (Gemini-2.x) or the ADK plugin",
         why=(
             "Model Armor templates are region-scoped and only honored for a "
             "Gemini-2.x backbone. On Gemini-3 (global endpoint) they 400 and on "
             "Claude (LiteLlm) they are never sent, so get_armored_generate_config "
             "omits them and the client-side guardrail is the ONLY screening layer. "
             "That is a supported posture, not a bug — but it should be a decision, "
-            "and the baked MODEL_ARMOR_* env makes it look active when it is not."
+            "and the baked MODEL_ARMOR_* env makes it look active when it is not. "
+            "Measured 2026-09-08: the live coordinator is baked at gemini-2.5-flash "
+            "so templates ARE active on it, but .env's AGENT_MODEL is "
+            "gemini-3.5-flash — the next deploy would drop to one layer. ADK 2.8.0 "
+            "offers a REMEDY that did not exist before: the model-family-independent "
+            "ModelArmorPlugin, behind ENABLE_MODEL_ARMOR_PLUGIN. This check now "
+            "accepts either layer. It stays ADVISORY until that flag is rolled out; "
+            "making it critical first would red engines for a gap with no deployed "
+            "fix yet."
         ),
-        predicate=lambda s: (
-            server_side_armor_enabled(_env(s, "COORDINATOR_MODEL")),
-            f"{_env(s, 'COORDINATOR_MODEL') or '(unset)'} -> "
-            + (
-                "templates active"
-                if server_side_armor_enabled(_env(s, "COORDINATOR_MODEL"))
-                else "client-side guardrail only"
-            ),
-        ),
+        predicate=lambda s: _armor_observation(s),
     ),
 )
+
+
+def _armor_observation(spec) -> tuple[bool, str]:
+    """True when the engine has ANY server-side screening layer.
+
+    Reports which one, because the two fail for completely different reasons: the
+    templates depend on the backbone family, the plugin on a deploy-time flag plus
+    google-cloud-modelarmor being present in the served image.
+    """
+    model = _env(spec, "COORDINATOR_MODEL")
+    templates = server_side_armor_enabled(model)
+    plugin = _env(spec, "ENABLE_MODEL_ARMOR_PLUGIN") in ("1", "true", "True")
+    if templates:
+        return True, f"{model or '(unset)'} -> templates active"
+    if plugin:
+        return True, f"{model or '(unset)'} -> ADK ModelArmorPlugin active"
+    return False, f"{model or '(unset)'} -> client-side guardrail only"
 
 
 # --------------------------------------------------------------------- router

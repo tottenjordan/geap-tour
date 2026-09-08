@@ -14,6 +14,7 @@ Provides three layers of protection:
    fully guarded so a metric/OTel failure NEVER changes the guardrail's return.
 """
 
+import logging
 import os
 import re
 
@@ -23,6 +24,8 @@ from opentelemetry import trace
 from src import config
 from src.config import GCP_PROJECT_ID, GCP_REGION
 from src.models.afc import with_afc_disabled
+
+logger = logging.getLogger(__name__)
 
 
 def get_model_armor_config() -> ModelArmorConfig:
@@ -58,6 +61,82 @@ def server_side_armor_enabled(model: str | None) -> bool:
     which security layers are live without re-deriving the family check.
     """
     return _is_regional_gemini(model)
+
+
+def model_armor_plugin(model: str | None = None):
+    """The first-party ADK Model Armor plugin, or ``None`` when not applicable.
+
+    Why this exists alongside ``get_armored_generate_config``: the template path is
+    region-scoped and only honored on a regional Gemini-2.x backbone.
+
+    Measured 2026-09-08. The *live* coordinator (``3639…``) is baked with
+    ``COORDINATOR_MODEL=gemini-2.5-flash``, so templates are genuinely active on it
+    today. The gap is **latent, not active**: ``.env`` sets
+    ``AGENT_MODEL=gemini-3.5-flash``, so the next coordinator deploy would drop
+    server-side screening to nothing but the client-side blocklist — and the only
+    thing that would say so is an *advisory* baseline finding nobody has to act on.
+    The bake-off engines already run Gemini-3 backbones.
+
+    ``google.adk.integrations.model_armor.ModelArmorPlugin`` (new in ADK 2.8.0)
+    screens inside the ADK request path rather than via a ``GenerateContentConfig``
+    field, so it is model-family-independent and covers exactly the backbones the
+    templates cannot. It reuses the same two templates the repo already provisions.
+
+    Opt-in via ``ENABLE_MODEL_ARMOR_PLUGIN`` (default OFF) so behaviour is
+    byte-identical until switched on, matching the ``ENABLE_AGENT_ANALYTICS``
+    precedent. Returns ``None`` when the flag is off, when the template path
+    already covers this backbone, or when ``google-cloud-modelarmor`` is missing —
+    the import is deferred so the disabled path never touches it.
+    """
+    if not config.ENABLE_MODEL_ARMOR_PLUGIN:
+        return None
+    if _is_regional_gemini(model):
+        return None  # templates already cover this backbone natively
+    try:
+        from google.adk.integrations.model_armor import (
+            ModelArmorConfig as AdkModelArmorConfig,
+        )
+        from google.adk.integrations.model_armor import (
+            ModelArmorPlugin,
+        )
+    except ImportError:  # pragma: no cover - requires google-cloud-modelarmor
+        logger.warning(
+            "ENABLE_MODEL_ARMOR_PLUGIN is set but google-cloud-modelarmor is not "
+            "installed — the served engine will run with the client-side guardrail "
+            "only. Add google-cloud-modelarmor to the deploy requirements."
+        )
+        return None
+
+    templates = get_model_armor_config()
+    return ModelArmorPlugin(
+        config=AdkModelArmorConfig(
+            prompt_template_name=templates.prompt_template_name,
+            response_template_name=templates.response_template_name,
+        )
+    )
+
+
+def armor_layers(model: str | None = None) -> dict[str, bool]:
+    """Which armor layers are live for ``model`` — the answer to "are we covered?".
+
+    Three independent layers, deliberately reported separately because they fail
+    independently and two of them are backbone-dependent:
+
+    * ``client_guardrail`` — ``input_guardrail_callback``. Always on, no cloud
+      dependency, the only layer that works offline.
+    * ``server_side`` — region-scoped Model Armor templates on the
+      ``GenerateContentConfig``. Regional Gemini-2.x only.
+    * ``plugin`` — the ADK request-path plugin. Covers what the templates cannot,
+      when ``ENABLE_MODEL_ARMOR_PLUGIN`` is set.
+
+    ``engine_baseline`` asserts on this so an engine serving with only the local
+    blocklist fails a config check instead of looking healthy.
+    """
+    return {
+        "client_guardrail": True,
+        "server_side": server_side_armor_enabled(model),
+        "plugin": bool(config.ENABLE_MODEL_ARMOR_PLUGIN and not server_side_armor_enabled(model)),
+    }
 
 
 def get_armored_generate_config(model: str | None = None) -> GenerateContentConfig:
