@@ -54,6 +54,14 @@ CODE_CASE_LISTS: dict[str, str] = {
     # to change without noticing — editing it moves every published quality number.
     "python:src.eval.batch_eval.EVAL_CASES": "regression",
     "python:src.eval.agent_eval_configs.ROUTER_EVAL_CASES": "regression",
+    # Not a published series, but it decides SHIPPED CONFIG: `router_boundary_
+    # experiment.select_cases` unions it with ROUTER_EVAL_CASES, and those prompts
+    # are what the paired side-by-side runs judge — the evidence COMPLEXITY_LOW and
+    # COMPLEXITY_HIGH are set on. Editing it silently changes what a boundary
+    # decision rests on, which is the same hazard as editing a monitored evalset.
+    "python:src.eval.tier_eval_cases.HIGH_COMPLEXITY_CASES": "regression",
+    "python:src.eval.tier_eval_cases.MEDIUM_COMPLEXITY_CASES": "regression",
+    "python:src.eval.tier_eval_cases.LOW_COMPLEXITY_CASES": "regression",
     "python:src.eval.agent_eval_configs.TRAVEL_EVAL_CASES": "regression",
     "python:src.eval.agent_eval_configs.EXPENSE_EVAL_CASES": "regression",
 }

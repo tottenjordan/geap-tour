@@ -45,30 +45,33 @@ class TestHighBandTierSplit:
     `gemini-3.1-pro-preview` and **17-1 (p=0.0001)** against the `gemini-2.5-pro`
     the router serves.
 
-    That evidence is **pooled over the whole band**, and the router splits the band:
-    0.75 goes to sonnet, 0.85/0.90 go to pro — the tier that lost. Whether the win
-    holds on that upper sub-band is an OPEN QUESTION
-    (`router_boundary_experiment.subband_split`). So these tests pin the current
-    split as *observed behaviour* rather than asserting a constraint the evidence
-    does not yet support. If the sub-band result comes in, tighten this.
+    That evidence was originally POOLED over the whole band, while the router split
+    the band at 0.80 — sending 0.75 to sonnet and 0.85/0.90 to pro, the tier that
+    lost. `subband_split` settled it: the win holds on both sides, and the upper
+    side (after 12 prompts were added to lift it from 6 decisive cases to 18) came
+    back **17-1, p=0.0001**. `COMPLEXITY_HIGH` was raised 0.80 -> 0.925 as a result,
+    so the whole measured band now routes to sonnet.
     """
 
-    def test_the_lower_high_band_routes_to_sonnet(self):
-        assert score_to_model_tier(0.75) == "sonnet"
+    def test_no_measured_high_score_routes_to_pro(self):
+        """The constraint the second experiment bought. Every score the classifier
+        actually emits in this band must reach sonnet; a boundary regression that
+        sends 0.85/0.90 back to pro reinstates a measured 17-1 quality loss."""
+        assert all(score_to_model_tier(s) == "sonnet" for s in HIGH_SCORES)
 
-    def test_the_upper_high_band_still_routes_to_pro(self):
-        """Documented, not endorsed. The pooled result says sonnet > pro on this
-        band; if that holds at 0.85/0.90 these 5-ish cases are misrouted and
-        COMPLEXITY_HIGH should rise."""
-        assert score_to_model_tier(0.85) == "pro"
-        assert score_to_model_tier(0.90) == "pro"
+    def test_pro_survives_as_a_narrow_window_above_the_measured_range(self):
+        """Raising the cut did not delete the tier — it moved it above anything the
+        classifier has been observed to emit. Real traffic scoring >= 0.925 still
+        reaches pro, so this is a property of the eval set, not dead code."""
+        assert score_to_model_tier(0.93) == "pro"
+        assert max(HIGH_SCORES) < 0.925
 
-    def test_no_emitted_score_reaches_opus(self):
-        """`HIGH_SPLIT` is 0.95 and the top score observed is 0.90, so the opus tier
-        receives nothing on the current eval set — a deployed, always-warm engine the
-        router cannot reach. Real traffic could still exceed 0.95; this pins only
-        what is measured."""
-        assert all(score_to_model_tier(s) != "opus" for s in HIGH_SCORES)
+    def test_neither_pro_nor_opus_receives_measured_traffic(self):
+        """Stated plainly rather than left to be discovered: on this workload the
+        5-tier router serves THREE tiers. opus was already unreachable
+        (`HIGH_SPLIT`=0.95 vs a top observed score of 0.90); pro joined it when the
+        cut rose. Nobody should claim five live tiers on this evidence."""
+        assert all(score_to_model_tier(s) not in ("pro", "opus") for s in HIGH_SCORES)
 
 
 def test_every_label_is_in_its_reference_band():

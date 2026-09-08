@@ -98,9 +98,10 @@ model roughly doubled sonnet's margin:
 
 0 cases dropped in any of the four runs.
 
-So `COMPLEXITY_HIGH` stays at 0.80 — the same decision as before, but no longer
-resting on a model the router doesn't serve. **The hypothesis that motivated the
-re-run was refuted, which is the point of running it rather than assuming.**
+At this point `COMPLEXITY_HIGH` stayed at 0.80 — the same decision as before, but no
+longer resting on a model the router doesn't serve. **The hypothesis that motivated
+the re-run was refuted, which is the point of running it rather than assuming.**
+(It moved later, once the band was split — see "Settled" below.)
 
 ### The high band is not homogeneous — and the router splits it
 
@@ -121,20 +122,21 @@ currently routes to pro. Tier distribution over the 20 prompts: sonnet 11, pro 8
 flash 1 (one "high"-labelled prompt scores 0.45 — a genuine classifier
 disagreement, not a boundary artefact).
 
-Three things temper this before anyone acts on it:
+Three things tempered this, and they are why it was **not** acted on at the time:
 
 1. **n=6 with zero losses is the thinnest significance obtainable.** 6–0 gives
-   p=0.0312; a single loss would make it 5–1, p=0.219, not significant. It clears
-   the pre-registered bar, but only just.
+   p=0.0312; a single loss would make it 5–1, p=0.219, not significant.
 2. **Raising `COMPLEXITY_HIGH` costs money**, unlike the medium fix. Sonnet is
-   **$0.0081/case** against pro's **$0.00525** — moving the upper sub-band to sonnet
-   *reduces* `cost_savings_pct`.
+   **$0.0081/case** against pro's **$0.00525**.
 3. **It would empty the pro tier.** With opus already unreachable (`HIGH_SPLIT`=0.95
    above the top observed score), the 5-tier router would populate three.
 
-Note what does *not* enter this trade any more: `classifier_accuracy_pct` is now
-invariant to the boundaries, so it neither improves nor degrades. That is the
-re-scope working — the decision is being made on quality and cost alone.
+Note what does *not* enter this trade: `classifier_accuracy_pct` is now invariant to
+the boundaries, so it neither improves nor degrades. That is the re-scope working —
+the decision is made on quality and cost alone.
+
+Point 1 was the blocker, and it was answerable: the next section resolves it by
+enlarging the sub-band rather than by arguing about a 6-case result.
 
 **The accuracy metric was half right and half wrong.**
 
@@ -142,6 +144,52 @@ re-scope working — the decision is being made on quality and cost alone.
   flash beat lite on 18 of 19 prompts.
 * **High:** the metric was wrong. The tier those prompts *already* get beats the one
   the label wants, 12–2.
+
+### Settled: the high band is not homogeneous, and the cut was in the wrong place
+
+The pooled 17-1 could not speak to the sub-band the router actually splits at 0.80
+(0.75 -> sonnet, 0.85/0.90 -> pro). The first split had only **6 decisive cases** on
+the upper side: 6-0 gives p=0.0312, the thinnest significance obtainable, and one
+loss would have given nothing. So twelve prompts were added to `HIGH_COMPLEXITY_CASES`,
+each **verified to score >= 0.80** before use — written to the shape that actually
+scores there (three tool domains in one request, an explicit optimisation across
+alternatives, or a stateful mutation), read off the previous run's per-case scores
+rather than guessed. Six of the first twelve missed and were rewritten until 12/12
+landed.
+
+| high band | prompts | decisive | pro-sonnet | p | significant |
+| --- | --- | --- | --- | --- | --- |
+| below 0.80 (-> sonnet) | 12 | 10 | 1-9 | 0.0215 | yes |
+| **at/above 0.80 (-> pro)** | **20** | **18** | **1-17** | **0.0001** | **yes** |
+| pooled | 32 | 28 | 2-26 | 0.0000 | yes |
+
+0 dropped. **Sonnet beats pro on both sides of the cut**, and the upper side is no
+longer a 6-case coin-toss.
+
+**`COMPLEXITY_HIGH` raised 0.80 -> 0.925.** The midpoint of the admissible interval
+`(0.90, HIGH_SPLIT=0.95)` — above the highest score the classifier emits, below the
+opus cut, coinciding with no emitted score. Same reasoning that picked 0.25.
+
+Measured over the 40 router cases:
+
+| metric | before | after | floor |
+| --- | --- | --- | --- |
+| `classifier_accuracy_pct` | 100.0% | **100.0%** | 80% |
+| `cost_savings_pct` | 94.0% | **93.1%** | 50% |
+
+Accuracy is **unchanged, and that is the point** — it grades on fixed reference
+bands now, so boundary tuning no longer moves it. The 0.9pp of savings is the real
+price: sonnet is $0.0081/case against pro's $0.00525.
+
+**Consequence, stated rather than hidden:** the **pro tier now receives nothing** on
+this workload, joining opus (unreachable at `HIGH_SPLIT`=0.95 against a top observed
+score of 0.90). The 5-tier router serves three tiers here. Traffic scoring above
+0.925 would still reach pro, so this is a property of the eval set rather than dead
+code — but nobody should claim five live tiers on this evidence.
+
+The three added case lists are now tracked in the dataset manifest
+(`HIGH_COMPLEXITY_CASES` at v2.0.0). They are not a published series, but they
+decide shipped config, which is the same hazard.
 
 ## What changed
 

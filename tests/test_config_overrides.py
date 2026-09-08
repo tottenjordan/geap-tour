@@ -62,7 +62,7 @@ def test_defaults(reloaded_config, monkeypatch):
     assert cfg.EXPENSE_MODEL == cfg.AGENT_MODEL
     assert cfg.ROUTER_MODEL == cfg.LITE_MODEL
     assert cfg.COMPLEXITY_LOW == 0.25
-    assert cfg.COMPLEXITY_HIGH == 0.80
+    assert cfg.COMPLEXITY_HIGH == 0.925
     assert cfg.MEDIUM_SPLIT == 0.60
     assert cfg.HIGH_SPLIT == 0.95
     assert cfg.PROMPT_VARIANT == "gepa"

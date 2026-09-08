@@ -89,6 +89,25 @@ REQUIREMENTS = [
     "google-auth>=2.52.0",
     "google-adk[agent-identity]==2.7.1",
     "a2a-sdk>=1",
+    # PINNED BELOW 2.x, and this is deploy-blocking rather than cosmetic.
+    #
+    # `mcp` was unconstrained here, so the container resolved whatever was newest
+    # while `uv.lock` held the tested environment at 1.29.0. On 2026-09-08 that
+    # gap opened: mcp shipped 2.x, which removes `McpHttpClientFactory` from
+    # `mcp.client.streamable_http`. ADK 2.7.1 imports that symbol, so every worker
+    # died at import —
+    #
+    #   ImportError: cannot import name 'McpHttpClientFactory'
+    #     from 'mcp.client.streamable_http'
+    #
+    # — and the update failed with only the platform's generic "The Reasoning
+    # Engine failed to be updated." The full 1528-test suite passed throughout,
+    # because locally we were never on 2.x. A green suite says nothing about the
+    # deployed artifact when the deploy resolves its own dependency set.
+    #
+    # Raise this only together with the `google-adk` pin above, after checking the
+    # symbol still exists: ADK and mcp move as a pair.
+    "mcp>=1.29.0,<2",
     "fastmcp>=2.0.0",
     "python-dotenv>=1.0.0",
     "litellm>=1.83.14",

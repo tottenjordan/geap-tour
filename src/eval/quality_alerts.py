@@ -159,7 +159,11 @@ ALL_MONITORED_METRICS = [
 #   medium (lite vs flash)   flash won 18-1 (p=0.0001) on Gemini-3 tiers and
 #     14-2 (p=0.0042) on the gemini-2.5 pair served -> COMPLEXITY_LOW 0.44 -> 0.25.
 #   high (sonnet vs pro)     sonnet won 12-2 (p=0.0129) on gemini-3.1-pro-preview
-#     and 17-1 (p=0.0001) on the gemini-2.5-pro served -> COMPLEXITY_HIGH stays 0.80.
+#     and 17-1 (p=0.0001) on the gemini-2.5-pro served. Splitting that at the 0.80
+#     cut showed the win held on BOTH sides; the upper sub-band was then enlarged
+#     from 6 to 18 decisive cases and came back 17-1, p=0.0001 -> COMPLEXITY_HIGH
+#     RAISED 0.80 -> 0.925, costing 0.9pp of cost_savings_pct and leaving the pro
+#     tier with no measured traffic.
 #
 # Caveat carried forward: the high comparison crosses vendors (Claude sonnet vs
 # Gemini pro), so it supports a routing DECISION, not a claim about how much "power"
