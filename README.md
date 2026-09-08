@@ -1,5 +1,7 @@
 # GEAP Workshop: Enterprise Agent Platform Tour
 
+![GEAP Tours — robot tourists ride a safari Jeep through a red-rock canyon whose cliffs are stacked server racks, past ranger huts labelled SEARCH, BOOKING and EXPENSE and a five-way trail fork signposted LITE, FLASH, PRO, SONNET and OPUS](docs/imgs/geap_tour_banner.jpeg)
+
 A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEAP) — from building ADK agents with MCP tools through deployment, governance, evaluation, and optimization.
 
 ## What's Inside
