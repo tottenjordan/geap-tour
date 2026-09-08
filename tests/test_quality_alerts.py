@@ -223,3 +223,189 @@ def test_engine_policies_can_scope_to_one_engine():
     )
     cond = p.conditions[0].condition_threshold
     assert 'resource.labels.reasoning_engine_id="12345"' in cond.filter
+
+
+class TestPolicyIdentityIsTheMetricNotTheName:
+    """Three duplicate policies accumulated because nothing deduplicated.
+
+    `create_quality_alert` called `create_alert_policy` unconditionally, so every
+    run of `quality_alerts all` added another full set — and each duplicate pages
+    independently. By 2026-09-08 `agent_eval` helpfulness, policy_compliance and
+    tool_use_accuracy each had two identical policies (created 2026-08-12,
+    re-created 2026-08-17): same threshold, comparison, duration and aligner.
+
+    The trap in the fix: display names collided across families, so a name-keyed
+    dedupe would delete a LIVE online alert as a "duplicate" of the offline one.
+    """
+
+    def test_offline_and_online_are_not_confusable_by_name(self):
+        from src.eval.quality_alerts import _build_policy
+
+        offline = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        online = _build_policy("helpfulness", 3.0, [], family="agent_online_eval")
+        assert offline.display_name != online.display_name
+
+    def test_a_policy_is_identified_by_its_metric_filter(self):
+        from src.eval.quality_alerts import _build_policy, find_policies_for_metric
+
+        offline = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        online = _build_policy("helpfulness", 3.0, [], family="agent_online_eval")
+        pool = [offline, online]
+
+        assert find_policies_for_metric(pool, "agent_eval", "helpfulness") == [offline]
+        assert find_policies_for_metric(pool, "agent_online_eval", "helpfulness") == [online]
+
+    def test_an_unwatched_metric_finds_nothing(self):
+        from src.eval.quality_alerts import _build_policy, find_policies_for_metric
+
+        pool = [_build_policy("helpfulness", 3.0, [], family="agent_eval")]
+        assert find_policies_for_metric(pool, "agent_eval", "policy_compliance") == []
+
+
+class TestDuplicateDetection:
+    def test_two_policies_on_one_metric_are_reported(self):
+        from src.eval.quality_alerts import _build_policy, find_duplicate_alerts
+
+        a = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        b = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        dupes = find_duplicate_alerts([a, b])
+        assert len(dupes) == 1
+        assert len(next(iter(dupes.values()))) == 2
+
+    def test_the_offline_online_pair_is_NOT_a_duplicate(self):
+        """The false positive that would delete real coverage: same rubric, same
+        threshold, different series."""
+        from src.eval.quality_alerts import _build_policy, find_duplicate_alerts
+
+        offline = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        online = _build_policy("helpfulness", 3.0, [], family="agent_online_eval")
+        assert find_duplicate_alerts([offline, online]) == {}
+
+    def test_a_healthy_fleet_reports_nothing(self):
+        from src.eval.quality_alerts import (
+            ALL_MONITORED_METRICS,
+            _build_policy,
+            find_duplicate_alerts,
+        )
+
+        one_each = [_build_policy(m, t, []) for m, t in ALL_MONITORED_METRICS]
+        assert find_duplicate_alerts(one_each) == {}
+
+    def test_it_keeps_exactly_one_survivor_per_metric(self):
+        from src.eval.quality_alerts import _build_policy, find_duplicate_alerts
+
+        group = [_build_policy("helpfulness", 3.0, [], family="agent_eval") for _ in range(3)]
+        (survivors,) = find_duplicate_alerts(group).values()
+        assert len(survivors) == 3, "all three are returned; the caller keeps [0]"
+
+
+class TestPruneIsSafeByDefault:
+    def test_dry_run_deletes_nothing(self, monkeypatch):
+        """It removes monitoring coverage, so the harmless mode has to be default."""
+        from src.eval import quality_alerts as qa
+
+        deleted = []
+
+        class _FakeClient:
+            def list_alert_policies(self, name):
+                return [
+                    qa._build_policy("helpfulness", 3.0, [], family="agent_eval"),
+                    qa._build_policy("helpfulness", 3.0, [], family="agent_eval"),
+                ]
+
+            def delete_alert_policy(self, name):
+                deleted.append(name)
+
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", _FakeClient)
+        out = qa.prune_duplicate_alerts()
+        assert deleted == []
+        assert len(out) == 1
+
+    def test_apply_deletes_all_but_one(self, monkeypatch):
+        from src.eval import quality_alerts as qa
+
+        deleted = []
+
+        class _FakeClient:
+            def list_alert_policies(self, name):
+                pols = []
+                for i in range(3):
+                    p = qa._build_policy("helpfulness", 3.0, [], family="agent_eval")
+                    p.name = f"projects/p/alertPolicies/{i}"
+                    pols.append(p)
+                return pols
+
+            def delete_alert_policy(self, name):
+                deleted.append(name)
+
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", _FakeClient)
+        qa.prune_duplicate_alerts(apply=True)
+        assert len(deleted) == 2, "3 policies on one metric -> 2 removed, 1 kept"
+
+
+class TestCreateIsIdempotent:
+    """The actual regression: running setup twice must not double the fleet."""
+
+    @staticmethod
+    def _client(existing):
+        from src.eval import quality_alerts as qa
+
+        calls = {"created": [], "updated": []}
+
+        class _FakeClient:
+            def list_alert_policies(self, name):
+                return list(existing)
+
+            def create_alert_policy(self, name, alert_policy):
+                calls["created"].append(alert_policy)
+                alert_policy.name = "projects/p/alertPolicies/new"
+                return alert_policy
+
+            def update_alert_policy(self, alert_policy):
+                calls["updated"].append(alert_policy)
+                return alert_policy
+
+        return qa, _FakeClient, calls
+
+    def test_a_fresh_project_creates(self, monkeypatch):
+        qa, FakeClient, calls = self._client([])
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", FakeClient)
+        qa.create_quality_alert("helpfulness", 3.0)
+        assert len(calls["created"]) == 1
+        assert calls["updated"] == []
+
+    def test_running_it_again_updates_instead_of_duplicating(self, monkeypatch):
+        from src.eval.quality_alerts import _build_policy
+
+        prior = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        prior.name = "projects/p/alertPolicies/existing"
+        qa, FakeClient, calls = self._client([prior])
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", FakeClient)
+        qa.create_quality_alert("helpfulness", 3.0)
+        assert calls["created"] == [], "THE bug: this used to create a second policy"
+        assert len(calls["updated"]) == 1
+        assert calls["updated"][0].name == prior.name
+
+    def test_an_existing_online_policy_does_not_block_the_offline_one(self, monkeypatch):
+        """Name collision would have made these look like the same policy."""
+        from src.eval.quality_alerts import _build_policy
+
+        online = _build_policy("helpfulness", 3.0, [], family="agent_online_eval")
+        online.name = "projects/p/alertPolicies/online"
+        qa, FakeClient, calls = self._client([online])
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", FakeClient)
+        qa.create_quality_alert("helpfulness", 3.0, family="agent_eval")
+        assert len(calls["created"]) == 1
+        assert calls["updated"] == []
+
+    def test_a_changed_threshold_reaches_the_live_policy(self, monkeypatch):
+        """Idempotent must mean convergent, not 'skip if present' — otherwise a
+        threshold edit in code never reaches Cloud Monitoring."""
+        from src.eval.quality_alerts import _build_policy
+
+        prior = _build_policy("helpfulness", 3.0, [], family="agent_eval")
+        prior.name = "projects/p/alertPolicies/existing"
+        qa, FakeClient, calls = self._client([prior])
+        monkeypatch.setattr(qa.monitoring_v3, "AlertPolicyServiceClient", FakeClient)
+        qa.create_quality_alert("helpfulness", 4.2)
+        assert calls["updated"][0].conditions[0].condition_threshold.threshold_value == 4.2

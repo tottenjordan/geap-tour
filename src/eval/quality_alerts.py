@@ -15,6 +15,32 @@ _COMPARISONS = {
 }
 
 
+def _metric_filter(family: str, metric_name: str) -> str:
+    """The monitoring filter for one metric — a policy's real identity.
+
+    Deduplication keys on THIS, not on the display name. Display names collided
+    across families: ``agent_eval/helpfulness`` and ``agent_online_eval/helpfulness``
+    both rendered as "GEAP Workshop: helpfulness quality alert", so a name-keyed
+    check would read the online policy as a duplicate of the offline one and delete
+    a live alert. The filter names exactly one series.
+    """
+    return f'metric.type="custom.googleapis.com/{family}/{metric_name}" AND resource.type="global"'
+
+
+def find_policies_for_metric(policies, family: str, metric_name: str) -> list:
+    """Every existing policy already watching this metric. Pure — no API calls.
+
+    Returns a list, not an Optional, because the state this exists to fix is
+    *several* policies on one metric: three duplicate pairs had accumulated
+    (created 2026-08-12, re-created 2026-08-17), so every incident on
+    ``agent_eval`` helpfulness / policy_compliance / tool_use_accuracy paged twice.
+    """
+    target = _metric_filter(family, metric_name)
+    return [
+        p for p in policies if any(c.condition_threshold.filter == target for c in p.conditions)
+    ]
+
+
 def _build_policy(
     metric_name: str,
     threshold: float,
@@ -35,7 +61,7 @@ def _build_policy(
     condition = monitoring_v3.AlertPolicy.Condition(
         display_name=f"Agent {metric_name} {direction} {threshold}",
         condition_threshold=monitoring_v3.AlertPolicy.Condition.MetricThreshold(
-            filter=f'metric.type="custom.googleapis.com/{family}/{metric_name}" AND resource.type="global"',
+            filter=_metric_filter(family, metric_name),
             comparison=_COMPARISONS[comparison],
             threshold_value=threshold,
             duration=_Duration(seconds=600),
@@ -49,7 +75,10 @@ def _build_policy(
     )
 
     return monitoring_v3.AlertPolicy(
-        display_name=f"GEAP Workshop: {metric_name} quality alert",
+        # The family is IN the name. Without it, offline and online alerts for the
+        # same rubric were indistinguishable in the console — which is how three
+        # duplicate policies sat in a list of eighteen looking like normal pairs.
+        display_name=f"GEAP Workshop: {family}/{metric_name} quality alert",
         documentation=monitoring_v3.AlertPolicy.Documentation(
             content=f"Agent metric '{metric_name}' moved {direction} {threshold}. "
             "Check recent eval results and agent behavior.",
@@ -82,13 +111,86 @@ def create_quality_alert(
 
     channels = [notification_channel] if notification_channel else []
     policy = _build_policy(metric_name, threshold, channels, comparison=comparison, family=family)
-
-    result = client.create_alert_policy(name=project_name, alert_policy=policy)
     op = "<" if comparison == "LT" else ">"
-    print(f"✓ Alert policy created: {result.name}")
+
+    # IDEMPOTENT. This used to call create_alert_policy unconditionally, so every
+    # run of `quality_alerts all` added another full set of policies — and each
+    # duplicate pages independently. Three had accumulated before anyone noticed,
+    # because a setup script that silently succeeds twice looks exactly like one
+    # that succeeded once.
+    existing = find_policies_for_metric(
+        client.list_alert_policies(name=project_name), family, metric_name
+    )
+    if existing:
+        policy.name = existing[0].name
+        result = client.update_alert_policy(alert_policy=policy)
+        print(f"✓ Alert policy updated in place: {result.name}")
+        if len(existing) > 1:
+            # Reported, not silently repaired: deleting an alert is the operator's
+            # call, and `prune_duplicate_alerts` makes it a reviewable one.
+            print(
+                f"  ⚠ {len(existing)} policies watch {family}/{metric_name} — "
+                "each fires separately. Run `quality_alerts prune` to review."
+            )
+    else:
+        result = client.create_alert_policy(name=project_name, alert_policy=policy)
+        print(f"✓ Alert policy created: {result.name}")
     print(f"  Metric: {family}/{metric_name} {op} {threshold}")
     print("  Window: 10 minutes")
     return result
+
+
+def find_duplicate_alerts(policies) -> dict:
+    """Map ``filter -> [policies]`` for every metric watched by more than one policy.
+
+    Pure. Keeps the newest (by mutation time) as the survivor and lists the rest as
+    removable, so the choice is stable rather than whichever the API returned first.
+    """
+    by_filter: dict[str, list] = {}
+    for p in policies:
+        for c in p.conditions:
+            f = c.condition_threshold.filter
+            if f:
+                by_filter.setdefault(f, []).append(p)
+    dupes = {}
+    for f, group in by_filter.items():
+        if len(group) > 1:
+            ordered = sorted(
+                group,
+                key=lambda p: getattr(p.mutation_record, "mutate_time", None) or 0,
+                reverse=True,
+            )
+            dupes[f] = ordered
+    return dupes
+
+
+def prune_duplicate_alerts(*, apply: bool = False) -> dict:
+    """Report (and with ``apply=True``, delete) redundant policies on one metric.
+
+    Dry-run by default: this deletes monitoring coverage, so the default has to be
+    the harmless one. The newest policy for each metric survives.
+    """
+    client = monitoring_v3.AlertPolicyServiceClient()
+    project_name = f"projects/{GCP_PROJECT_ID}"
+    dupes = find_duplicate_alerts(list(client.list_alert_policies(name=project_name)))
+
+    if not dupes:
+        print("No duplicate alert policies — every metric is watched by exactly one.")
+        return {}
+
+    removed = {}
+    for filt, group in dupes.items():
+        keep, drop = group[0], group[1:]
+        print(f"\n{filt}")
+        print(f"  KEEP   {keep.name.split('/')[-1]}  ({keep.display_name})")
+        for p in drop:
+            print(f"  {'DELETE' if apply else 'WOULD DELETE'} {p.name.split('/')[-1]}")
+            if apply:
+                client.delete_alert_policy(name=p.name)
+        removed[filt] = [p.name for p in drop]
+    if not apply:
+        print("\nDry run. Re-run with --apply to delete.")
+    return removed
 
 
 def list_quality_alerts():
@@ -468,6 +570,8 @@ if __name__ == "__main__":
         list_quality_alerts()
     elif len(sys.argv) > 1 and sys.argv[1] == "all":
         setup_all_alerts()
+    elif len(sys.argv) > 1 and sys.argv[1] == "prune":
+        prune_duplicate_alerts(apply="--apply" in sys.argv)
     else:
         metric = sys.argv[1] if len(sys.argv) > 1 else "helpfulness"
         threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
