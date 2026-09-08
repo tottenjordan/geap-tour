@@ -25,12 +25,16 @@ gcloud artifacts repositories create geap-eval \
     --project=hybrid-vertex --location=us-central1 --repository-format=docker
 
 # 2. Build + push the runner image (note the printed URI)
-bash scripts/build_eval_image.sh v1
+bash scripts/build_eval_image.sh v3
 ```
 
-The image URI is pinned in `src/pipelines/components.py` as
-`IMAGE = us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v1`.
-Rebuild with a new tag and bump `IMAGE` to update.
+The image URI is **derived, not hardcoded** — `src/pipelines/components.py` builds it
+from `GCP_REGION`/`GCP_PROJECT_ID` plus `EVAL_IMAGE_REPO` / `EVAL_IMAGE_NAME` /
+`EVAL_IMAGE_TAG` (default `v3`), and `EVAL_IMAGE` overrides the whole thing. To move
+to a new build, push the tag and set `EVAL_IMAGE_TAG` in `.env` — no code change.
+
+(It *was* a hardcoded `…/eval-runner:v1` literal, which is how
+`build_eval_image.sh v4` could silently keep running v3.)
 
 ## Submit
 
