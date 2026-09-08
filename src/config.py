@@ -287,6 +287,23 @@ BQ_EVAL_DATASET = os.environ.get("BQ_EVAL_DATASET", "geap_workshop_logs")
 # dataset IAM. See docs/notes/agent-analytics-bigquery.md.
 ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", "true", "True")
 
+# ENABLE_MODEL_ARMOR_PLUGIN=1 attaches ADK 2.8.0's first-party
+# `google.adk.integrations.model_armor.ModelArmorPlugin`, which screens inside the
+# ADK request path instead of via a GenerateContentConfig field — so unlike the
+# region-scoped templates it is model-family-independent.
+#
+# It exists because the template path covers ONLY regional Gemini-2.x. The live
+# coordinator is baked at gemini-2.5-flash (armor active), but .env's AGENT_MODEL is
+# gemini-3.5-flash — so the next deploy would silently drop to the client-side
+# blocklist alone. Latent, not an active outage; this closes it before it lands.
+# Default off (needs google-cloud-modelarmor in the serving requirements), so an
+# unset flag keeps behaviour byte-identical. See src/armor/config.py:armor_layers.
+ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "0") in (
+    "1",
+    "true",
+    "True",
+)
+
 # ENABLE_SPAN_CONTENT_CAPTURE=1 deploys the coordinator with
 # ``AdkApp(enable_tracing=True)``. This is the ONE lever that unblocks native
 # Online Evaluators: the managed AdkApp runtime's set_up() hard-overwrites

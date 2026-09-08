@@ -26,6 +26,7 @@ dependencies = [
     "google-cloud-bigquery-storage>=2.41",
     "google-cloud-storage>=3.14",
     "numpy>=2.5.3",
+    "google-cloud-modelarmor>=0.2",
 ]
 
 [build-system]

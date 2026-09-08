@@ -194,3 +194,92 @@ class TestEntryPointGuardrails:
         # assert by name rather than object identity.
         assert coordinator_agent.before_agent_callback is not None
         assert coordinator_agent.before_agent_callback.__name__ == "input_guardrail_callback"
+
+
+class TestArmorIsNeverSilentlyAbsent:
+    """Server-side Model Armor was INERT in production and nothing said so.
+
+    `get_armored_generate_config` attaches templates only for a regional Gemini-2.x
+    backbone, which is correct — Gemini-3 runs on the global endpoint (templates
+    404) and Claude runs via LiteLlm.
+
+    Measured 2026-09-08: the *live* coordinator is baked at `gemini-2.5-flash`, so
+    templates are active on it. But `.env` sets `AGENT_MODEL=gemini-3.5-flash`, so
+    the next deploy drops server-side screening entirely — and the bake-off engines
+    already run Gemini-3. The gap is latent, and the only thing that reported it was
+    an *advisory* finding nobody must act on.
+
+    ADK 2.8.0 ships `google.adk.integrations.model_armor.ModelArmorPlugin`, which
+    screens in the ADK request path and is therefore model-family-independent.
+    """
+
+    def test_the_gate_still_excludes_the_backbones_it_should(self):
+        """Not the bug — this part is correct and must stay correct."""
+        from src.armor.config import server_side_armor_enabled
+
+        assert server_side_armor_enabled("gemini-2.5-flash") is True
+        assert server_side_armor_enabled("gemini-3.5-flash") is False
+        assert server_side_armor_enabled("claude-sonnet-5") is False
+
+    def test_a_gemini3_coordinator_is_reported_as_single_layer_by_default(self):
+        """THE regression, stated honestly: with the flag off, a Gemini-3 backbone
+        really does run on the client-side guardrail alone.
+
+        The fix is not that this became false by default — it is that it is now
+        *visible*. Before `armor_layers` there was no way to ask."""
+        from src.armor.config import armor_layers
+
+        layers = armor_layers("gemini-3.5-flash")
+        assert layers["client_guardrail"] is True
+        assert layers["server_side"] is False, "templates do not apply to Gemini-3"
+        assert layers["plugin"] is False, "plugin is opt-in and defaults off"
+
+    def test_the_plugin_closes_the_gap_when_enabled(self, monkeypatch):
+        """Turning the flag on gives a Gemini-3 backbone a server-side layer."""
+        from src import config as cfg
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", True)
+        layers = armor_cfg.armor_layers("gemini-3.5-flash")
+        assert layers["plugin"] is True
+
+    def test_the_plugin_does_not_double_up_on_a_gemini2_backbone(self, monkeypatch):
+        """Templates already screen regional Gemini-2.x; adding the plugin there
+        would screen every request twice and bill for it."""
+        from src import config as cfg
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", True)
+        layers = armor_cfg.armor_layers("gemini-2.5-flash")
+        assert layers["server_side"] is True
+        assert layers["plugin"] is False
+        assert armor_cfg.model_armor_plugin("gemini-2.5-flash") is None
+
+    def test_a_regional_gemini2_backbone_reports_the_template_layer(self):
+        from src.armor.config import armor_layers
+
+        layers = armor_layers("gemini-2.5-flash")
+        assert layers["server_side"] is True
+        assert layers["client_guardrail"] is True
+
+    def test_every_backbone_can_reach_two_layers(self, monkeypatch):
+        """The property that matters: no backbone is stuck on the local blocklist.
+
+        Asserted with the flag ON, because that is the question — is coverage
+        *reachable* for every backbone we serve, or is some family unfixable?
+        """
+        from src import config as cfg
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", True)
+        for model in (
+            "gemini-2.5-flash",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "claude-sonnet-5",
+            "claude-opus-4-6",
+        ):
+            layers = armor_cfg.armor_layers(model)
+            assert layers["server_side"] or layers["plugin"], (
+                f"{model} cannot get a server-side layer at all"
+            )
