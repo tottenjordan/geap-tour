@@ -19,10 +19,11 @@
 #   # or with custom project:
 #   GCP_PROJECT_ID=my-project GCP_REGION=us-central1 bash scripts/deploy_all.sh
 # =============================================================================
+
+# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
-REGION="${GCP_REGION:-us-central1}"
 PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)" 2>/dev/null || echo "unknown")
 STAGING_BUCKET="${GCP_STAGING_BUCKET:-${PROJECT_ID}-geap-staging}"
 
