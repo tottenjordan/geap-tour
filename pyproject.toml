@@ -14,7 +14,7 @@ dependencies = [
     "litellm>=1.85.7",
     "pandas>=3.0.5",
     "a2a-sdk>=1",
-    "google-adk[agent-identity,eval]==2.7.1",
+    "google-adk[agent-identity,eval]==2.8.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
     "matplotlib>=3.11.1",
     "paperbanana>=0.3.0",
@@ -78,9 +78,13 @@ unused-ignore-comment = "ignore"
 
 [dependency-groups]
 analytics = [
+    # ADK 2.7.0 moved pyarrow out of the `gcp` extra into its own
+    # `bigquery-analytics` extra (a ~50MB install saving for everyone who does not
+    # use BigQueryAgentAnalyticsPlugin). Depend on the extra rather than naming
+    # pyarrow ourselves, so the version ADK actually needs stays the source of truth.
+    "google-adk[bigquery-analytics]",
     "google-cloud-bigquery-storage>=2",
     "google-cloud-storage>=2",
-    "pyarrow>=25.0.1",
 ]
 dev = [
     "pytest>=9.1.1",
