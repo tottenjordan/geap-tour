@@ -33,6 +33,7 @@ from vertexai import agent_engines
 
 from src.armor.config import model_armor_plugin
 from src.config import (
+    ADK_MAX_LLM_CALLS,
     AGENT_ANALYTICS_TABLE,
     AGENT_ENGINE_ID,
     AGENT_GATEWAY_EGRESS_PATH,
@@ -421,6 +422,13 @@ def _build_config(
     """
     env_vars = {
         **OTEL_ENV_VARS,
+        # Runaway-loop ceiling (ADK 2.8.0). An agent that keeps calling its model
+        # burns quota and wall-clock with no natural stop, and this repo has been
+        # bitten twice by unbounded behaviour reaching production — an uncapped MCP
+        # tool payload that tripped the GenerateContent quota, and an unconstrained
+        # `mcp` dependency. A ceiling well above any legitimate turn costs nothing
+        # and converts "silently expensive" into a bounded, visible failure.
+        "ADK_MAX_LLM_CALLS": str(ADK_MAX_LLM_CALLS),
         "GCP_PROJECT_ID": GCP_PROJECT_ID,
         "GCP_REGION": GCP_REGION,
         "SEARCH_MCP_URL": SEARCH_MCP_URL,

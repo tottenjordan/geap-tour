@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
+import time
 
 import pytest
 
@@ -170,3 +172,86 @@ def _build_prompt(prompt: str, response: str) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+class TestPanelScoringRunsConcurrently:
+    """N pairs x M judges was a fully sequential network loop.
+
+    The panel is the priciest scorer here — two models per rubric per item — and
+    the hourly monitoring cron pays for it on every run. ADK 2.8.0 parallelized
+    *its own* LLM-as-judge path (`local_eval_service`, which GEPA uses), but that
+    is a different code path: our judges call `google.genai` directly, so nothing
+    upstream helps them.
+
+    These use a fake judge that sleeps, so the concurrency is measured rather than
+    asserted, and no real judge calls are made.
+    """
+
+    @staticmethod
+    def _slow_judge(delay=0.05, label="5"):
+        def judge(_prompt: str) -> str:
+            time.sleep(delay)
+            return f"Score: {label}"
+
+        return judge
+
+    @staticmethod
+    def _parse(text):
+        m = re.search(r"Score:\s*([\d.]+)", text)
+        return float(m.group(1)) if m else None
+
+    def test_a_panel_of_judges_does_not_run_serially(self):
+        """3 judges x 0.05s must take well under the 0.15s a serial loop costs."""
+        judges = [self._slow_judge() for _ in range(3)]
+        t0 = time.perf_counter()
+        out = jp.score_with_panel("p", judges, self._parse)
+        elapsed = time.perf_counter() - t0
+        assert out["per_judge"] == [5.0, 5.0, 5.0]
+        assert elapsed < 0.12, f"looks serial: {elapsed:.3f}s for 3x0.05s"
+
+    def test_many_pairs_do_not_run_serially(self):
+        """6 pairs x 2 judges x 0.05s: serial is 0.60s."""
+        judges = [self._slow_judge() for _ in range(2)]
+        pairs = [(f"p{i}", f"r{i}") for i in range(6)]
+        t0 = time.perf_counter()
+        out = jp.score_pairs_with_panel(pairs, judges, lambda p, r: f"{p}|{r}", self._parse)
+        elapsed = time.perf_counter() - t0
+        assert out["n_scored"] == 6
+        assert out["score"] == 5.0
+        assert elapsed < 0.35, f"looks serial: {elapsed:.3f}s for 12x0.05s"
+
+    def test_per_judge_order_is_preserved(self):
+        """Krippendorff alpha reads per-item rows positionally, so a judge's column
+        must stay that judge's column no matter what order results arrive in."""
+        judges = [
+            self._slow_judge(delay=0.06, label="1"),
+            self._slow_judge(delay=0.01, label="2"),
+            self._slow_judge(delay=0.03, label="3"),
+        ]
+        out = jp.score_with_panel("p", judges, self._parse)
+        assert out["per_judge"] == [1.0, 2.0, 3.0], "concurrency reordered the panel"
+
+    def test_pair_order_is_preserved(self):
+        judges = [self._slow_judge(delay=0.01, label="4")]
+        pairs = [(f"p{i}", "r") for i in range(5)]
+        seen = []
+
+        def recording(prompt, response):
+            seen.append(prompt)
+            return prompt
+
+        out = jp.score_pairs_with_panel(pairs, judges, recording, self._parse)
+        assert out["n_total"] == 5
+        assert out["n_scored"] == 5
+
+    def test_one_failing_judge_does_not_sink_the_panel(self):
+        """A judge that raises must behave like an unparseable verdict (None), not
+        take the whole run down — same contract as the serial version."""
+
+        def boom(_prompt):
+            raise RuntimeError("judge exploded")
+
+        judges = [self._slow_judge(label="5"), boom, self._slow_judge(label="3")]
+        out = jp.score_with_panel("p", judges, self._parse)
+        assert out["per_judge"] == [5.0, None, 3.0]
+        assert out["n_valid"] == 2

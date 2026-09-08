@@ -298,6 +298,12 @@ ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", 
 # blocklist alone. Latent, not an active outage; this closes it before it lands.
 # Default off (needs google-cloud-modelarmor in the serving requirements), so an
 # unset flag keeps behaviour byte-identical. See src/armor/config.py:armor_layers.
+# Ceiling on LLM calls within a single invocation (ADK 2.8.0). Not a tuning knob —
+# a runaway-loop backstop. 100 is far above any legitimate turn here (the deepest
+# measured coordinator turn is a handful of tool hops), so it never fires in normal
+# operation but bounds the cost of a loop that would otherwise burn quota silently.
+ADK_MAX_LLM_CALLS = int(os.environ.get("ADK_MAX_LLM_CALLS", "100"))
+
 ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "0") in (
     "1",
     "true",
