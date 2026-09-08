@@ -29,8 +29,20 @@ PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-934903580331}"
 REGION="${GCP_REGION:-us-central1}"
 APP_NAME="${APPHUB_APP_NAME:-geap-workshop}"
-COORDINATOR_ID="${COORDINATOR_AGENT_ID:-8296365537139621888}"
-ROUTER_ID="${ROUTER_ENGINE_ID:-${AGENT_ENGINE_ID:-4709107696450666496}}"
+# NO hardcoded engine-id fallbacks. Both of the ones that used to live here
+# (8296365537139621888, 4709107696450666496) pointed at engines that have since been
+# deleted, so an unset env var did not fail — it silently registered two
+# non-existent engines in AppHub. Substituting today's ids would rot identically;
+# the fix is to refuse to guess.
+COORDINATOR_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-}}"
+ROUTER_ID="${ROUTER_ENGINE_ID:-}"
+for _pair in "COORDINATOR_AGENT_ID/AGENT_ENGINE_ID:$COORDINATOR_ID" "ROUTER_ENGINE_ID:$ROUTER_ID"; do
+  if [[ -z "${_pair#*:}" ]]; then
+    echo "ERROR: ${_pair%%:*} is unset. Source .env or export it — this script will" >&2
+    echo "       not fall back to a hardcoded engine id (they go stale silently)." >&2
+    exit 1
+  fi
+done
 LITE_ID="${LITE_ENGINE_ID:-}"
 FLASH_ID="${FLASH_ENGINE_ID:-}"
 PRO_ID="${PRO_ENGINE_ID:-}"

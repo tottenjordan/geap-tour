@@ -312,8 +312,17 @@ ENABLE_SPAN_CONTENT_CAPTURE = os.environ.get("ENABLE_SPAN_CONTENT_CAPTURE", "0")
 )
 BQ_AGENT_ANALYTICS_DATASET = os.environ.get("BQ_AGENT_ANALYTICS_DATASET", "geap_agent_analytics")
 AGENT_ANALYTICS_TABLE = os.environ.get("AGENT_ANALYTICS_TABLE", "agent_events")
-AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
-ROUTER_ENGINE_ID = os.environ.get("ROUTER_ENGINE_ID", "6023683798619652096")
+# Deployed engine ids. Default to "" — the convention every other engine-id var in
+# this repo already uses (see deploy_agents.LITE_ENGINE_ID and friends).
+#
+# These previously defaulted to hardcoded ids, 2479350891879071744 and
+# 6023683798619652096, and BOTH engines have since been deleted. A checkout without
+# .env therefore did not fail — it silently pointed every consumer at an engine that
+# does not exist, and the resource name string-formats fine, so the failure surfaced
+# deep inside an eval or not at all. Substituting today's ids would rot the same way;
+# "" makes "unset" look unset.
+AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "")
+ROUTER_ENGINE_ID = os.environ.get("ROUTER_ENGINE_ID", "")
 
 # A2A (Agent-to-Agent) — preview-optional. Identity for the coordinator's
 # published agent card and the derived A2A endpoint.

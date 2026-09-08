@@ -5,7 +5,7 @@ results with generate_loss_clusters() to identify systemic failure patterns.
 
 Usage:
     uv run python -m src.eval.failure_clusters <agent-engine-id>
-    uv run python -m src.eval.failure_clusters 4709107696450666496
+    uv run python -m src.eval.failure_clusters <AGENT_ENGINE_ID>
 """
 
 import sys

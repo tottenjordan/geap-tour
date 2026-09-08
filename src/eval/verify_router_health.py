@@ -25,7 +25,7 @@ cannot parse a recycled engine's NDJSON (memory ``agent-engine-sse-parse-skew``)
 
 Run::
 
-    uv run python -m src.eval.verify_router_health --agent-id 6134089059699523584
+    uv run python -m src.eval.verify_router_health --agent-id <ROUTER_ENGINE_ID>
     uv run python -m src.eval.verify_router_health --agent-id <ID> --repeat 5 --threshold 0.05
     uv run python -m src.eval.verify_router_health --agent-id <ID> --json
 """
