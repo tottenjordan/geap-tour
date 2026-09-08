@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Setup Agent Identity — creates Workload Identity Pool and binds SPIFFE principals
-
-# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
+PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
 ORG_ID="${GCP_ORG_ID}"
+REGION="${GCP_REGION:-us-central1}"
 
 if [[ -z "${ORG_ID:-}" ]]; then
     echo "ERROR: GCP_ORG_ID must be set"

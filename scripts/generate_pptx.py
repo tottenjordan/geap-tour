@@ -9,10 +9,6 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
-# Was a bare literal with no env path at all, so every console deep-link in the
-# generated deck pointed at one project regardless of configuration.
-from src.config import GCP_PROJECT_ID as GCP_PROJECT
-
 DOCS = os.path.join(os.path.dirname(__file__), "..", "docs")
 SCREENSHOTS = os.path.join(DOCS, "screenshots")
 DIAGRAMS = os.path.join(os.path.dirname(__file__), "..", "diagrams", "outputs")
@@ -231,6 +227,7 @@ def add_notes(slide, text):
 
 
 REPO_URL = "https://github.com/jswortz/geap-tour"
+GCP_PROJECT = "hybrid-vertex"
 
 
 def add_repo_link(slide, code_path=None, y_pos=None):

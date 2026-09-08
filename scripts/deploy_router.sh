@@ -10,11 +10,10 @@
 #   # or with custom models:
 #   OPUS_MODEL=vertex_ai/claude-sonnet-4-6 bash scripts/deploy_router.sh
 # =============================================================================
-
-# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
+PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
+REGION="${GCP_REGION:-us-central1}"
 
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'

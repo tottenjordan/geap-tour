@@ -6,6 +6,7 @@ interactions (past bookings, expense submissions, preferences) across sessions.
 
 import contextlib
 import logging
+import os
 import re
 
 from google.adk.agents import LlmAgent
@@ -16,30 +17,29 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content, Part
 
-# This module is GEPA's optimization target (`run_optimize.py src/agents/coordinator`)
-# and used to carry a SHADOW COPY of src/config.py — its own os.environ.get calls,
-# its own defaults, and the three MCP registry resource names spelled out with their
-# UUIDs. Every one of those was a value that could drift from config without anything
-# noticing, and one already had: AGENT_ENGINE_ID defaulted to 2479350891879071744, an
-# engine that has since been deleted. (It was also dead code — declared here and
-# referenced nowhere, so nothing failed.)
-#
-# Now imported. The three MCP names were verified identical to .env before the swap.
-# AGENT_MODEL came too: its local default said gemini-2.5-flash while config said
-# 3.5, but .env sets AGENT_MODEL so the local fallback was UNREACHABLE — the
-# divergence was cosmetic, and a comment claiming a deliberate 2.5 pin would have
-# been simply false. Behaviour-preserving today, and it cannot diverge tomorrow.
-from src.config import (
-    AGENT_MODEL,
-    AGENT_REGISTRY_LOCATION,
-    BOOKING_MCP_SERVER,
-    BOOKING_MCP_URL,
-    EXPENSE_MCP_SERVER,
-    EXPENSE_MCP_URL,
-    GCP_PROJECT_ID,
-    SEARCH_MCP_SERVER,
-    SEARCH_MCP_URL,
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
+
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "hybrid-vertex")
+GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+AGENT_ENGINE_ID = os.environ.get("AGENT_ENGINE_ID", "2479350891879071744")
+AGENT_REGISTRY_LOCATION = os.environ.get("AGENT_REGISTRY_LOCATION", "us-central1")
+
+SEARCH_MCP_SERVER = os.environ.get(
+    "SEARCH_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-4bce-24e82cd98045",
 )
+BOOKING_MCP_SERVER = os.environ.get(
+    "BOOKING_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-f126-e49a4e2ae9c9",
+)
+EXPENSE_MCP_SERVER = os.environ.get(
+    "EXPENSE_MCP_SERVER",
+    f"projects/{GCP_PROJECT_ID}/locations/us-central1/mcpServers/agentregistry-00000000-0000-0000-1089-2fb19b9297d7",
+)
+
+SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
+BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
+EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")
 
 MCP_SERVER_URLS = {
     SEARCH_MCP_SERVER: SEARCH_MCP_URL,
