@@ -105,9 +105,61 @@ Recording these so the next sweep does not re-litigate them:
   summary table, but the *content* is surfaced by a dedicated section that handles
   both the UNREACHABLE and no-output cases. Minor inconsistency, not a blind spot.
 
+### The purest instance yet: a gate that had never run (2026-09-08)
+
+`.github/workflows/eval_gate.yaml` — the advisory coordinator quality gate, including
+the multi-turn and empty-at-200 smoke steps added for roadmap P2.9 — had **never
+executed once**. All 15 invocations since it shipped on 2026-08-14 were `skipped`: it
+is gated on a `run-eval` label nobody ever applied.
+
+This is the thesis in its cleanest form. The earlier instances returned a *wrong*
+answer. This one returned **no answer, indefinitely**, and its run list looked
+perfectly orderly while doing so — fifteen tidy rows, every one of them nothing. The
+engine-config step that later caught a 9-day-stale CI variable lives in this workflow
+and had never run either; that finding came from a manual invocation.
+
+Every CLI flag the workflow passes was verified to still exist, so it was *plausibly*
+correct — which is precisely the state that needs proving rather than assuming. The
+fix is not a better check, it is a **cadence**: a weekly schedule alongside the label
+gate, so "has never run" becomes "runs, and we would see it break".
+
+### The guard that covered half its surface, again (2026-09-08)
+
+`tests/test_no_hardcoded_values.py` scanned shell scripts for the project id and
+number, but its 19-digit **engine-id** check ran only over `*.py`. So the sweep that
+existed to delete stale identifiers reported clean while
+`scripts/setup_governance_policies.sh` still held two `:-<19 digits>` fallbacks
+pointing at **deleted** engines.
+
+The bug behind them was worse than the literals:
+
+```sh
+AGENT_ENGINE_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+ROUTER_ENGINE_ID="${ROUTER_ENGINE_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+```
+
+The second line reads `AGENT_ENGINE_ID` *after* the first overwrote it, so an unset
+`ROUTER_ENGINE_ID` resolved the router **to the coordinator**. `grant_registry_read`
+then granted `roles/agentregistry.viewer` to the coordinator twice and to the router
+never — the documented remediation for the router's 403 MCP-resolution fallback,
+silently not applied — while printing `Router … ok`. Running the pre-fix script proves
+it: both ids resolve to `2479350891879071744`, an engine that no longer exists.
+
+Note this is the *same lesson* `_py_files()` already carries for
+`scripts/generate_pptx.py`, one file type over. A guard's coverage is itself a thing
+that can be wrong, and it fails in the quiet direction.
+
+**And the loader had inverted its own documented contract.** `scripts/lib/config.sh`
+did `set -a; source .env`, which runs every assignment unconditionally — so `.env`
+*overwrote* variables the caller had explicitly set, while the comment directly above
+claimed the opposite ("NOT over an already-exported variable"). `GCP_PROJECT_ID=my-sandbox
+bash scripts/setup_governance_policies.sh` granted IAM in `hybrid-vertex`. It also
+disagreed with `src/config.py`, whose `load_dotenv()` defaults to `override=False`:
+one variable, two answers, depending on which language asked.
+
 ## How to look for the next one
 
-Four questions that each caught something here:
+Six questions that each caught something here:
 
 1. **Can this check distinguish "found nothing" from "did not run"?** If not, make
    the second state explicit — `missing`, `UNREACHABLE (not checked)`,
@@ -125,6 +177,15 @@ Four questions that each caught something here:
    "is it labelled ours" — the thing you are hunting is precisely the one that
    predates whatever convention you would filter on. Pick an identifier the artifact
    cannot be missing.
+6. **Has this check ever actually run — and how would you know?** A `skipped` run is
+   not a passing run, and nothing distinguishes fifteen of them from a healthy
+   history. Check the *execution* record, not the code: `gh run list --workflow X`
+   with every row `skipped` is a check that does not exist. Anything gated on a human
+   remembering a label will eventually never run; give it a cadence.
+7. **Does the comment describe what the code does?** Twice now a comment has asserted
+   the correct behaviour directly above code doing the opposite (`config.sh`'s
+   override contract; the `default_targets` docstring). Prose is not tested, so it
+   drifts silently and then actively misleads the next reader into not checking.
 
 ## Where each is pinned
 
@@ -138,3 +199,7 @@ Four questions that each caught something here:
 | online faithfulness published | `tests/test_monitoring_publish.py::TestOnlineFaithfulnessIsScheduled` |
 | alerted-but-unpublished, generally | `tests/test_online_eval.py::TestAlertedButUnpublishedIsReported` |
 | orphaned engines | `tests/test_find_orphan_engines.py` (fingerprint-not-label, no foreign ids named, allowlist explains itself, `ENGINE_ID_VARS` completeness) |
+| engine ids in shell | `tests/test_no_hardcoded_values.py::TestShellScriptsAreEnvDriven::test_no_shell_script_embeds_an_engine_id`, with two planted-literal cases in `TestGuardsAreNotVacuous` |
+| router↔coordinator aliasing | `tests/test_no_hardcoded_values.py::TestTheGovernanceScriptCannotSilentlyPickTheWrongEngine` — drives the real script offline; distinct error messages prove which check was reached |
+| `.env` override contract | `tests/test_no_hardcoded_values.py::TestTheLoaderDoesNotClobberTheEnvironment`, incl. a bash-vs-Python agreement test |
+| the gate that never ran | a weekly `schedule` in `eval_gate.yaml` — a cadence, not an assertion; nothing else distinguishes `skipped` from healthy |

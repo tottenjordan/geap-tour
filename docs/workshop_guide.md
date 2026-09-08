@@ -1047,8 +1047,8 @@ The traffic generator sends 20 single queries (tagged by complexity) plus 3 mult
 # Generate traffic: 20 single queries + 3 memory conversations (32 total)
 uv run python -m src.traffic.generate_traffic
 
-# Target a specific agent by ID
-uv run python -m src.traffic.generate_traffic 2479350891879071744
+# Target a specific agent by ID (defaults to AGENT_ENGINE_ID from .env)
+uv run python -m src.traffic.generate_traffic "$ROUTER_ENGINE_ID"
 
 # Repeat the single-query set multiple times (memory convos always run once)
 uv run python -m src.traffic.generate_traffic --count 3
