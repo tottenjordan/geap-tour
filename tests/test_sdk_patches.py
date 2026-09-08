@@ -297,3 +297,93 @@ class TestRetryCounters:
         _run_with_empty_retry(list, retries=2, sleep_fn=lambda a: None)
         _sdk_patches.reset_retry_counters()
         assert _sdk_patches.retry_counters()["attempts"] == 0
+
+
+class TestTheRetryPatchSurvivesSdkSignatureChanges:
+    """The patch must not care what arguments the SDK's function takes.
+
+    `google-cloud-aiplatform` 2.1.0 added a `runtime` kwarg to
+    `_execute_agent_run_with_retry`. Our wrapper declared the 1.x signature
+    positionally, so every single inference died with:
+
+        _patch_retry_on_empty.<locals>._wrapped() got an unexpected keyword
+        argument 'runtime'
+
+    The whole suite stayed green. A real scored run came back 4/4 empty, and only
+    the infra-empty partitioning turned that into an honest SKIPPED instead of a
+    fabricated quality score.
+
+    `test_patched_agent_run_retries_empty_turn` could not have caught it: it
+    *rebuilds* a wrapper mirroring the implementation rather than calling the real
+    patched function. These tests call the real one.
+    """
+
+    @staticmethod
+    def _patched_with(fake_orig):
+        """Install fake_orig as the SDK function, then apply the real patch."""
+        from agentplatform._genai import _evals_common as ec
+
+        original = ec._execute_agent_run_with_retry
+        try:
+            ec._execute_agent_run_with_retry = fake_orig
+            _sdk_patches._patch_retry_on_empty()
+            return ec._execute_agent_run_with_retry
+        finally:
+            ec._execute_agent_run_with_retry = original
+
+    def test_an_unknown_kwarg_is_passed_through(self):
+        """THE regression. `runtime` is the 2.1.0 addition; the point is that ANY
+        future kwarg must pass through untouched."""
+        seen = {}
+
+        def fake_orig(row, contents, agent_engine, max_retries=3, runtime=None):
+            seen.update(row=row, runtime=runtime, max_retries=max_retries)
+            return [{"content": {"parts": [{"text": "ok"}]}}]
+
+        wrapped = self._patched_with(fake_orig)
+        out = wrapped("r", "c", "engine", max_retries=2, runtime="RUNTIME")
+        assert out == [{"content": {"parts": [{"text": "ok"}]}}]
+        assert seen == {"row": "r", "runtime": "RUNTIME", "max_retries": 2}
+
+    def test_positional_calls_still_work(self):
+        """The SDK calls this positionally in places; passthrough must not reorder."""
+        got = {}
+
+        def fake_orig(row, contents, agent_engine, max_retries=3):
+            got.update(row=row, contents=contents, agent_engine=agent_engine)
+            return [{"content": {"parts": [{"text": "ok"}]}}]
+
+        wrapped = self._patched_with(fake_orig)
+        wrapped("R", "C", "E")
+        assert got == {"row": "R", "contents": "C", "agent_engine": "E"}
+
+    def test_the_empty_retry_behaviour_is_preserved(self, monkeypatch):
+        """Signature-agnostic must not mean behaviour-free: an empty turn still
+        retries. This is the whole reason the patch exists."""
+        monkeypatch.setattr(_sdk_patches, "_EMPTY_BACKOFF", 0.0)
+        seq = [[], [{"content": {"parts": [{"text": "recovered"}]}}]]
+        state = {"n": 0}
+
+        def fake_orig(row, contents, agent_engine, max_retries=3, runtime=None):
+            r = seq[min(state["n"], len(seq) - 1)]
+            state["n"] += 1
+            return r
+
+        wrapped = self._patched_with(fake_orig)
+        out = wrapped(None, None, None, runtime="X")
+        assert out == [{"content": {"parts": [{"text": "recovered"}]}}]
+        assert state["n"] == 2, "an empty first turn must be retried"
+
+    def test_the_real_sdk_function_accepts_our_wrapper(self):
+        """Guard the actual coupling: whatever signature the installed SDK declares,
+        our wrapper must be call-compatible with it."""
+        import inspect
+
+        from agentplatform._genai import _evals_common as ec
+
+        _sdk_patches._PATCHED = False
+        patch_evals_sdk()
+        sig = inspect.signature(ec._execute_agent_run_with_retry)
+        assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()), (
+            f"wrapper must accept **kwargs to survive SDK changes; got {sig}"
+        )

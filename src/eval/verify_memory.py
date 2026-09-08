@@ -99,7 +99,7 @@ def fetch_memories(
         scope["app_name"] = app_name
 
     facts: list[str] = []
-    results = client.agent_engines.retrieve_memories(
+    results = client.memory_banks.memories.retrieve(
         name=name,
         scope=scope,
         simple_retrieval_params={"page_size": page_size},

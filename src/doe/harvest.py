@@ -46,7 +46,11 @@ _TERMINAL_STATES = {
 
 
 def _metric_base(key: str) -> str:
-    """agent_engine_0/tool_use_quality_v1 -> tool_use_quality."""
+    """runtime_0/tool_use_quality_v1 -> tool_use_quality.
+
+    The candidate prefix is unstable — ``agent_engine_0/`` on aiplatform 1.x,
+    ``runtime_0/`` on 2.x — so it is discarded rather than matched.
+    """
     return _VERSION_SUFFIX.sub("", key.rsplit("/", 1)[-1])
 
 

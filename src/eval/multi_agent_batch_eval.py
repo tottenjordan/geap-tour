@@ -301,7 +301,12 @@ def _run_single_agent_eval(
     # Warm the engine before the batched fan-out so cold-start empties don't
     # drop items (throttle + retry-on-empty in _sdk_patches cover the rest).
     try:
-        engine = client.agent_engines.get(name=agent_resource_name)
+        # `vertexai.agent_engines`, not `client.agent_engines`: aiplatform 2.x
+        # removed the latter from the Client (the surface was renamed to
+        # `client.runtimes`). The vertexai module is what every other engine
+        # lookup in this repo already uses, and it returns an object with
+        # `stream_query`, which is what warm_agent_engine needs.
+        engine = vertexai.agent_engines.get(name=agent_resource_name)
         warmed = warm_agent_engine(engine)
         print(f"  Warmed engine ({warmed} warmup queries returned content)")
     except Exception as e:  # pylint: disable=broad-exception-caught

@@ -257,9 +257,15 @@ def _patch_retry_on_empty() -> None:
 
     orig = ec._execute_agent_run_with_retry
 
-    def _wrapped(row, contents, agent_engine, max_retries: int = 3):
+    # Signature-AGNOSTIC on purpose. This wrapper used to redeclare the SDK's 1.x
+    # parameters, so when aiplatform 2.1.0 added a `runtime` kwarg every inference
+    # died with "unexpected keyword argument 'runtime'" — while the whole test suite
+    # stayed green, because the test rebuilt a mirror of this wrapper rather than
+    # calling it. We do not care what arguments the SDK passes; we only care about
+    # retrying an empty turn, so forward them untouched.
+    def _wrapped(*args, **kwargs):
         return _run_with_empty_retry(
-            lambda: orig(row, contents, agent_engine, max_retries=max_retries),
+            lambda: orig(*args, **kwargs),
             retries=_EMPTY_RETRIES,
             sleep_fn=lambda attempt: time.sleep(_EMPTY_BACKOFF * (attempt + 1)),
         )

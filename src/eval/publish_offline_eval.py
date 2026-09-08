@@ -47,7 +47,14 @@ def _to_monitored_scale(score: float) -> float:
 
 
 def _strip_engine_prefix(key: str) -> str:
-    """``agent_engine_0/final_response_quality_v1`` -> ``final_response_quality_v1``."""
+    """``runtime_0/final_response_quality_v1`` -> ``final_response_quality_v1``.
+
+    The candidate prefix is whatever the SDK assigns and it is NOT stable: it was
+    ``agent_engine_0/`` through google-cloud-aiplatform 1.x and became ``runtime_0/``
+    in 2.x, following the Agent Engines -> Agent Runtime rename. Splitting on the
+    last ``/`` is what made that rename a non-event here — do not start matching on
+    the prefix.
+    """
     return key.rsplit("/", 1)[-1]
 
 

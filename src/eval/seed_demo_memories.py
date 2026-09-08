@@ -130,7 +130,7 @@ def create_persona_memories(
     for fact in persona.facts:
         if fact in existing:
             continue
-        client.agent_engines.create_memory(name=name, fact=fact, scope=scope)
+        client.memory_banks.memories.create(name=name, fact=fact, scope=scope)
         created.append(fact)
     return created
 

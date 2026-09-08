@@ -170,12 +170,13 @@ def _measure_usage(engine_id: str, model_id: str, *, client=None, cases=None) ->
 
         cases = get_eval_cases("coordinator_agent")
     if client is None:
+        import vertexai
         from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 
         client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
-    engine = client.agent_engines.get(name=engine_id)
+    engine = vertexai.agent_engines.get(name=engine_id)
     return collect_token_usage(engine, [c["prompt"] for c in cases])
 
 
