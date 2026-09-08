@@ -171,11 +171,25 @@ class TestRuntimeEngineId:
 
 
 class TestServiceBuilders:
-    def test_memory_service_builder_returns_memory_bank_service(self):
+    """Both builders need an engine id, so these tests supply one.
+
+    They used to rely on ambient config, and passed in CI only because
+    `config.AGENT_ENGINE_ID` defaulted to a hardcoded literal — an id that had since
+    been DELETED. The test asserted the service constructs, never that the id was
+    real, so a dead default kept it green. Setting the id explicitly (the pattern
+    `test_session_builder_scopes_to_runtime_own_id` below already uses) makes these
+    hermetic and independent of whether a .env is present.
+    """
+
+    ENGINE_ID = "4181778621234413568"
+
+    def test_memory_service_builder_returns_memory_bank_service(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", self.ENGINE_ID)
         svc = da._memory_service_builder()
         assert type(svc).__name__ == "VertexAiMemoryBankService"
 
-    def test_session_service_builder_returns_session_service(self):
+    def test_session_service_builder_returns_session_service(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", self.ENGINE_ID)
         svc = da._session_service_builder()
         assert type(svc).__name__ == "VertexAiSessionService"
 

@@ -4,8 +4,8 @@ Supports per-agent evaluation with conversation scenarios,
 ADK user simulator with configurable max turns, and multi-turn metrics.
 
 Usage:
-    uv run python -m src.eval.simulated_eval --agent-id 8296365537139621888 --agent-name coordinator_agent
-    uv run python -m src.eval.simulated_eval --agent-id 4709107696450666496 --agent-name router_agent --scenario-count 10
+    uv run python -m src.eval.simulated_eval --agent-id <AGENT_ENGINE_ID> --agent-name coordinator_agent
+    uv run python -m src.eval.simulated_eval --agent-id <ROUTER_ENGINE_ID> --agent-name router_agent --scenario-count 10
 """
 
 
