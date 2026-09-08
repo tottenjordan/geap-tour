@@ -36,6 +36,15 @@ on:
       - 'src/mcp_servers/**'
       - 'src/eval/**'
       - '.github/workflows/eval_gate.yaml'
+  # WHY A SCHEDULE ON AN OPT-IN GATE: this workflow shipped 2026-08-14 and did not
+  # execute once until 2026-09-08. All 15 invocations in between were `skipped` —
+  # nobody ever applied the `run-eval` label — and a run list of fifteen tidy
+  # `skipped` rows is indistinguishable from a healthy one. Anything gated on a human
+  # remembering a label eventually never runs. Weekly keeps it exercised, so a broken
+  # step surfaces in days instead of never. Bounded and cheap: --limit 8, 2 scenarios
+  # x 3 turns, 4 samples.
+  schedule:
+    - cron: '17 9 * * 1'   # Mondays 09:17 UTC
   workflow_dispatch:
     inputs:
       threshold:
@@ -50,11 +59,17 @@ concurrency:
 jobs:
   eval:
     name: Coordinator rubric eval (advisory)
-    # Opt-in AND credentialed: manual dispatch always qualifies; a PR must carry
-    # the `run-eval` label. Skips (never fails) when WIF isn't configured.
+    # Opt-in AND credentialed: manual dispatch and the weekly schedule always
+    # qualify; a PR must carry the `run-eval` label. Skips (never fails) when WIF
+    # isn't configured.
+    #
+    # `schedule` MUST be listed here. Adding the trigger above without adding the
+    # event name to this condition would leave every scheduled run `skipped` — the
+    # exact silent-no-op this schedule exists to end, reintroduced by the fix for it.
     if: >-
       ${{ vars.WIF_PROVIDER != '' &&
       (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       contains(github.event.pull_request.labels.*.name, 'run-eval')) }}
     runs-on: ubuntu-latest
     permissions:
@@ -73,7 +88,11 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --group dev --group pipelines
+        # `dev` only: it is uv's default group here (no `default-groups` set), so the
+        # bare `uv run` in later steps re-syncs and evicts anything extra anyway —
+        # asking for `pipelines` looked like it did something and did not. This gate
+        # needs no kfp. Matches monitoring_publish.yaml.
+        run: uv sync --group dev
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -173,6 +192,21 @@ jobs:
             echo "| online quality (dry-run) | ${{ steps.online_smoke.outcome }} | empty-at-200 infra failures |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # `continue-on-error` means a permanently broken smoke step shows one word in a
+      # table nobody opens, and the job still reads green — the same blind spot
+      # monitoring_publish.yaml closed with its "fail if every publish failed" guard.
+      #
+      # BOTH, not either: one failing smoke check is a flaky live engine and must not
+      # red an advisory gate. Both failing is the harness itself being broken (a
+      # renamed flag, a moved module), which is what needs to be loud.
+      - name: Fail if every smoke check failed
+        if: >-
+          ${{ steps.multiturn.outcome == 'failure' &&
+          steps.online_smoke.outcome == 'failure' }}
+        run: |
+          echo "::error::Both smoke checks failed — the harness is broken, not just the agent."
+          exit 1
 
       - name: Publish score to job summary
         if: always()

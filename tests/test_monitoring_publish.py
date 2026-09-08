@@ -332,3 +332,87 @@ class TestOrphanedEnginesAreDetectedOnSchedule:
         assert "Orphaned engine" in run
         assert "Dangling engine reference" in run
         assert "steps.orphans.outcome" in run
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The eval gate. Same file because it is the same failure mode: a workflow whose
+# broken state is invisible from its run list.
+# ─────────────────────────────────────────────────────────────────────────────
+
+EVAL_GATE = _REPO_ROOT / ".github/workflows/eval_gate.yaml"
+
+
+def _gate():
+    return yaml.safe_load(EVAL_GATE.read_text())
+
+
+def _gate_steps():
+    return _gate()["jobs"]["eval"]["steps"]
+
+
+class TestTheEvalGateActuallyRuns:
+    """It shipped 2026-08-14 and did not execute once until 2026-09-08.
+
+    All 15 invocations in between were `skipped` — gated on a `run-eval` label
+    nobody ever applied — so "implemented" and "never once run" looked identical.
+    Its multi-turn and empty-at-200 smoke steps (roadmap P2.9) had therefore never
+    been proven against a live engine, and neither had the engine-config check that
+    later found a 9-day-stale CI variable.
+    """
+
+    def test_it_has_a_schedule_so_it_cannot_go_unrun(self):
+        triggers = _gate().get(True) or _gate().get("on")
+        assert "schedule" in triggers, (
+            "without a cadence this runs only when a human remembers a label — "
+            "which, measured over three weeks, is never"
+        )
+
+    def test_the_job_condition_admits_the_scheduled_event(self):
+        """THE trap. Adding the trigger without adding `schedule` to the job's `if`
+        leaves every scheduled run `skipped` — reintroducing the exact silent no-op
+        the schedule exists to end, inside the fix for it."""
+        assert "'schedule'" in _gate()["jobs"]["eval"]["if"]
+
+    def test_manual_dispatch_and_the_label_still_work(self):
+        cond = _gate()["jobs"]["eval"]["if"]
+        assert "workflow_dispatch" in cond
+        assert "run-eval" in cond
+
+    def test_the_smoke_steps_are_still_wired(self):
+        """P2.9's two checks: the single-turn rubric path can see neither."""
+        names = [s.get("name") or "" for s in _gate_steps()]
+        assert any("Multi-turn smoke" in n for n in names)
+        assert any("Empty-stream" in n for n in names)
+
+
+class TestTheEvalGateReportsItsOwnBreakage:
+    def test_both_smoke_steps_report_outcome_not_conclusion(self):
+        """`continue-on-error` rewrites `conclusion` to success; only `outcome` is
+        true. Reading the wrong one has already produced a false all-green here."""
+        run = _step(_gate_steps(), "Publish smoke results")["run"]
+        assert "steps.multiturn.outcome" in run
+        assert "steps.online_smoke.outcome" in run
+        assert ".conclusion" not in run
+
+    def test_a_wholly_broken_smoke_harness_fails_the_job(self):
+        """Otherwise a permanently broken step is one word in a table nobody opens."""
+        guard = _step(_gate_steps(), "Fail if every smoke check failed")["if"]
+        assert "steps.multiturn.outcome == 'failure'" in guard
+        assert "steps.online_smoke.outcome == 'failure'" in guard
+
+    def test_one_flaky_smoke_check_does_not_fail_the_job(self):
+        """`&&`, not `||`: a single failure is a flaky live engine, and an advisory
+        gate that reds on that gets ignored."""
+        guard = _step(_gate_steps(), "Fail if every smoke check failed")["if"]
+        assert "&&" in guard
+        assert "||" not in guard
+
+    def test_the_score_summary_still_publishes_after_the_guard(self):
+        """The guard exits 1 before it, so it must be `always()` or a failing smoke
+        harness would also hide the rubric scores."""
+        steps = _gate_steps()
+        names = [s.get("name") or "" for s in steps]
+        guard_i = next(i for i, n in enumerate(names) if "Fail if every smoke" in n)
+        score_i = next(i for i, n in enumerate(names) if "Publish score" in n)
+        assert score_i > guard_i
+        assert "always()" in steps[score_i]["if"]

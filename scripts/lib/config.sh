@@ -23,13 +23,32 @@ set -euo pipefail
 _GEAP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${_GEAP_LIB_DIR}/../.." && pwd)"
 
-# .env wins over nothing, but NOT over an already-exported variable: an explicit
-# `GCP_PROJECT_ID=other bash scripts/foo.sh` must still override the file.
+# .env fills in what the environment does not already set — an explicit
+# `GCP_PROJECT_ID=other bash scripts/foo.sh` must still win over the file.
+#
+# This is NOT what `set -a; source .env` does. Sourcing runs every assignment
+# unconditionally, so the file silently clobbered the caller's variable: someone
+# running `GCP_PROJECT_ID=my-sandbox bash scripts/setup_governance_policies.sh`
+# believed they were targeting their own project and were in fact granting IAM in
+# hybrid-vertex. The comment here claimed the correct behaviour while the code did
+# the opposite, and nothing tested it.
+#
+# It also has to agree with the Python half of the repo: `src/config.py` calls
+# `load_dotenv()`, which defaults to `override=False`. Before this, the same
+# variable resolved one way through Python and the other way through bash.
+#
+# Only KEY=VALUE lines are evaluated, which is also strictly safer than sourcing —
+# an arbitrary command in .env is ignored rather than executed. `eval` on the
+# matched line preserves the quoting semantics sourcing gave us.
 if [ -f "${REPO_ROOT}/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "${REPO_ROOT}/.env"
-    set +a
+    while IFS= read -r _geap_line || [ -n "$_geap_line" ]; do
+        [[ $_geap_line =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]] || continue
+        _geap_key="${BASH_REMATCH[2]}"
+        # Set already — including deliberately set to empty — so the caller wins.
+        [ -n "${!_geap_key+x}" ] && continue
+        eval "export ${_geap_line}"
+    done < "${REPO_ROOT}/.env"
+    unset _geap_line _geap_key
 fi
 
 # The single home for this default, mirroring src/config.py's. A literal here is

@@ -179,6 +179,193 @@ class TestShellScriptsAreEnvDriven:
         assert "gcloud projects describe" in text
         assert "project_number()" in text
 
+    def test_no_shell_script_embeds_an_engine_id(self):
+        """The hole this class had: engine ids were guarded in `.py` only.
+
+        `setup_governance_policies.sh` consequently kept two `:-<19 digits>` fallbacks
+        pointing at DELETED engines straight through the sweep that was supposed to
+        remove exactly that. Comment lines are exempt because two scripts legitimately
+        *name* removed engines in prose explaining the removal — the same reasoning
+        `_string_constants` applies to docstrings.
+        """
+        offenders = []
+        for p in self._shell_scripts():
+            for i, line in enumerate(p.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\d{19}", line):
+                    offenders.append(f"{_rel(p)}:{i}")
+        assert not offenders, (
+            f"engine ids hardcoded in shell — require them via require_var: {offenders}"
+        )
+
+
+class TestTheGovernanceScriptCannotSilentlyPickTheWrongEngine:
+    """`setup_governance_policies.sh` used to resolve the two ids like this:
+
+        AGENT_ENGINE_ID="${COORDINATOR_AGENT_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+        ROUTER_ENGINE_ID="${ROUTER_ENGINE_ID:-${AGENT_ENGINE_ID:-<literal>}}"
+
+    The second line read `AGENT_ENGINE_ID` *after* the first overwrote it with the
+    coordinator's id, so an unset `ROUTER_ENGINE_ID` resolved the router TO THE
+    COORDINATOR — and the script then granted `roles/agentregistry.viewer` to the
+    coordinator twice, never to the router, while printing `Router ... ok`. That
+    grant is the documented remediation for the router's 403 MCP-resolution
+    fallback, so the failure mode was a silently un-remediated router.
+
+    These drive the real script. They only stay offline because the id resolution
+    happens BEFORE the `gcloud` calls — do not move it back below them.
+    """
+
+    SCRIPT: ClassVar[pathlib.Path] = SCRIPTS / "setup_governance_policies.sh"
+
+    def _run(self, **env_overrides):
+        import os
+        import subprocess
+
+        env = {**os.environ, **env_overrides}
+        return subprocess.run(
+            ["bash", str(self.SCRIPT), "--dry-run"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=_REPO_ROOT,
+            timeout=60,
+        )
+
+    def test_a_missing_router_id_stops_the_script(self):
+        """Was: silently became the coordinator's id. COORDINATOR_AGENT_ID is pinned
+        so this reaches the router check whether or not a .env exists (CI has none)."""
+        res = self._run(COORDINATOR_AGENT_ID="1111111111111111111", ROUTER_ENGINE_ID="")
+        assert res.returncode != 0
+        assert "ROUTER_ENGINE_ID" in res.stderr
+
+    def test_a_missing_coordinator_id_stops_the_script(self):
+        """The distinct message also proves the test above reached the router check
+        rather than tripping over this one."""
+        res = self._run(COORDINATOR_AGENT_ID="", AGENT_ENGINE_ID="")
+        assert res.returncode != 0
+        assert "COORDINATOR_AGENT_ID" in res.stderr
+        assert "ROUTER_ENGINE_ID" not in res.stderr
+
+    def test_it_fails_before_spending_a_network_call(self):
+        """Resolution sits above `project_number()` / `gcloud auth`, so a
+        misconfigured run costs nothing and works without credentials. The banner
+        prints the project number, so its absence is the evidence."""
+        res = self._run(COORDINATOR_AGENT_ID="1111111111111111111", ROUTER_ENGINE_ID="")
+        assert "GEAP Governance Policies Setup" not in res.stdout
+
+    def test_the_two_variables_cannot_alias(self):
+        """The structural fix: the coordinator's id is never written into a name the
+        router's resolution reads."""
+        text = self.SCRIPT.read_text()
+        body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        assert "COORDINATOR_ENGINE_ID=" in body
+        assert 'ROUTER_ENGINE_ID="$(require_var ROUTER_ENGINE_ID)"' in body
+        assert "AGENT_ENGINE_ID=" not in body
+
+
+class TestTheLoaderDoesNotClobberTheEnvironment:
+    """`.env` fills in what the environment lacks; it must not overwrite it.
+
+    `set -a; source .env` runs every assignment unconditionally, so
+    `GCP_PROJECT_ID=my-sandbox bash scripts/setup_governance_policies.sh` silently
+    granted IAM in `hybrid-vertex` instead. The loader's comment claimed the correct
+    behaviour while the code did the opposite, and nothing tested it. It also has to
+    agree with `src/config.py`, whose `load_dotenv()` defaults to `override=False`.
+
+    These run against a THROWAWAY repo root with a `.env` they control, never the
+    developer's. CI has no `.env`, and without one every assertion here passes for
+    the wrong reason: the loader's job is to read a file, and with no file to read a
+    broken loader and a correct one agree. The first version of this class was green
+    in CI for exactly that reason.
+    """
+
+    @pytest.fixture
+    def sandbox(self, tmp_path):
+        import shutil
+
+        (tmp_path / "scripts" / "lib").mkdir(parents=True)
+        shutil.copy(SCRIPTS / "lib" / "config.sh", tmp_path / "scripts" / "lib" / "config.sh")
+        (tmp_path / ".env").write_text(
+            'GCP_PROJECT_ID=from-dotenv\nLABEL_KEY="solution"\nPLAIN=bare\n'
+        )
+        return tmp_path
+
+    @staticmethod
+    def _resolve(sandbox, var, *, unset=(), **env_overrides):
+        """`unset` removes a name from the child's environment entirely.
+
+        Passing `VAR=""` is NOT the same thing: the loader treats set-but-empty as
+        set, on purpose, so the caller can blank a value deliberately. Using "" to
+        mean "unset" is what made the first version of these tests fail.
+        """
+        import os
+        import subprocess
+
+        env = {k: v for k, v in os.environ.items() if k not in unset}
+        env.update(env_overrides)
+        return subprocess.run(
+            ["bash", "-c", f'source scripts/lib/config.sh; printf "%s" "${var}"'],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=sandbox,
+            timeout=60,
+        ).stdout
+
+    def test_the_sandbox_dotenv_is_really_being_read(self, sandbox):
+        """Non-vacuity: if the loader read nothing, the tests below would still pass
+        by falling through to their defaults."""
+        assert self._resolve(sandbox, "PROJECT_ID", unset=("GCP_PROJECT_ID",)) == "from-dotenv"
+
+    def test_an_explicit_variable_wins_over_the_file(self, sandbox):
+        """THE regression. Was: the file clobbered it and IAM landed elsewhere."""
+        assert self._resolve(sandbox, "PROJECT_ID", GCP_PROJECT_ID="some-other-project") == (
+            "some-other-project"
+        )
+
+    def test_the_file_still_fills_in_what_is_unset(self, sandbox):
+        assert self._resolve(sandbox, "PROJECT_ID", unset=("GCP_PROJECT_ID",)) == "from-dotenv"
+
+    def test_a_deliberately_blanked_variable_is_respected(self, sandbox):
+        """Set-but-empty counts as set, so `.env` does not quietly refill it. This is
+        also what lets a caller force a script's own error path."""
+        assert self._resolve(sandbox, "LABEL_KEY", LABEL_KEY="") == ""
+
+    def test_quoted_values_are_unquoted_as_sourcing_did(self, sandbox):
+        """`.env` holds `LABEL_KEY="solution"`; a naive line-splitting reader would
+        export the quotes along with the value."""
+        assert self._resolve(sandbox, "LABEL_KEY", unset=("LABEL_KEY",)) == "solution"
+        assert self._resolve(sandbox, "PLAIN", unset=("PLAIN",)) == "bare"
+
+    def test_python_and_bash_agree(self, sandbox):
+        """The two halves of the repo resolved the same variable differently: Python
+        honoured the environment, bash let the file win.
+
+        Bash reads the sandbox `.env` (which sets a *different* project, so a
+        regressed loader would disagree); Python reads the repo as it normally does.
+        Both must return what the environment asked for."""
+        import os
+        import subprocess
+        import sys
+
+        env = {**os.environ, "GCP_PROJECT_ID": "some-other-project"}
+        # sys.executable, not `uv run` — this must not depend on uv resolving a venv
+        # inside a test, and a failure here would otherwise compare "" to a real value.
+        proc = subprocess.run(
+            [sys.executable, "-c", "import src.config as c; print(c.GCP_PROJECT_ID)"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=_REPO_ROOT,
+            timeout=180,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == self._resolve(
+            sandbox, "PROJECT_ID", GCP_PROJECT_ID="some-other-project"
+        )
+
 
 class TestDeploymentOutputsAreWrittenBack:
     """A value a deploy produces but does not record has to be copy-pasted, and a
@@ -232,3 +419,25 @@ class TestGuardsAreNotVacuous:
     def test_it_actually_reads_files(self):
         """If _py_files() returned nothing the whole module would pass silently."""
         assert len(_py_files()) > 50
+
+    def test_the_shell_scanner_finds_a_planted_engine_id(self, tmp_path, monkeypatch):
+        """The shell engine-id check is new, and a scanner that matches nothing
+        passes for free — which is exactly how the `.py`-only version reported clean
+        on `setup_governance_policies.sh` for months."""
+        script = tmp_path / "planted.sh"
+        script.write_text('ID="${ROUTER_ENGINE_ID:-6023683798619652096}"\n')
+        monkeypatch.setattr(
+            TestShellScriptsAreEnvDriven, "_shell_scripts", staticmethod(lambda: [script])
+        )
+        monkeypatch.setattr("tests.test_no_hardcoded_values._rel", lambda p: p.name)
+        with pytest.raises(AssertionError, match="engine ids hardcoded in shell"):
+            TestShellScriptsAreEnvDriven().test_no_shell_script_embeds_an_engine_id()
+
+    def test_the_shell_scanner_ignores_a_commented_id(self, tmp_path, monkeypatch):
+        """Two scripts explain a removal by naming the removed engine."""
+        script = tmp_path / "commented.sh"
+        script.write_text("# 8296365537139621888 was deleted; do not reintroduce it\n")
+        monkeypatch.setattr(
+            TestShellScriptsAreEnvDriven, "_shell_scripts", staticmethod(lambda: [script])
+        )
+        TestShellScriptsAreEnvDriven().test_no_shell_script_embeds_an_engine_id()

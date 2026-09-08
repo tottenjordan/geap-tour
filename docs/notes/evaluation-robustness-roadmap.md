@@ -318,7 +318,19 @@ share, so the check moved to a bootstrap CI on the mean.
    `agent_online_eval/infra_empty_rate` ceiling, so a helpfulness alert means
    quality and not an empty stream (G4, G5).
 9. **Wire multi-turn + a smoke online-monitor into advisory CI** so multi-turn and
-   empty-stream regressions are caught per-PR (G5). ⏳ *open.*
+   empty-stream regressions are caught per-PR (G5). ✅ **implemented** — two steps in
+   `.github/workflows/eval_gate.yaml`: multi-turn via `simulated_eval`
+   (`--scenario-count 2 --max-turns 3`) and empty-at-200 via
+   `online_monitor --samples 4 --dry-run`, each `continue-on-error` with its `outcome`
+   in the job summary.
+
+   **Honest caveat, and the more useful lesson:** this shipped 2026-08-14 and did not
+   actually execute until **2026-09-08**. Every one of the workflow's 15 invocations in
+   between was `skipped` — it is gated on a `run-eval` label nobody ever applied, so
+   "implemented" and "never once run" looked identical from the run list. A weekly
+   `schedule` was added so it stays exercised. See
+   [checks-that-cannot-detect-their-own-failure.md](./checks-that-cannot-detect-their-own-failure.md).
+
    The second half — **replace the substring recall check with a judge** — is
    ✅ **done**: `verify_cross_session_recall.evaluate_recall` now grounds a
    deterministic judge on the facts Memory Bank actually holds. The substring check
