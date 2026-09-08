@@ -5,14 +5,12 @@ using Playwright. Run after deploy_all.sh or verify_deployment.sh.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
-# Imported rather than re-derived: a second os.environ.get with its own default is
-# a copy of src/config.py that drifts the moment either default changes.
-from src.config import GCP_PROJECT_ID as PROJECT_ID
-from src.config import GCP_REGION as REGION
-
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "hybrid-vertex")
+REGION = os.environ.get("GCP_REGION", "us-central1")
 SCREENSHOT_DIR = Path("docs/screenshots")
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 

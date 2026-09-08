@@ -34,9 +34,6 @@
 #   bash scripts/setup_governance_policies.sh --sgp    # IAM + SGP provisioning
 #   bash scripts/setup_governance_policies.sh --dry-run # Show commands without executing
 
-
-# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
 # Source .env for project config, gateway paths, and agent engine IDs
@@ -48,6 +45,8 @@ if [ -f "${REPO_ROOT}/.env" ]; then
     set +a
 fi
 
+PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
+REGION="${GCP_REGION:-us-central1}"
 # Extract gateway names from full resource paths in .env
 # e.g. projects/hybrid-vertex/locations/us-central1/agentGateways/geap-workshop-gateway → geap-workshop-gateway
 GATEWAY_NAME="$(echo "${AGENT_GATEWAY_PATH:-}" | awk -F'/' '{print $NF}')"

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Register agents in Agent Registry for discoverability
-
-# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
+PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
+REGION="${GCP_REGION:-us-central1}"
 
 echo "=== Registering Agents in Agent Registry ==="
 

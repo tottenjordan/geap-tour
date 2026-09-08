@@ -11,11 +11,10 @@
 #
 # A single gateway cannot support both GE and Agent Runtime — separate gateways
 # are required per the docs.
-
-# Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/config.sh"
 set -euo pipefail
 
+PROJECT_ID="${GCP_PROJECT_ID:-hybrid-vertex}"
+REGION="${GCP_REGION:-us-central1}"
 
 # Regional gateways (Agent Runtime)
 GATEWAY_NAME="${GATEWAY_NAME:-geap-workshop-gateway}"
