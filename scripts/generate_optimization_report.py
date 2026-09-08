@@ -17,6 +17,8 @@ load_dotenv()
 import matplotlib
 
 matplotlib.use("Agg")
+from datetime import UTC, datetime
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -24,48 +26,51 @@ DOCS_DIR = Path("docs")
 CHARTS_DIR = DOCS_DIR / "charts"
 EVAL_DIR = Path("eval_outputs")
 
-AGENTS = {
-    "lite_agent": {
-        "model": "gemini-3.1-flash-lite",
-        "provider": "Google",
-        "input_cost": 0.075,
-        "output_cost": 0.30,
-        "tier": "Tier 1 — Trivial",
-        "engine_id": os.environ.get("LITE_ENGINE_ID", ""),
-    },
-    "flash_agent": {
-        "model": "gemini-3.5-flash",
-        "provider": "Google",
-        "input_cost": 0.15,
-        "output_cost": 0.60,
-        "tier": "Tier 2 — Simple",
-        "engine_id": os.environ.get("FLASH_ENGINE_ID", ""),
-    },
-    "pro_agent": {
-        "model": "gemini-3.1-pro-preview",
-        "provider": "Google",
-        "input_cost": 1.25,
-        "output_cost": 10.00,
-        "tier": "Tier 3 — Moderate",
-        "engine_id": os.environ.get("PRO_ENGINE_ID", ""),
-    },
-    "sonnet_agent": {
-        "model": "claude-sonnet-4-6",
-        "provider": "Anthropic",
-        "input_cost": 3.00,
-        "output_cost": 15.00,
-        "tier": "Tier 4 — Complex",
-        "engine_id": os.environ.get("SONNET_ENGINE_ID", ""),
-    },
-    "opus_agent": {
-        "model": "claude-opus-4-6",
-        "provider": "Anthropic",
-        "input_cost": 15.00,
-        "output_cost": 75.00,
-        "tier": "Tier 5 — Expert",
-        "engine_id": os.environ.get("OPUS_ENGINE_ID", ""),
-    },
-}
+
+# Model ids and prices are read from src.config / cost_tracker rather than
+# hardcoded here. They were hardcoded to the Gemini-3 defaults, which drifted:
+# the deployed tier engines were re-pinned to Gemini-2.5, so a regenerated report
+# would have shown correct engine ids beside the wrong models.
+#
+# NOTE the same trap as deploying: src.config's tier defaults ARE Gemini-3, and the
+# served engines only differ because the deploy passes LITE_MODEL/FLASH_MODEL/
+# PRO_MODEL overrides. Regenerate this report with those overrides set, exactly as
+# you would deploy, or the table describes config rather than production.
+def _agent_spec(key: str, provider: str, tier: str, model: str, engine_env: str) -> dict:
+    from src.router.cost_tracker import COST_RATES
+
+    rates = COST_RATES.get(model, {})
+    return {
+        "model": model,
+        "provider": provider,
+        "input_cost": rates.get("input", 0.0),
+        "output_cost": rates.get("output", 0.0),
+        "tier": tier,
+        "engine_id": os.environ.get(engine_env, ""),
+    }
+
+
+def _build_agents() -> dict:
+    from src.config import FLASH_MODEL, LITE_MODEL, OPUS_MODEL, PRO_MODEL, SONNET_MODEL
+
+    return {
+        "lite_agent": _agent_spec(
+            "lite", "Google", "Tier 1 — Trivial", LITE_MODEL, "LITE_ENGINE_ID"
+        ),
+        "flash_agent": _agent_spec(
+            "flash", "Google", "Tier 2 — Simple", FLASH_MODEL, "FLASH_ENGINE_ID"
+        ),
+        "sonnet_agent": _agent_spec(
+            "sonnet", "Anthropic", "Tier 3 — Moderate", SONNET_MODEL, "SONNET_ENGINE_ID"
+        ),
+        "pro_agent": _agent_spec("pro", "Google", "Tier 4 — Complex", PRO_MODEL, "PRO_ENGINE_ID"),
+        "opus_agent": _agent_spec(
+            "opus", "Anthropic", "Tier 5 — Expert", OPUS_MODEL, "OPUS_ENGINE_ID"
+        ),
+    }
+
+
+AGENTS = _build_agents()
 
 METRICS = [
     "final_response_quality_v1",
@@ -399,6 +404,17 @@ def generate_report(before_scores: dict, after_scores: dict | None = None):
     )
 
     lines.append("## Agent Overview\n")
+    # Provenance, because this table dates badly and silently. Every engine id in
+    # the 2026-05 edition of this report pointed at a DELETED engine — all five —
+    # and nothing in the document said when it was written or that the ids were a
+    # snapshot. A reader had no way to tell a stale id from a live one.
+    lines.append(
+        f"> Generated {datetime.now(UTC).strftime('%Y-%m-%d')}. Engine ids and models are a "
+        "**point-in-time snapshot** of whatever this run was pointed at — engines get "
+        "replaced, and the scores below belong to the ones listed here, not to whatever "
+        "currently answers to the same name. Verify with "
+        "`uv run python -m src.deploy.verify_engine_config --engine-id <id>`.\n"
+    )
     lines.append("| Agent | Model | Provider | Output $/M | Tier | Engine ID |")
     lines.append("|-------|-------|----------|-----------|------|-----------|")
     for name, info in AGENTS.items():

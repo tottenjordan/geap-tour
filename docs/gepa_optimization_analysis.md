@@ -1,5 +1,24 @@
 # GEPA Optimization Analysis — Multi-Model Agent Tier
 
+> **HISTORICAL — 2026-05. Every engine id below is dead.**
+>
+> All five engines in the Agent Overview were deleted or replaced; the last survivor
+> (`sonnet_agent` `8467456143491334144`) was removed on 2026-09-08. The scores in
+> this report were measured against **those** engines running **Gemini-3** models,
+> so the ids are not swapped for the current ones — that would attribute May's
+> measurements to engines that did not exist then and now run Gemini-2.5.
+>
+> Current tier engines live in `.env` (`LITE_/FLASH_/PRO_/SONNET_/OPUS_ENGINE_ID`);
+> check any of them with
+> `uv run python -m src.deploy.verify_engine_config --engine-id <id>`.
+>
+> Two things here are also superseded: the tier column had **pro and sonnet swapped**
+> relative to the router's actual ladder (`score_to_model_tier` orders lite → flash →
+> **sonnet** → **pro** → opus), and the router's cut-points have since moved
+> (`COMPLEXITY_LOW` 0.44 → 0.25, `COMPLEXITY_HIGH` 0.80 → 0.925 — see
+> [router-boundary-experiment.md](notes/router-boundary-experiment.md)). Regenerating
+> via `scripts/generate_optimization_report.py` now stamps a date and fixes the order.
+
 ## Pipeline Overview
 
 ![GEPA Pipeline Diagram](charts/gepa_pipeline_diagram.png)
