@@ -263,7 +263,24 @@ def _aggregate_surface(
         else:
             metrics.setdefault(name, {})[label_value] = summary
 
-    surface = {"status": _surface_status(metrics), "metrics": metrics, "total_evals": total}
+    # A metric that is ALERTED but has no points is the most dangerous state this
+    # module can encounter, and until now it was the one state it could not report:
+    # a name with no data simply never appeared in `metrics`, so the surface
+    # rendered as healthy while a policy watched a series nothing wrote.
+    #
+    # This is not hypothetical. `agent_eval/tool_faithfulness` was wired up and
+    # alerted while going unpublished for days (#84), and the identical thing is
+    # true right now of `agent_online_eval/tool_faithfulness` — the cron's online
+    # step runs without `--faithfulness`. Both were found by chance. Naming the
+    # state means the next one is found by the tooling.
+    missing = sorted({name for name, _t, _c in metric_specs} - set(metrics))
+
+    surface = {
+        "status": _surface_status(metrics),
+        "metrics": metrics,
+        "total_evals": total,
+        "missing": missing,
+    }
     if group_by_label is not None:
         surface["group_by"] = group_by_label
     return surface
@@ -363,6 +380,26 @@ def anomalies(data: dict) -> list[dict]:
     return out
 
 
+def unpublished(data: dict) -> list[dict]:
+    """Every metric that has an alert policy but no data in the window.
+
+    The third member of the same family as :func:`insufficient_power` and
+    :func:`anomalies`, and the one that closes a repeat offender: an alert
+    watching a series nothing writes is indistinguishable from a healthy series
+    unless something says so out loud. ``agent_eval/tool_faithfulness`` sat that
+    way for days before anyone noticed (#84).
+
+    Present-and-empty rather than absent, for the same reason as its siblings:
+    an absent key reads as "not checked".
+    """
+    return [
+        {"surface": surface_key, "metric": name}
+        for surface_key, surface in data.items()
+        if isinstance(surface, dict) and "missing" in surface
+        for name in surface["missing"]
+    ]
+
+
 def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None) -> dict:
     client = client or _monitoring_client()
     data: dict[str, object] = {}
@@ -382,6 +419,7 @@ def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None
     # a present empty list reads as "checked, nothing suppressed".
     data["insufficient_power"] = insufficient_power(data)
     data["anomalies"] = anomalies(data)
+    data["unpublished"] = unpublished(data)
     return data
 
 
@@ -543,6 +581,13 @@ def _print_surface(title: str, surface: dict) -> None:
         return
     grouped = surface.get("group_by")
     print(f"  Total evaluations: {surface['total_evals']}\n")
+    if surface.get("missing"):
+        # Printed FIRST and loudly: an alerted metric with no writer is worse than
+        # a failing one, because it looks like nothing is wrong.
+        print(
+            f"  !! ALERTED BUT UNPUBLISHED: {', '.join(surface['missing'])}"
+            "\n     (a policy is watching a series nothing wrote in this window)\n"
+        )
     for metric_name, m in surface["metrics"].items():
         if grouped:
             print(f"  {metric_name} (by {grouped}):")

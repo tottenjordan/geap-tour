@@ -248,3 +248,47 @@ class TestAnomaliesReachTheOperator:
 
         assert format_distribution(None, None) == ""
         assert format_distribution({}, {"per_case": [{}]}) == ""
+
+
+class TestOnlineFaithfulnessIsScheduled:
+    """`agent_online_eval/tool_faithfulness` is alerted (< 3.0) and had no writer.
+
+    Exactly the gap closed for the OFFLINE twin in #84, reproduced on the online
+    family: the online step runs without `--faithfulness`, so a policy watched a
+    series nothing wrote. Confirmed live before fixing — the metric had zero points
+    while its three siblings had n=12.
+    """
+
+    def test_it_has_its_own_publishing_step(self):
+        assert _step(_load_steps(), "Publish online tool-call faithfulness")
+
+    def test_that_step_actually_publishes_faithfulness(self):
+        run = _step(_load_steps(), "Publish online tool-call faithfulness")["run"]
+        assert "--faithfulness" in run
+        assert "online_monitor" in run
+        assert "--dry-run" not in run, "a dry run would leave the series empty"
+
+    def test_it_is_bounded(self):
+        """The priciest judge here — a live stream_query trajectory plus a judge
+        call per case. Unbounded, an hourly job would be the dominant cost."""
+        run = _step(_load_steps(), "Publish online tool-call faithfulness")["run"]
+        assert "--samples" in run
+
+    def test_it_is_a_separate_step_from_online_quality(self):
+        """Folding it into the quality step would couple a cheap rubric pass to the
+        expensive trajectory capture, and one failing would hide the other."""
+        quality = _step(_load_steps(), "Publish online quality")["run"]
+        assert "--faithfulness" not in quality
+
+    def test_the_summary_reports_it(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert "steps.online_faithfulness.outcome" in run
+
+
+class TestUnpublishedMetricsAreAnnounced:
+    """A metric with an alert and no writer reads as healthy. Twice now."""
+
+    def test_the_summary_warns_on_every_unpublished_metric(self):
+        run = _step(_load_steps(), "Summarize monitored surfaces")["run"]
+        assert 'data.get("unpublished")' in run
+        assert "Alerted but unpublished" in run
