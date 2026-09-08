@@ -230,16 +230,35 @@ ROUTER_MODEL = os.environ.get("ROUTER_MODEL", LITE_MODEL)
 # drift in either direction and — per the DOE note above — does not coincide with
 # an emitted score, which the router's strict `<` would mis-handle.
 #
-# COMPLEXITY_HIGH stays at 0.80 on the SAME evidence, measured twice. The paired run
-# on the high band found the current sonnet routing beating the pro alternative
-# **12-2 (p=0.0129)** against gemini-3.1-pro-preview and **17-1 (p=0.0001)** against
-# the gemini-2.5-pro the router actually serves. The re-run was motivated by the
-# hypothesis that a *preview* pro losing was an artefact and the shipped model might
-# win — which would have taken routing accuracy to ~100% at ~35% lower cost per case.
-# It was refuted: the served model lost by more. Lowering this cut would make answers
-# worse, so it does not move.
+# COMPLEXITY_HIGH is 0.925, raised from 0.80, and the direction is the opposite of
+# what was first hypothesised. Three paired runs, each on the models actually
+# served, all found the SONNET tier beating the pro tier on high-complexity work:
+# 12-2 (p=0.0129) against gemini-3.1-pro-preview, then 17-1 (p=0.0001) against the
+# gemini-2.5-pro the router serves.
+#
+# Those were pooled over the whole band, and the router SPLIT that band at 0.80 —
+# sending 0.75 to sonnet and 0.85/0.90 to pro, the tier that lost. Splitting the
+# result showed the win held on both sides, but the upper side had only 6 decisive
+# cases (6-0, p=0.0312: the thinnest significance obtainable, one loss from
+# nothing). Twelve more prompts verified to score >= 0.80 took that sub-band to
+# **18 decisive, 17-1, p=0.0001**. See docs/notes/router-boundary-experiment.md.
+#
+# 0.925 is the midpoint of the admissible interval (0.90, HIGH_SPLIT=0.95): above
+# the highest score the classifier emits, below the opus cut, coinciding with no
+# emitted score. Same reasoning that picked 0.25.
+#
+# Cost of the change, measured: cost_savings_pct 94.0 -> 93.1 (floor 50), because
+# sonnet is $0.0081/case against pro's $0.00525. classifier_accuracy_pct is
+# UNCHANGED at 100% — it grades on fixed reference bands now, so boundary tuning no
+# longer moves it, which is the whole point of that re-scope.
+#
+# CONSEQUENCE, stated rather than hidden: the **pro tier now receives nothing** on
+# this workload, joining opus (unreachable at HIGH_SPLIT=0.95 against a top observed
+# score of 0.90). The 5-tier router serves three tiers here. Real traffic scoring
+# above 0.925 would still reach pro, so this is a property of the eval set, not dead
+# code — but nobody should claim five live tiers on this evidence.
 COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.25"))
-COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.80"))
+COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.925"))
 MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.60"))
 HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.95"))
 

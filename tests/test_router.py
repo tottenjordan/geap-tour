@@ -22,8 +22,10 @@ class TestComplexityScoring:
         assert _score_to_level(0.79) == "medium"
 
     def test_high_score(self):
-        assert _score_to_level(0.80) == "high"
-        assert _score_to_level(0.90) == "high"
+        # high = [COMPLEXITY_HIGH=0.925, 1.0]. Raised from 0.80 after the upper
+        # sub-band (0.85/0.90) was measured at sonnet 17-1 over pro, p=0.0001.
+        assert _score_to_level(0.925) == "high"
+        assert _score_to_level(0.95) == "high"
         assert _score_to_level(1.0) == "high"
 
     def test_model_tier_lite(self):
@@ -39,16 +41,20 @@ class TestComplexityScoring:
         assert score_to_model_tier(0.59) == "flash"
 
     def test_model_tier_sonnet(self):
-        # sonnet = [MEDIUM_SPLIT=0.60, COMPLEXITY_HIGH=0.80)
+        # sonnet = [MEDIUM_SPLIT=0.60, COMPLEXITY_HIGH=0.925). It now covers the
+        # whole measured high band (0.75/0.85/0.90) — see test_model_tier_pro.
         assert score_to_model_tier(0.60) == "sonnet"
-        assert score_to_model_tier(0.70) == "sonnet"
-        assert score_to_model_tier(0.79) == "sonnet"
+        assert score_to_model_tier(0.75) == "sonnet"
+        assert score_to_model_tier(0.90) == "sonnet"
 
     def test_model_tier_pro(self):
-        # pro = [COMPLEXITY_HIGH=0.80, HIGH_SPLIT=0.95)
-        assert score_to_model_tier(0.80) == "pro"
-        assert score_to_model_tier(0.88) == "pro"
+        # pro = [COMPLEXITY_HIGH=0.925, HIGH_SPLIT=0.95) — a narrow window that the
+        # classifier's observed scores (max 0.90) never land in, so pro receives
+        # nothing on the current eval set. Deliberate: sonnet beat pro 17-1 on the
+        # band that used to route here. Real traffic above 0.925 still reaches it.
+        assert score_to_model_tier(0.925) == "pro"
         assert score_to_model_tier(0.94) == "pro"
+        assert score_to_model_tier(0.90) == "sonnet", "the measured band goes to sonnet now"
 
     def test_model_tier_opus(self):
         assert score_to_model_tier(0.95) == "opus"

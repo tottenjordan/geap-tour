@@ -48,11 +48,15 @@ class TestCaseSelection:
         tier_prompts = {c["prompt"] for c in TIER_EVAL_CASES["medium"]}
         assert tier_prompts <= selected, "tier cases were dropped by the band filter"
 
-    @pytest.mark.parametrize(("band", "expected"), [("medium", 19), ("high", 20)])
+    @pytest.mark.parametrize(("band", "expected"), [("medium", 19), ("high", 32)])
     def test_verified_counts(self, band, expected):
-        """Pinned because the power analysis is stated in terms of these numbers:
-        15/19 and 15/20 decisive wins are what p < 0.05 requires. If the case lists
-        grow, that claim moves and the docstring has to move with it."""
+        """Pinned because the power analysis is stated in terms of these numbers.
+
+        medium n=19 needs 15 decisive wins for p<0.05; high n=32 needs 23. The high
+        band grew 20 -> 32 to settle COMPLEXITY_HIGH: the upper sub-band (the one
+        the router sends to `pro`) had only 6 decisive cases, where 6-0 gives
+        p=0.0312 and a single loss gives nothing. Twelve added prompts, all verified
+        to score >= 0.80, take that sub-band from 8 prompts to 20."""
         assert len(select_cases(band)) == expected
 
     def test_prompts_are_deduped(self):
@@ -361,7 +365,7 @@ class TestReportAndCli:
     def test_dry_run_shows_the_case_counts_the_power_claim_rests_on(self, capsys):
         main(["--dry-run"])
         out = capsys.readouterr().out
-        assert "19 cases" in out and "20 cases" in out
+        assert "19 cases" in out and "32 cases" in out
 
     def test_band_filter_selects_one_comparison(self, capsys):
         main(["--dry-run", "--band", "high"])

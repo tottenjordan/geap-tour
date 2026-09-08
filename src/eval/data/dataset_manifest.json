@@ -24,6 +24,24 @@
       "role": "regression",
       "version": "2.0.0"
     },
+    "python:src.eval.tier_eval_cases.HIGH_COMPLEXITY_CASES": {
+      "checksum": "sha256:b671737d350d6d6a0982799ed7f9894a944d7ca50812f61310ca02641899720e",
+      "n_cases": 19,
+      "role": "regression",
+      "version": "2.0.0"
+    },
+    "python:src.eval.tier_eval_cases.LOW_COMPLEXITY_CASES": {
+      "checksum": "sha256:206a6a02d3fc21f8e2bef1dd148b0bdca8f7e10808479e6592e1ce8d93dbfb71",
+      "n_cases": 7,
+      "role": "regression",
+      "version": "1.0.0"
+    },
+    "python:src.eval.tier_eval_cases.MEDIUM_COMPLEXITY_CASES": {
+      "checksum": "sha256:f0d2ce1158791cd7428bb9c091e853def9fc51af87861467f0b7307ea3e76e8d",
+      "n_cases": 7,
+      "role": "regression",
+      "version": "1.0.0"
+    },
     "src/agents/coordinator/coordinator_eval_set.evalset.json": {
       "checksum": "sha256:39a5b38f62545b0059e189db48f09d6adae3f6864576e36410a451f4cdbd59b1",
       "n_cases": 20,

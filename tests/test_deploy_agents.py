@@ -405,3 +405,67 @@ def test_run_deploy_forwards_memory_on_update(monkeypatch, tmp_path):
     monkeypatch.setattr(da, "_build_config", _fake_build_config)
     da.run_deploy(agent_set="router", update=True, memory="16Gi")
     assert captured["memory"] == "16Gi"
+
+
+class TestDeployedRequirementsMatchTheTestedEnvironment:
+    """REQUIREMENTS is a SECOND dependency set, resolved fresh in the container.
+
+    `uv.lock` governs what the 1500+ tests run against; `REQUIREMENTS` governs what
+    the deployed engine gets. Nothing kept them in agreement, and on 2026-09-08 they
+    diverged in the way that costs the most: `mcp` was unconstrained, the container
+    resolved the freshly-released 2.x, ADK 2.7.1 could not import
+    `McpHttpClientFactory` from it, and every worker died at import. The deploy
+    reported only "The Reasoning Engine failed to be updated." while the whole suite
+    stayed green — a green suite says nothing about an artifact the deploy builds
+    from a different dependency set.
+    """
+
+    @staticmethod
+    def _parse(spec: str) -> tuple[str, str]:
+        """('google-adk[agent-identity]==2.7.1') -> ('google-adk', '==2.7.1')."""
+        import re
+
+        m = re.match(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]*\])?(.*)$", spec.strip())
+        return (m.group(1).lower(), m.group(2).strip()) if m else (spec.lower(), "")
+
+    def test_mcp_is_capped_below_the_major_that_breaks_adk(self):
+        """The specific regression. mcp 2.x drops McpHttpClientFactory, which ADK
+        2.7.1 imports at module load."""
+        from src.deploy.deploy_agents import REQUIREMENTS
+
+        specs = dict(self._parse(s) for s in REQUIREMENTS)
+        assert "mcp" in specs, "unpinned mcp lets the container resolve 2.x and fail to boot"
+        assert "<2" in specs["mcp"]
+
+    def test_the_symbol_adk_needs_exists_in_the_version_we_test_against(self):
+        """Pinning to a version that also lacks the symbol would look fixed and
+        fail identically. Assert the actual import ADK performs."""
+        from mcp.client.streamable_http import McpHttpClientFactory  # noqa: F401
+
+    def test_every_constrained_requirement_is_satisfied_by_the_tested_env(self):
+        """The general form: if REQUIREMENTS excludes what we actually test against,
+        the deployed engine runs code no test has ever exercised.
+
+        Only checks packages installed locally — REQUIREMENTS legitimately names
+        serving-only extras that the dev groups do not install.
+        """
+        from importlib.metadata import PackageNotFoundError, version
+
+        from packaging.requirements import Requirement
+
+        from src.deploy.deploy_agents import REQUIREMENTS
+
+        mismatched = []
+        for spec in REQUIREMENTS:
+            req = Requirement(spec)
+            if not req.specifier:
+                continue
+            try:
+                installed = version(req.name)
+            except PackageNotFoundError:
+                continue  # serving-only dep, not installed in the dev env
+            if not req.specifier.contains(installed, prereleases=True):
+                mismatched.append(f"{req.name}: installed {installed} violates '{req.specifier}'")
+        assert not mismatched, (
+            f"the deployed dependency set excludes the versions the tests run against: {mismatched}"
+        )
