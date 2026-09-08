@@ -638,23 +638,15 @@ AGENT_SETS: dict[str, _AgentSet] = {
 
 
 def _update_env_file(env_var: str, value: str):
-    """Update or append a variable in the .env file."""
-    engine_id = value.split("/")[-1]
-    lines = []
-    found = False
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE) as f:
-            lines = f.readlines()
-        for i, line in enumerate(lines):
-            if line.startswith(f"{env_var}="):
-                lines[i] = f"{env_var}={engine_id}\n"
-                found = True
-                break
-    if not found:
-        lines.append(f"{env_var}={engine_id}\n")
-    with open(ENV_FILE, "w") as f:
-        f.writelines(lines)
-    print(f"  .env updated: {env_var}={engine_id}")
+    """Record a deployed engine in ``.env`` as its bare id.
+
+    The shortening is done HERE, not in the writer: ``src.deploy.env_file`` stores
+    values verbatim so it can also carry URLs, which ``split("/")[-1]`` would
+    silently strip the scheme from.
+    """
+    from src.deploy.env_file import set_env_var
+
+    set_env_var(env_var, value.split("/")[-1], path=ENV_FILE)
 
 
 def run_deploy(

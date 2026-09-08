@@ -7,11 +7,25 @@ KFP ``.set_env_variable(...)``. Top-level ``src.*`` imports would crash the
 container before the env is populated.
 """
 
+import os
 from typing import NamedTuple
 
 from kfp import dsl  # ty: ignore[unresolved-import]
 
-IMAGE = "us-central1-docker.pkg.dev/hybrid-vertex/geap-eval/eval-runner:v3"
+from src.config import GCP_PROJECT_ID, GCP_REGION
+
+# Built by scripts/build_eval_image.sh, which derives the same path from the same
+# env. Previously a single hardcoded literal with the project, region and tag baked
+# in, so the pipeline could only ever run in one project and a `build_eval_image.sh
+# v4` silently kept executing v3 — the tag is the whole point of that script's
+# argument.
+EVAL_IMAGE_REPO = os.environ.get("EVAL_IMAGE_REPO", "geap-eval")
+EVAL_IMAGE_NAME = os.environ.get("EVAL_IMAGE_NAME", "eval-runner")
+EVAL_IMAGE_TAG = os.environ.get("EVAL_IMAGE_TAG", "v3")
+IMAGE = os.environ.get("EVAL_IMAGE") or (
+    f"{GCP_REGION}-docker.pkg.dev/{GCP_PROJECT_ID}/"
+    f"{EVAL_IMAGE_REPO}/{EVAL_IMAGE_NAME}:{EVAL_IMAGE_TAG}"
+)
 
 
 @dsl.component(base_image=IMAGE)
