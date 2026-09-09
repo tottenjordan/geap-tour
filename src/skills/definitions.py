@@ -32,6 +32,7 @@ that references an invented tool teaches a procedure the agent cannot execute.
 """
 
 import contextlib
+import json
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -62,11 +63,18 @@ def _skill_md(*, skill_id: str, description: str, body: str) -> str:
     Composing rather than hand-writing the frontmatter is what keeps the
     published ``description`` and the in-file one from drifting apart — a drift
     that is invisible until retrieval matches on one and the console shows the
-    other. Descriptions are emitted as plain YAML scalars, so they must not
-    contain a ``": "`` sequence; ``tests/test_skills.py`` parses every
-    frontmatter as YAML and would fail if one did.
+    other.
+
+    ``description`` is emitted with ``json.dumps`` because a JSON string *is* a
+    valid YAML double-quoted scalar (stdlib, no new dependency), and quoting it
+    is the only way to keep the frontmatter parseable no matter what the prose
+    contains. As a bare scalar it breaks on a ``": "`` sequence, but also on a
+    leading ``#``, ``[``, ``{``, ``&``, ``*`` or ``>``, on a trailing colon, and
+    on an embedded newline — a rule nobody can be expected to enforce by hand
+    from a docstring in another file. ``skill_id`` stays bare: it is
+    slug-constrained and a test pins that.
     """
-    return f"---\nname: {skill_id}\ndescription: {description}\n---\n{body.strip()}\n"
+    return f"---\nname: {skill_id}\ndescription: {json.dumps(description)}\n---\n{body.strip()}\n"
 
 
 def _define(*, skill_id: str, display_name: str, description: str, body: str) -> SkillDefinition:
@@ -135,6 +143,15 @@ the nightly rate and night count in the `description` so a reviewer can re-deriv
 both. Filing the $300 you checked would under-reimburse the traveller by two
 nights.
 
+Expect the filed record to come back `status: "pending_review"`, with a
+`policy_check` whose `reason` repeats the $400 limit: `submit_expense(...)`
+re-runs the same flat check on the amount it is handed, and it is handed the
+total. That is the tool restating its own arithmetic, not a second opinion on the
+stay. Report the **nightly** rate as the policy verdict, and say why the record
+disagrees — the total is under review only because the limit is per night and
+the filed amount is for three of them — so a reviewer reading pending_review
+against an in-policy stay is not left to guess.
+
 ## Foreign currency
 
 `check_expense_policy(...)` and `submit_expense(...)` take USD, and there is no
@@ -182,8 +199,9 @@ traveller confirms once — not a stream of bookings made as each option appears
 
 Chain them: each leg's destination airport is the next leg's origin. Search one
 leg at a time, in travel order, carrying the chosen option's arrival date
-forward. Later legs depend on which option was chosen for the earlier ones, so
-never search them all against the date in the original request.
+forward — a value you compute, not one the result carries; step 3 defines it.
+Later legs depend on which option was chosen for the earlier ones, so never
+search them all against the date in the original request.
 
 ## 2. Apply the connection rules
 
@@ -200,12 +218,18 @@ zone, so:
 
 ## 3. Derive hotel nights from the itinerary
 
-Do not ask for check-in dates you can compute. For each city with an overnight
-stay, `checkin` is the arrival date of the inbound leg, `checkout` is the
-departure date of the outbound leg, and nights is the difference. Search by city
-*name* — `search_hotels("New York")` — because flights use airport codes and
-hotels do not; passing an airport code returns nothing and is not the same as
-"no availability".
+Do not ask for check-in dates you can compute. No result carries an arrival
+*date* — only a `date`, which is the day it departs, and clock-only `departure`
+and `arrival` times. So a leg's arrival date is its `date`, plus one day when
+`arrival` is earlier than `departure` (the overnight case from step 2). For each
+city with an overnight stay, `checkin` is the inbound leg's arrival date computed
+that way, `checkout` is the outbound leg's `date`, and nights is the difference.
+Taking `date` as the arrival date books the room a night early on exactly the
+overnight leg step 2 just flagged.
+
+Search by city *name* — `search_hotels("New York")` — because flights use
+airport codes and hotels do not; passing an airport code returns nothing and is
+not the same as "no availability".
 
 ## 4. Pre-check the nightly rate against policy
 
@@ -223,6 +247,12 @@ Before booking anything, present:
 - the trip total;
 - every unresolved gap — a leg with no results, a connection inside the buffer,
   a night with no hotel, a nightly rate over policy.
+
+Completeness beats brevity here, and this is the one response where it does. The
+general instruction to stay concise and skip excessive detail does not apply to
+the brief: the full itemisation *is* the deliverable, because a traveller cannot
+give one confirmation for an itinerary they were shown only a summary of.
+Compress everything else in the conversation; never the brief.
 
 Then ask for a single confirmation of the whole brief. Do not book a leg because
 it looks like the obvious choice.
@@ -277,9 +307,16 @@ So the two figures an audit most needs — what the trip cost and when it was �
 not on the record. Resolve them by looking `item_id` up in the catalogue the
 booking came from:
 
-- **flight** — `search_flights(origin, destination, date)`, then take the result
-  whose `id` equals the booking's `item_id`. Its `price` is the booked fare and
-  its `date`, `departure` and `arrival` are the booked travel times.
+- **flight** — `search_flights(origin, destination)`, then take the result whose
+  `id` equals the booking's `item_id`. Its `price` is the booked fare and its
+  `date`, `departure` and `arrival` are the booked travel times. Leave the
+  optional date argument off deliberately: the only travel date you have is the
+  receipt's, so filtering the catalogue by it is the same back-fill error as
+  taking the price from the receipt. A receipt for the wrong day would then
+  either return nothing (and get reported as "booked amount could not be
+  established") or match by construction — either way the date_mismatch class
+  below can never fire. `item_id` is unique across the catalogue, so the route
+  alone resolves it.
 - **hotel** — `search_hotels(city)`, matched on `id` the same way. Its
   `price_per_night` x the nights between the booking's `checkin` and `checkout`
   is the booked total.
@@ -320,7 +357,13 @@ Quote the two values you compared. Never assert a mismatch without both numbers.
 `submit_expense(...)` mints a new expense_id on every call and nothing
 de-duplicates, so re-submitting a receipt creates a second reimbursable record.
 Call `get_user_expenses(user_id, limit)` and look for an existing record with the
-same amount, category and description. On a match, **ask before submitting** and
+same `amount` and `category`. Let the `description` corroborate a match; never
+require it. Step 5 puts the audit finding in that field, so a receipt filed
+before this skill ran carries a different description for the same charge, and an
+all-three-must-agree test waves through precisely the duplicate it was meant to
+catch. The listing is bounded: if nothing matches and `truncated` is true, the
+earlier filing may simply be older than the returned window — say that, rather
+than treating the receipt as unfiled. On a match, **ask before submitting** and
 quote the existing expense_id. This is the one case where you pause instead of
 filing — it is not the over-limit case, where an expense is always submitted and
 flagged for review.

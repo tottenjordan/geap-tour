@@ -20,6 +20,7 @@ that the prose says any particular thing:
   directory per call.
 """
 
+import functools
 import re
 from pathlib import Path
 
@@ -36,6 +37,36 @@ from src.skills import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVERS_DIR = REPO_ROOT / "src" / "mcp_servers"
+
+# Every tool the three MCP servers expose. Spelled out rather than counted so a
+# tool that silently drops out of `_real_mcp_tool_names`' regex (someone writes
+# `async def`, or `@mcp.tool(name=...)`) fails here instead of quietly shrinking
+# the surface the grounding checks below grade against.
+_EXPECTED_MCP_TOOLS = {
+    "search_flights",
+    "search_hotels",
+    "book_flight",
+    "book_hotel",
+    "cancel_booking",
+    "get_booking_details",
+    "list_all_bookings",
+    "submit_expense",
+    "check_expense_policy",
+    "get_user_expenses",
+}
+
+# Below this a body is a stub, not a procedure — it cannot encode judgement the
+# coordinator's own INSTRUCTION lacks, which is the bar these skills exist to clear.
+_MIN_BODY_WORDS = 80
+
+# A description shorter than this cannot say both *what* the skill does and
+# *when* to use it, and semantic retrieval scores requests against that text.
+_MIN_DESCRIPTION_WORDS = 12
+
+# Collective floor on distinct backticked response fields across all skills. The
+# grounding check is only as strong as the number of claims it has to grade: if
+# the bodies stopped naming fields it would pass by having nothing to check.
+_MIN_DISTINCT_FIELD_CLAIMS = 15
 
 
 def _split_frontmatter(skill_md: str) -> tuple[str, str]:
@@ -67,13 +98,21 @@ def _keys_of(value: object) -> set[str]:
     return keys
 
 
+@functools.cache
 def _real_tool_response_fields() -> dict[str, set[str]]:
     """Map each MCP tool name to the fields its response can actually carry.
 
     Derived by **running the real mock DBs**, not by grepping for string
     literals: a booking record is assembled across two files (`create_booking`
     splats a `details` dict that the server builds), so only executing it gives
-    the true shape.
+    the true shape. (Two entries are the documented exception — see the
+    server-vs-mock-db notes at the seams below.)
+
+    Cached because probing clears and restores two process-wide dicts that other
+    test modules share: one call per session is one window in which that state is
+    briefly empty, rather than one per test. Sound because the result is a plain
+    snapshot of computed key names — it holds no reference to the live dicts, and
+    every caller treats it read-only.
 
     Per-tool, not a flat vocabulary, and that distinction is the whole point.
     `price` is a real field *somewhere* on this surface — it is just not on a
@@ -116,9 +155,22 @@ def _real_tool_response_fields() -> dict[str, set[str]]:
         expense_db.expenses.clear()
         expense_db.expenses.update(saved_expenses)
 
-    # Every booking lookup can also return the not-found branch, `{"error": ...}`.
+    # KNOWN DIVERGENCE (server vs mock db) #1: `{"error"}` is a literal, not
+    # executed. `cancel_booking`/`get_booking_details` in mock_db return None on a
+    # miss; it is server.py that turns that into `{"error": ...}`, and this map is
+    # built from the mock-db layer. If that wrapping moves or is renamed, nothing
+    # here notices — the literal keeps asserting a shape the server no longer has.
     any_booking = flight_fields | hotel_fields | cancelled_fields | {"error"}
     return {
+        # KNOWN DIVERGENCE #2: these two read the catalogue constants directly
+        # rather than calling a tool, because the search tools return the bare
+        # list and add no envelope of their own — today. They are also the repo's
+        # only *unbounded* list-returning MCP tools, so when CLAUDE.md's "bound
+        # every list-returning MCP tool" convention reaches them they will gain a
+        # `{total_count, returned_count, truncated, flights}` wrapper, this map
+        # will still describe the inner record, and the `set(shapes) ==
+        # tool_names` drift guard below will not fire (the keys are unchanged).
+        # Re-derive both from the tool functions when that lands.
         "search_flights": _keys_of(search_db.FLIGHTS),
         "search_hotels": _keys_of(search_db.HOTELS),
         "book_flight": flight_fields,
@@ -172,17 +224,18 @@ def skill(request) -> SkillDefinition:
     return request.param
 
 
-def test_three_skills_are_defined():
-    assert len(SKILL_DEFINITIONS) == 3
-    assert len({s.skill_id for s in SKILL_DEFINITIONS}) == 3, "skill ids must be unique"
+def test_skill_ids_are_unique():
+    # A duplicate id makes `get_skill` return the first match and the publisher
+    # overwrite one skill with the other, both silently.
+    assert SKILL_DEFINITIONS, "no skills defined"
+    ids = {s.skill_id for s in SKILL_DEFINITIONS}
+    assert len(ids) == len(SKILL_DEFINITIONS), f"duplicate skill ids among {sorted(ids)}"
 
 
 def test_mcp_tool_extraction_finds_the_real_surface():
-    """Guard the guard: if this regex ever finds nothing, the grounding test below
-    would pass vacuously."""
-    tools = _real_mcp_tool_names()
-    assert {"search_flights", "book_flight", "check_expense_policy"} <= tools
-    assert len(tools) >= 9
+    """Guard the guard: if this regex ever finds nothing — or quietly finds one
+    fewer — the grounding tests below weaken without failing."""
+    assert _real_mcp_tool_names() == _EXPECTED_MCP_TOOLS
 
 
 def test_mcp_response_field_extraction_finds_the_real_surface():
@@ -207,7 +260,7 @@ def test_mcp_response_field_extraction_finds_the_real_surface():
     # ...and the skill bodies must really make field claims for any of it to grade.
     referenced = set().union(*(_referenced_field_names(s.skill_md) for s in SKILL_DEFINITIONS))
     assert {"item_id", "price", "checkin", "truncated"} <= referenced
-    assert len(referenced) >= 15
+    assert len(referenced) >= _MIN_DISTINCT_FIELD_CLAIMS
 
 
 class TestFrontmatter:
@@ -230,14 +283,14 @@ class TestFrontmatter:
     def test_body_is_a_real_markdown_instruction(self, skill: SkillDefinition):
         _, body = _split_frontmatter(skill.skill_md)
         assert body.lstrip().startswith("# "), "body should open with a markdown H1"
-        assert len(body.split()) > 80, "an instruction body this short teaches nothing"
+        assert len(body.split()) > _MIN_BODY_WORDS, "an instruction body this short teaches nothing"
 
 
 class TestDescription:
     def test_is_non_empty(self, skill: SkillDefinition):
         # Semantic retrieval matches on this field: empty means undiscoverable.
         assert skill.description.strip()
-        assert len(skill.description.split()) >= 12
+        assert len(skill.description.split()) >= _MIN_DESCRIPTION_WORDS
 
     def test_is_written_as_a_retrieval_cue(self, skill: SkillDefinition):
         # Convention from the Skill Registry docs: the description says *when* to
@@ -246,8 +299,13 @@ class TestDescription:
         assert "use this skill when" in skill.description.lower()
 
     def test_display_name_is_present_and_human_readable(self, skill: SkillDefinition):
+        # "Human readable" concretely: a console label, not a second copy of the
+        # slug. `!= skill_id` was near-tautological — the id is slug-constrained,
+        # so any prose phrase differs from it. These two properties a slug cannot
+        # have: whitespace between words, and a capitalised first word.
         assert skill.display_name.strip()
-        assert skill.display_name != skill.skill_id
+        assert " " in skill.display_name.strip(), f"{skill.display_name!r} reads as a slug"
+        assert skill.display_name[:1].isupper(), f"{skill.display_name!r} is not capitalised"
 
 
 class TestSkillId:
