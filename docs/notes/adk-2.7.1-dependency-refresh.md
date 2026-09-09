@@ -322,3 +322,50 @@ harmless and still shipped, but the spike can no longer prove it is *needed*. Ei
 ADK stopped stripping the ids or the Anthropic path changed. Do not read INCONCLUSIVE
 as "fixed" — the original bug required a mixed-tier session and specific conditions —
 but do note the test has lost its power to validate the fix.
+
+### MCP servers redeployed and verified from their own logs (2026-09-09)
+
+The last unverified deploy surface. `mcp` moved 1.29 → 1.30 in this refresh and the
+three Cloud Run servers had never been rebuilt on it.
+
+**Scope discipline first.** The project also hosts `wrangler-search-mcp` /
+`wrangler-booking-mcp` / `wrangler-expense-mcp`, which belong to a *different*
+solution. Confirmed `deploy_mcp_servers.SERVERS` targets only our three, and
+re-checked afterwards that the wrangler services were still on their original
+revision (`00008`) and untouched.
+
+Rolled `00006 → 00007` on all three, Ready=True. `.env` came back **byte-identical** —
+the URLs are stable, so the verbatim env writer correctly no-ops.
+
+**Verified from the servers' own Cloud Logging, not from the client's opinion:**
+
+| Check | Result |
+| --- | --- |
+| `verify_mcp_tools` after redeploy | PASS — all 10 tools across 3 servers |
+| Synthetic traffic (40 queries, 3 users) | **0 errors** |
+| HTTP status across the whole window | **only 200 / 202** — zero 4xx, zero 5xx |
+| Severity | 333 INFO, **zero ERROR/CRITICAL** |
+| Revision actually serving | 100% on `*-00007-*` |
+
+Two details worth reading rather than skimming:
+
+* **No 404s.** A 404 on `/mcp` is what "Session terminated" looked like before
+  `stateless_http=True`; its absence under real concurrent traffic is the evidence
+  that fix still holds on mcp 1.30.
+* **`INFO:mcp.server.streamable_http:Terminating session: None`** appears ~100× per
+  server and is **correct**, not an error — stateless mode creates and tears down a
+  session per request, so there is no session id to report.
+
+**Transport health is not tool health**, so the trajectory was captured directly.
+Green logs would look identical if every tool returned nothing:
+
+| Server | Tool actually executed | Returned |
+| --- | --- | --- |
+| search-mcp | `search_flights` | honest "no flights for that date" from the mock DB |
+| booking-mcp | `list_all_bookings` | real records (`BK-0FB370F2`) |
+| expense-mcp | `check_expense_policy`, `get_user_expenses` | the real $150 limit; real records (`EX-203D7887`) |
+
+Two prompts produced **no** tool call — the agent asked for a missing date instead.
+That is agent behaviour on an under-specified request, not a server fault, and it is
+why the confirming prompts had to be fully specified. Worth knowing before reading an
+empty trajectory as a broken server.
