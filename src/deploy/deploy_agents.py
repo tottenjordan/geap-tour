@@ -111,7 +111,13 @@ REQUIREMENTS = [
     # Raise this only together with the `google-adk` pin above, after checking the
     # symbol still exists: ADK and mcp move as a pair.
     "mcp>=1.29.0,<2",
-    "fastmcp>=2.0.0",
+    # Upper bound is load-bearing, same as `mcp` above and for the same reason:
+    # fastmcp 4.x REQUIRES mcp 2.x, which ADK cannot import
+    # (`No module named 'mcp.shared.session'`). Unbounded, this resolved correctly
+    # only because the resolver happened to backtrack off the `mcp<2` pin above —
+    # and the container's resolver is not guaranteed to be uv. State the constraint
+    # rather than inferring it. Mirrors the pin in pyproject.toml.
+    "fastmcp>=3.4.7,<4",
     "python-dotenv>=1.0.0",
     "litellm>=1.83.14",
     "pydantic>=2.12.5",
