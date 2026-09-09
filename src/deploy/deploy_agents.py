@@ -119,7 +119,24 @@ REQUIREMENTS = [
     # rather than inferring it. Mirrors the pin in pyproject.toml.
     "fastmcp>=3.4.7,<4",
     "python-dotenv>=1.0.0",
-    "litellm>=1.83.14",
+    # Upper bound matters here more than the floor. The Claude tiers run through
+    # litellm, and src/models/tool_call_ids.py exists to work around a specific
+    # litellm/Anthropic/ADK interaction (`AnthropicError: 'tool_call_id'`) that only
+    # reproduces in a mixed-tier session — so a litellm the workaround was never
+    # tested against fails in the hardest place to notice.
+    #
+    # Unbounded, the container resolved 1.100.0 (measured). The UPPER bound is the
+    # point; the floor stays permissive on purpose, because there is no single
+    # "version we test against" — aiplatform's `evaluation` extra caps litellm by
+    # INTERPRETER, so the tested version differs per environment:
+    #
+    #   local  (Python 3.14) -> litellm 1.96.2   (extra allows >=1.93,<1.97)
+    #   CI     (Python 3.12) -> litellm 1.85.7   (extra allows >=1.83.7,<1.86)
+    #
+    # A first attempt pinned >=1.93.0 to "match tested" and immediately reddened CI,
+    # which tests 1.85.7. The range below admits both and still excludes the
+    # 1.97+ territory nothing here has ever exercised.
+    "litellm>=1.83.14,<1.97.0",
     "pydantic>=2.12.5",
     "cloudpickle>=3.0,<4.0",
     # OTel instrumentation — Agent Engine auto-enables telemetry, but without

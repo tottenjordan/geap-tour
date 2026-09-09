@@ -527,3 +527,72 @@ class TestTheDeployPathUsesAnApiThatExists:
         update = inspect.signature(runtimes.update).parameters
         assert {"agent", "config"} <= set(create)
         assert {"name", "agent", "config"} <= set(update)
+
+
+class TestVersionCoupledServingDepsHaveUpperBounds:
+    """An unbounded floor on a version-coupled dep lets the container drift.
+
+    `deploy_agents.REQUIREMENTS` is resolved by the container, independently of
+    `uv.lock`. Three times now an open upper bound there has been the problem:
+
+      * `mcp` unbounded -> container took 2.x -> `ImportError: McpHttpClientFactory`
+        killed every worker while 1528 tests passed;
+      * `fastmcp` unbounded -> would have pulled mcp 2.x by transitive dependency;
+      * `litellm` unbounded -> container resolves 1.100.0 while we test 1.96.2, a
+        four-minor skew on the library the Claude tiers run through and the one
+        `src/models/tool_call_ids.py` exists to work around.
+
+    The existing `TestDeployedRequirementsMatchTheTestedEnvironment` checks the
+    tested version *satisfies* each constraint. That is the wrong direction for this
+    failure: `litellm>=1.83.14` is satisfied by 1.96.2 and still admits 1.100.
+
+    Only packages whose behaviour we actively work around or pickle against are
+    listed. A blanket "pin everything" would be noise.
+    """
+
+    COUPLED: ClassVar[dict[str, str]] = {
+        "google-adk": "the AdkApp is cloudpickled locally and unpickled in the container",
+        "mcp": "ADK imports symbols that moved in 2.x",
+        "fastmcp": "4.x requires mcp 2.x",
+        "litellm": "tool_call_ids.py works around a litellm/Anthropic/ADK interaction",
+    }
+
+    @staticmethod
+    def _requirement(name: str) -> str | None:
+        import re
+
+        from src.deploy.deploy_agents import REQUIREMENTS
+
+        for spec in REQUIREMENTS:
+            if re.split(r"[\[<>=!~]", spec.strip())[0].strip() == name:
+                return spec
+        return None
+
+    def test_each_declares_an_upper_bound(self):
+        missing = [
+            f"{name} ({why})"
+            for name, why in self.COUPLED.items()
+            if (spec := self._requirement(name)) and "<" not in spec and "==" not in spec
+        ]
+        assert not missing, (
+            "these serving requirements have no upper bound, so the container can "
+            f"resolve a version we never tested: {missing}"
+        )
+
+    def test_each_is_actually_present(self):
+        """Guard the guard: a renamed package would make the check above vacuous."""
+        absent = [n for n in self.COUPLED if self._requirement(n) is None]
+        assert not absent, f"listed as version-coupled but not in REQUIREMENTS: {absent}"
+
+    def test_the_tested_litellm_is_inside_the_declared_range(self):
+        """The specific skew: the container must get the litellm we test against."""
+        import importlib.metadata as md
+
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
+        spec = self._requirement("litellm")
+        assert spec, "litellm dropped from REQUIREMENTS"
+        assert Version(md.version("litellm")) in Requirement(spec).specifier, (
+            f"tested litellm {md.version('litellm')} is outside the serving range {spec}"
+        )
