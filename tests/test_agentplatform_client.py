@@ -145,3 +145,43 @@ def test_the_preview_evaluation_namespace_still_exists():
     from vertexai.preview.evaluation import EvalTask
 
     assert EvalTask is not None
+
+
+class TestAgentEnginesGetIsCalledPositionally:
+    """`vertexai.agent_engines.get` takes a POSITIONAL resource name.
+
+    `client.agent_engines.get(name=...)` (aiplatform 1.x, now removed) and
+    `vertexai.agent_engines.get(resource_name)` are different functions with
+    different signatures. Migrating the former to the latter by swapping the module
+    prefix — and keeping `name=` — produces:
+
+        TypeError: get() got an unexpected keyword argument 'name'
+
+    Six call sites were migrated that way. FIVE of them sit inside best-effort
+    `try/except Exception` warm-up blocks, so the failure surfaced only as
+    "Warmup skipped: ..." — a silent loss of the cold-start protection that exists
+    to stop empty-at-200, with no test failing and no error reaching a human.
+    """
+
+    def test_no_call_site_passes_name_as_a_keyword(self):
+        offenders = [
+            f"{p.relative_to(SRC.parent)}:{i}"
+            for p in sorted(SRC.rglob("*.py"))
+            for i, line in enumerate(p.read_text().splitlines(), 1)
+            if "agent_engines.get(name=" in line
+        ]
+        assert not offenders, (
+            "vertexai.agent_engines.get takes a positional resource_name; `name=` "
+            f"raises TypeError and warm-up blocks swallow it: {offenders}"
+        )
+
+    def test_the_real_signature_is_what_we_assume(self):
+        """Pin the assumption itself, so a future SDK change is a red test rather
+        than another silently-skipped warm-up."""
+        import inspect
+
+        from vertexai import agent_engines
+
+        params = inspect.signature(agent_engines.get).parameters
+        assert "resource_name" in params
+        assert "name" not in params
