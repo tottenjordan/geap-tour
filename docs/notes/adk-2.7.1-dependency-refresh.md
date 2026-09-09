@@ -285,3 +285,31 @@ The plugin was then exercised on a Gemini-3 backbone, where templates cannot app
 So the plugin is not parity — it catches an injection that **both** the client
 blocklist and the templates let through. That is the strongest argument for enabling
 `ENABLE_MODEL_ARMOR_PLUGIN` on the Gemini-3 engines.
+
+### Router validated on the new stack (2026-09-09)
+
+The gap the first validation pass left open is now closed. Redeployed in place with
+**every** tier override reproduced from the engine's own baked env — the router
+redeploy trap regresses tiers to Gemini-3 on a plain `--update`, and the probe engine
+had just taught us that an update also silently drops any opt-in flag missing from the
+deploying shell. Reading the live env first and replaying it made the config diff
+against pre-deploy **zero changed findings**: only the container moved.
+
+`verify_router_health`: **14/14 FULL, 0.0% silent empty** (95% CI [0.0%, 21.5%]),
+p50 5.7s / p95 30.6s, and 100% full on all four exercised tiers — lite, flash, pro and
+the Claude `high` tier. VERDICT: PASS.
+
+**litellm was pinned first, deliberately.** Unbounded, the container resolved 1.100.0
+against our tested 1.96.2 — and the Claude tiers run through litellm, under a
+workaround (`src/models/tool_call_ids.py`) for a litellm/Anthropic/ADK interaction
+that only reproduces in a mixed-tier session. Deploying both changes at once would
+have made a failure unattributable.
+
+**A pre-check worth repeating, with an honest result.**
+`src.eval.spike_tool_call_ids` — which reproduces the tool-call-id bug with no deploy —
+now returns **INCONCLUSIVE**: on ADK 2.8.0 + litellm 1.96.2 the *pre-fix* arm no longer
+reproduces the failure, and both arms return full Claude responses. The workaround is
+harmless and still shipped, but the spike can no longer prove it is *needed*. Either
+ADK stopped stripping the ids or the Anthropic path changed. Do not read INCONCLUSIVE
+as "fixed" — the original bug required a mixed-tier session and specific conditions —
+but do note the test has lost its power to validate the fix.
