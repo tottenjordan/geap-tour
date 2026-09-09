@@ -163,9 +163,11 @@ def run_policy_compliance_eval(
 
     if warm:
         try:
+            import vertexai
+
             from src.eval.multi_agent_batch_eval import warm_agent_engine
 
-            engine = client.agent_engines.get(name=agent_resource_name)
+            engine = vertexai.agent_engines.get(name=agent_resource_name)
             warm_agent_engine(engine)
         except Exception:  # warming is best-effort
             pass

@@ -315,19 +315,27 @@ class _FakeRetrieved:
         self.memory = _FakeMemory(fact)
 
 
-class _FakeMemAgentEngines:
+class _FakeMemories:
+    """aiplatform 2.x moved memory ops from `client.agent_engines.retrieve_memories`
+    to `client.memory_banks.memories.retrieve` — same parameters, new home."""
+
     def __init__(self, items):
         self._items = items
         self.calls = []
 
-    def retrieve_memories(self, **kwargs):
+    def retrieve(self, **kwargs):
         self.calls.append(kwargs)
         return iter(self._items)
 
 
+class _FakeMemoryBanks:
+    def __init__(self, items):
+        self.memories = _FakeMemories(items)
+
+
 class _FakeMemClient:
     def __init__(self, items):
-        self.agent_engines = _FakeMemAgentEngines(items)
+        self.memory_banks = _FakeMemoryBanks(items)
 
 
 class TestVerifyMemory:
@@ -345,7 +353,7 @@ class TestVerifyMemory:
     def test_scopes_by_user_id_and_engine_name(self):
         client = _FakeMemClient([])
         vm.fetch_memories("carol", engine_id="123", client=client)
-        call = client.agent_engines.calls[0]
+        call = client.memory_banks.memories.calls[0]
         assert call["scope"]["user_id"] == "carol"
         assert "123" in call["name"]
 
@@ -353,7 +361,7 @@ class TestVerifyMemory:
         """Default scope app_name is the engine id — the deployed runtime's scope."""
         client = _FakeMemClient([])
         vm.fetch_memories("carol", engine_id="123", client=client)
-        assert client.agent_engines.calls[0]["scope"]["app_name"] == "123"
+        assert client.memory_banks.memories.calls[0]["scope"]["app_name"] == "123"
 
     def test_full_resource_name_scopes_by_bare_engine_id(self):
         client = _FakeMemClient([])
@@ -362,17 +370,17 @@ class TestVerifyMemory:
             engine_id="projects/p/locations/us-central1/reasoningEngines/999",
             client=client,
         )
-        assert client.agent_engines.calls[0]["scope"]["app_name"] == "999"
+        assert client.memory_banks.memories.calls[0]["scope"]["app_name"] == "999"
 
     def test_explicit_app_name_none_scopes_by_user_only(self):
         client = _FakeMemClient([])
         vm.fetch_memories("carol", engine_id="123", app_name=None, client=client)
-        assert "app_name" not in client.agent_engines.calls[0]["scope"]
+        assert "app_name" not in client.memory_banks.memories.calls[0]["scope"]
 
     def test_explicit_app_name_overrides_default(self):
         client = _FakeMemClient([])
         vm.fetch_memories("carol", engine_id="123", app_name="custom", client=client)
-        assert client.agent_engines.calls[0]["scope"]["app_name"] == "custom"
+        assert client.memory_banks.memories.calls[0]["scope"]["app_name"] == "custom"
 
     def test_skips_entries_with_missing_fact(self):
         client = _FakeMemClient([_FakeRetrieved(""), _FakeRetrieved("real fact")])

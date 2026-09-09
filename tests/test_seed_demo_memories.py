@@ -23,22 +23,30 @@ class FakeMemories:
         self.store.setdefault(scope["user_id"], []).append(fact)
 
 
-class FakeAgentEngines:
+class FakeMemoriesApi:
+    """aiplatform 2.x: `client.agent_engines.{create_memory,retrieve_memories}`
+    became `client.memory_banks.memories.{create,retrieve}` — parameters unchanged."""
+
     def __init__(self, memories):
         self._memories = memories
 
-    def create_memory(self, *, name, fact, scope):
+    def create(self, *, name, fact, scope):
         self._memories.create_memory(name=name, fact=fact, scope=scope)
 
-    def retrieve_memories(self, *, name, scope, simple_retrieval_params=None):
+    def retrieve(self, *, name, scope, simple_retrieval_params=None):
         for fact in self._memories.store.get(scope["user_id"], []):
             yield type("M", (), {"fact": fact})()
+
+
+class FakeMemoryBanks:
+    def __init__(self, memories):
+        self.memories = FakeMemoriesApi(memories)
 
 
 class FakeClient:
     def __init__(self):
         self.memories = FakeMemories()
-        self.agent_engines = FakeAgentEngines(self.memories)
+        self.memory_banks = FakeMemoryBanks(self.memories)
 
 
 def _persona(uid="alice", facts=("f0", "f1")):

@@ -187,9 +187,12 @@ def _collect_responses(client, engine_id: str, cases, *, warm: bool) -> dict[str
 
     if warm:
         try:
+            import vertexai
+
             from src.eval.multi_agent_batch_eval import warm_agent_engine
 
-            warm_agent_engine(client.agent_engines.get(name=engine_id))
+            # Not client.agent_engines — removed from the Client in aiplatform 2.x.
+            warm_agent_engine(vertexai.agent_engines.get(name=engine_id))
         except Exception:  # warming is best-effort
             pass
 
