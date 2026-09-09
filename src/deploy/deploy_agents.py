@@ -119,7 +119,17 @@ REQUIREMENTS = [
     # rather than inferring it. Mirrors the pin in pyproject.toml.
     "fastmcp>=3.4.7,<4",
     "python-dotenv>=1.0.0",
-    "litellm>=1.83.14",
+    # Upper bound matters here more than the floor. The Claude tiers run through
+    # litellm, and src/models/tool_call_ids.py exists to work around a specific
+    # litellm/Anthropic/ADK interaction (`AnthropicError: 'tool_call_id'`) that only
+    # reproduces in a mixed-tier session — so a litellm the workaround was never
+    # tested against fails in the hardest place to notice.
+    #
+    # Unbounded, the container resolved 1.100.0 while we test 1.96.2 (measured). The
+    # range below is the window google-cloud-aiplatform's `evaluation` extra allows
+    # on Python 3.14, which is what pins us locally — so container and tests agree
+    # by construction rather than by luck. Raise both together.
+    "litellm>=1.93.0,<1.97.0",
     "pydantic>=2.12.5",
     "cloudpickle>=3.0,<4.0",
     # OTel instrumentation — Agent Engine auto-enables telemetry, but without
