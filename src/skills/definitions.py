@@ -118,13 +118,22 @@ carries its own verdict and its own expense_id.
 
 ## Lodging is a per-night limit
 
-The lodging limit applies to the **nightly rate**, not the invoice total. Given a
-total, divide by the number of nights and check the nightly figure: a 3-night
-$900 invoice is $300/night and within policy, whereas checking $900 reports a
-violation that does not exist. When the stay came from a booking, confirm the
-nights from `get_booking_details(booking_id)` (`checkin` and `checkout`) instead
-of trusting the count in the request, and state the nightly rate and night count
-you used.
+The lodging limit applies to the **nightly rate**, not the invoice total. The
+tool does no per-night arithmetic — `check_expense_policy(...)` compares the one
+amount you hand it against a flat limit and knows nothing about nights — so the
+division is yours to do. Given a total, divide by the number of nights and check
+the nightly figure: a 3-night $900 invoice is $300/night and within policy,
+whereas checking $900 reports a violation that does not exist. When the stay came
+from a booking, confirm the nights from `get_booking_details(booking_id)`
+(`checkin` and `checkout`) instead of trusting the count in the request, and
+state the nightly rate and night count you used.
+
+**Check the nightly rate, but submit the invoice total.** The per-night figure is
+only how the limit is evaluated; the reimbursable amount is the whole stay. Pass
+$300 to `check_expense_policy(...)` and $900 to `submit_expense(...)`, and record
+the nightly rate and night count in the `description` so a reviewer can re-derive
+both. Filing the $300 you checked would under-reimburse the traveller by two
+nights.
 
 ## Foreign currency
 
@@ -248,28 +257,57 @@ the receipt against it *before* submitting, and name what differs. A reviewer ca
 act on "amount_mismatch: receipt $520, booked $450"; nobody can act on "this
 looks fine".
 
-## 1. Fetch the ground truth
+## 1. Fetch the booking record
 
 With a booking id, call `get_booking_details(booking_id)`. Without one, call
-`list_all_bookings(limit)` and match on `type`, `item_id`, traveller name and
-date. If nothing matches and `truncated` is true, the booking may simply be older
-than the returned window — say that, rather than concluding no booking exists.
+`list_all_bookings(limit)` and match on `type`, `item_id`, traveller name and —
+for a hotel — the `checkin`/`checkout` range. If nothing matches and `truncated`
+is true, the booking may simply be older than the returned window — say that,
+rather than concluding no booking exists.
 
-## 2. Classify the difference by name
+The record is thinner than it looks. It carries `booking_id`, `type`, `item_id`,
+`status` and `created_at`, plus `passenger_name` for a flight or `guest_name`,
+`checkin` and `checkout` for a hotel (and `cancelled_at` once cancelled). It
+carries **no price and no travel date**: `created_at` is when the booking was
+made, not when the trip happens.
 
-Compare the receipt against the record and report every class that applies:
+## 2. Price the booking from the search catalogue
+
+So the two figures an audit most needs — what the trip cost and when it was — are
+not on the record. Resolve them by looking `item_id` up in the catalogue the
+booking came from:
+
+- **flight** — `search_flights(origin, destination, date)`, then take the result
+  whose `id` equals the booking's `item_id`. Its `price` is the booked fare and
+  its `date`, `departure` and `arrival` are the booked travel times.
+- **hotel** — `search_hotels(city)`, matched on `id` the same way. Its
+  `price_per_night` x the nights between the booking's `checkin` and `checkout`
+  is the booked total.
+
+The route and city are not on the booking record either, so take them from the
+receipt or the conversation, or ask. If `item_id` resolves to nothing, say the
+booked amount could not be established and audit only the fields you do have.
+Never back-fill the booked price from the receipt you are auditing — that makes
+every amount match by construction.
+
+## 3. Classify the difference by name
+
+Compare the receipt against the record and the figures from step 2, and report
+every class that applies:
 
 - **no_matching_booking** — no record covers this trip. Not necessarily improper
   (it may have been booked elsewhere); ask before assuming.
 - **cancelled_booking_charge** — the record's `status` is `cancelled`. A charge
   against a cancelled booking needs an explanation before it is reimbursable;
   quote the `cancelled_at` timestamp.
-- **amount_mismatch** — the receipt total differs from the booked `price`, or
-  from `price_per_night` x nights. Quote both figures. Upgrades, fare changes and
-  resort fees all land in this class; the explanation is the traveller's.
-- **date_mismatch** — receipt dates fall outside the booked `date`, or outside
-  the `checkin`/`checkout` range. Extra nights are usually also an
-  amount_mismatch; report both.
+- **amount_mismatch** — the receipt total differs from the booked figure
+  resolved in step 2: a flight's `price`, or a hotel's `price_per_night` x
+  nights. Quote both figures. Upgrades, fare changes and resort fees all land in
+  this class; the explanation is the traveller's.
+- **date_mismatch** — receipt dates fall outside the flight `date` resolved in
+  step 2, or outside the booking's `checkin`/`checkout` range. Never compare
+  against `created_at`: a trip booked in March for June is not a date mismatch.
+  Extra nights are usually also an amount_mismatch; report both.
 - **traveller_mismatch** — the receipt name differs from `passenger_name` or
   `guest_name`. Somebody else's ticket is not reimbursable to this user.
 - **clean_match** — every compared field agrees. Say so explicitly: a silent
@@ -277,7 +315,7 @@ Compare the receipt against the record and report every class that applies:
 
 Quote the two values you compared. Never assert a mismatch without both numbers.
 
-## 3. Check for a duplicate before filing
+## 4. Check for a duplicate before filing
 
 `submit_expense(...)` mints a new expense_id on every call and nothing
 de-duplicates, so re-submitting a receipt creates a second reimbursable record.
@@ -287,7 +325,7 @@ quote the existing expense_id. This is the one case where you pause instead of
 filing — it is not the over-limit case, where an expense is always submitted and
 flagged for review.
 
-## 4. File with the finding attached
+## 5. File with the finding attached
 
 Then submit. Put the discrepancy class and both compared values into the
 `description` you pass to `submit_expense(...)`. That description is the only
