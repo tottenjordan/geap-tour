@@ -70,3 +70,43 @@ SCC access on the viewer).
    volume* is richest when the coordinator runs a **native Gemini** backbone during
    the demo — Claude turns won't register as Gemini sanitizations. Same platform
    shape as [[online-eval-content-capture-blocked]].
+
+## The Gemini-3 armor gap, and the first-party plugin (2026-09-08)
+
+`get_armored_generate_config` attaches Model Armor templates only for a regional
+Gemini-2.x backbone. That gate is correct — Gemini-3 runs on the global endpoint
+(templates `400 TEMPLATE_NOT_FOUND`) and Claude runs via LiteLlm — but it means
+**server-side screening silently disappears when the backbone moves**, leaving the
+client-side blocklist as the only layer.
+
+**Measured, and narrower than it first looked.** The live coordinator `3639…` is
+baked with `COORDINATOR_MODEL=gemini-2.5-flash`, so templates *are* active on it
+today. The gap is **latent, not an active outage**: `.env` sets
+`AGENT_MODEL=gemini-3.5-flash`, so the next coordinator deploy would drop to one
+layer — and the bake-off engines already run Gemini-3 backbones. (An earlier draft
+of this note claimed production was unarmored. It was not; the check below is what
+established that.)
+
+**ADK 2.8.0 supplies the remedy that did not previously exist.**
+`google.adk.integrations.model_armor.ModelArmorPlugin` screens inside the ADK
+request path rather than through a `GenerateContentConfig` field, so it is
+model-family-independent. `src/armor/config.py:model_armor_plugin` wires it behind
+`ENABLE_MODEL_ARMOR_PLUGIN` (default OFF), reusing the same two templates the repo
+already provisions, and returns `None` on a regional Gemini-2.x backbone so the two
+layers never double-screen the same request.
+
+Three things worth knowing before enabling it:
+
+* It needs **`google-cloud-modelarmor`**, which is now in `deploy_agents.REQUIREMENTS`.
+  ADK suggests `google-adk[gcp]` for it; that extra caps `google-cloud-aiplatform<2`
+  and would fight our 2.x pin, so depend on the package directly.
+* The flag is **baked into the engine env** on deploy, so a deployed spec records
+  which layers it actually serves with. Without that, a plugin-armored Gemini-3
+  engine is indistinguishable from an unarmored one.
+* `src/armor/config.py:armor_layers` is the single "are we covered?" answer, and
+  `engine_baseline`'s `server_side_armor` check now accepts **either** layer.
+
+**It stays ADVISORY, deliberately.** Making it critical before the flag is rolled
+out would red every Gemini-3 engine for a gap that has no deployed fix yet.
+Escalating to critical is the natural follow-up once `ENABLE_MODEL_ARMOR_PLUGIN=1`
+is live on the served engines.

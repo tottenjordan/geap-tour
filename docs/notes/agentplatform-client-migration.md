@@ -154,3 +154,39 @@ uv run python -W error::FutureWarning -m src.eval.verify_memory \
 uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent \
   --agent-id 4380288848559603712 --limit 4
 ```
+
+## The tail, settled (2026-09-08, on google-cloud-aiplatform 2.1.0)
+
+`Client` and `types` migrated long ago. This records what is *left* on `vertexai`
+and why, so it stops being re-litigated.
+
+**`vertexai.init` stays — measured, not assumed.** `vertexai.init is
+agentplatform.init` is `True` (both re-export `google.cloud.aiplatform.init`), so
+moving it is behaviourally free. It was migrated across all 5 eligible files and then
+**reverted**, for two reasons only visible by doing it:
+
+1. Of the 17 files calling `vertexai.init`, **12 also use `vertexai.agent_engines`**,
+   which has no `agentplatform` equivalent. Switching those imports *both* packages
+   to call one function.
+2. On the other 5, `ty` went red. `vertexai/__init__.py` imports `init`
+   unconditionally; `agentplatform/__init__.py` wraps it in
+   `try: ... except ImportError: init = None`. So `agentplatform.init` types as
+   `Callable | None`, and every call site becomes `call-non-callable`.
+
+Strictly worse for zero gain. `TestInitDeliberatelyStaysOnVertexai` pins both reasons
+as executable facts rather than prose, including a test that fails if
+`agentplatform` stops degrading `init` to `None` — at which point reason 2 is gone
+and the experiment is worth repeating.
+
+**`vertexai.agent_engines` / `AdkApp` cannot move.** `hasattr(agentplatform,
+"agent_engines")` is `False` on 2.1.0. A test re-checks this on every SDK bump, so a
+future release that adds it turns the exception into a red test rather than a stale
+comment. (aiplatform 2.x *did* rename the Client-side surface — `Client.agent_engines`
+became `client.runtimes` — but the module-level `vertexai.agent_engines` is a
+different thing and is what this repo uses.)
+
+**`vertexai.preview.evaluation.EvalTask` is the one real exposure.** A single import
+in `src/eval/trajectory_eval.py`, in a **preview** namespace, with no `agentplatform`
+equivalent. It survived the 2.x major by luck, not contract, so
+`test_the_preview_evaluation_namespace_still_exists` now fails loudly on its removal
+— otherwise trajectory metrics would just quietly stop appearing in reports.
