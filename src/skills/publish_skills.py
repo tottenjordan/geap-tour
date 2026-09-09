@@ -31,7 +31,12 @@ is written to avoid:
 
 :func:`_is_registry_unavailable` is where that judgement lives, and it decides on
 transport-level facts (an ``APIError`` code, a named service-disabled message)
-rather than by catching ``Exception`` and hoping.
+rather than by catching ``Exception`` and hoping. Because a bare 404 is ambiguous
+— "this method is not served here" and "the thing you addressed is gone" arrive
+identically — :func:`_is_skip` is the only entry point callers use, and it
+refuses to read a 404 as *absent* whenever the surface has already been shown to
+answer: after a successful ``get`` (so a 404 from the following ``update`` is a
+real failure, not a skip), or when a cheap collection probe succeeds.
 
 Usage::
 
@@ -47,20 +52,20 @@ import logging
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
 from src.skills.definitions import SKILL_DEFINITIONS, SkillDefinition, materialize_skill
+
+if TYPE_CHECKING:  # import cost + the SDK is optional at runtime; annotations only
+    from agentplatform import Client
+    from agentplatform._genai.skills import Skills
 
 log = logging.getLogger("publish_skills")
 
 # The one string that means "the surface isn't here" — greppable, and the thing
 # the CLI tests assert on to tell a skip apart from a failure.
 SKILL_REGISTRY_SKIP = "Skill Registry preview not enabled — skipping"
-
-# How many hits `--search` asks the semantic index for. Small on purpose: the
-# point of the subcommand is to check a skill is *findable* near the top, not to
-# dump the registry (that is `--list`).
-DEFAULT_TOP_K = 5
 
 ACTION_CREATED = "created"
 ACTION_UPDATED = "updated"
@@ -92,9 +97,24 @@ class SkillRegistryUnavailable(RuntimeError):
     """
 
 
+def _skip_message(project: str = GCP_PROJECT_ID, location: str = GCP_REGION) -> str:
+    """The skip line, always naming what it tried to reach.
+
+    "preview not enabled" mid-demo begs one question — *which project and
+    region?* — and :func:`build_client` defaults both silently, so a skip caused
+    by a mis-set ``GCP_REGION`` looks identical to one caused by a genuinely
+    unserved preview unless the message says.
+    """
+    return f"{SKILL_REGISTRY_SKIP} (project={project}, location={location})"
+
+
 @dataclass(frozen=True)
-class SkillPublishResult:
-    """What happened to one skill. ``action`` is one of the ``ACTION_*`` constants."""
+class SkillActionResult:
+    """What happened to one skill. ``action`` is one of the ``ACTION_*`` constants.
+
+    Covers every registry action, not just publishing: :func:`delete_skill`
+    returns one too, with ``ACTION_DELETED``.
+    """
 
     skill_id: str
     action: str
@@ -106,7 +126,7 @@ class SkillPublishResult:
         return self.action in _SUCCESSFUL_ACTIONS
 
 
-def build_client(project: str = GCP_PROJECT_ID, location: str = GCP_REGION):
+def build_client(project: str = GCP_PROJECT_ID, location: str = GCP_REGION) -> "Client":
     """Construct the Agent Platform client the Skill Registry lives on.
 
     ``agentplatform.Client``, never ``vertexai.Client``: they are separate module
@@ -139,7 +159,7 @@ def skill_resource_name(
     return f"projects/{project}/locations/{location}/skills/{skill_id.rsplit('/', 1)[-1]}"
 
 
-def _skills_api(client):
+def _skills_api(client: "Client") -> "Skills":
     """The ``skills`` sub-client, or a skip-shaped error if the SDK has none.
 
     Checked explicitly rather than letting an ``AttributeError`` propagate into
@@ -167,10 +187,12 @@ def _api_code(exc: BaseException) -> int | None:
 def _is_registry_unavailable(exc: BaseException) -> bool:
     """True when the *surface* is missing, false when a call was refused.
 
-    Only ever consulted for **collection-level** calls (create / list /
-    retrieve). A 404 from ``get`` or ``delete`` is about the skill id, not about
-    the API, and its callers handle it themselves — routing those through here
-    would turn "no skill called X" into a silent success.
+    Reads the exception alone, so it cannot tell the two meanings of a 404 apart
+    and answers with the optimistic one. Never call it directly: :func:`_is_skip`
+    is the entry point, and it supplies the evidence this function lacks. A 404
+    from ``get``/``update``/``delete`` is about the skill id, not about the API,
+    and routing one straight through here turns "no skill called X" — or a
+    ``update`` racing a deletion — into a silent success.
     """
     if isinstance(exc, SkillRegistryUnavailable):
         return True
@@ -186,7 +208,8 @@ def _is_registry_unavailable(exc: BaseException) -> bool:
 
     code = _api_code(exc)
     if code in (404, 501):
-        # NOT_FOUND / UNIMPLEMENTED on a collection: the endpoint isn't served.
+        # UNIMPLEMENTED is unambiguous. NOT_FOUND is not — this is the optimistic
+        # reading `_is_skip` then has to check against the collection.
         return True
     if code == 403:
         text = f"{getattr(exc, 'message', '')} {getattr(exc, 'details', '')}"
@@ -194,7 +217,70 @@ def _is_registry_unavailable(exc: BaseException) -> bool:
     return False
 
 
-def _lookup(api, name: str):
+def _collection_answers(api: "Skills") -> bool:
+    """Did the cheapest possible collection call succeed?
+
+    A yes is proof the method is served in this project/location, which is what
+    demotes an ambiguous 404 from "not enabled here" to "our request was
+    refused". Only ever run on a path that has already failed, so the extra call
+    costs nothing in the normal case.
+    """
+    try:
+        list(api.list(config={"page_size": 1}))
+    except Exception:
+        return False
+    return True
+
+
+def _is_skip(
+    exc: BaseException, api: "Skills | None" = None, *, surface_proven: bool = False
+) -> bool:
+    """Should ``exc`` be reported as a skip (exit 0) rather than a failure?
+
+    This is where the 404 ambiguity is resolved with evidence rather than
+    assumed away:
+
+    * ``surface_proven`` — the caller has already had a call answered on this
+      run (e.g. ``get`` returned the skill we are about to ``update``), so
+      nothing that follows can mean "the API isn't here". A 404 then is a real
+      failure: the skill was deleted underneath us, or we addressed the wrong
+      name.
+    * otherwise a 404 gets one cheap ``list`` probe. If the collection answers,
+      the endpoint is served and our call was refused — red, not skipped.
+
+    The residual case both of these cannot separate is a parent that does not
+    exist at all (a mistyped project, a region without the preview): *every*
+    call including the probe 404s, and the transport gives us nothing further to
+    go on. That one stays a skip, which is why :func:`_skip_message` names the
+    project and location it tried.
+    """
+    if isinstance(exc, SkillRegistryUnavailable):
+        return True
+    if surface_proven:
+        return False
+    if not _is_registry_unavailable(exc):
+        return False
+    if _api_code(exc) == 404 and api is not None:
+        return not _collection_answers(api)
+    return True
+
+
+def _log_skip_or_failure(
+    what: str, exc: BaseException, api: "Skills | None" = None, *, surface_proven: bool = False
+) -> bool:
+    """Log ``exc`` as a skip (returns True) or as a failure (returns False).
+
+    One definition of the posture, so the six call sites cannot drift into
+    disagreeing about which errors are survivable.
+    """
+    if _is_skip(exc, api, surface_proven=surface_proven):
+        log.info("%s — could not %s: %s", _skip_message(), what, exc)
+        return True
+    log.error("FAILED to %s: %s", what, exc)
+    return False
+
+
+def _lookup(api: "Skills", name: str):
     """Return the registered skill at ``name``, or None if there isn't one.
 
     A 404 here is the ordinary "not published yet" answer and is the whole basis
@@ -209,7 +295,7 @@ def _lookup(api, name: str):
         raise
 
 
-def _resource_name_of(result, fallback: str) -> str:
+def _resource_name_of(result: object, fallback: str) -> str:
     """Prefer the server's own resource name, fall back to the one we addressed.
 
     ``create``/``update`` return a ``Skill`` while ``wait_for_completion``
@@ -221,14 +307,23 @@ def _resource_name_of(result, fallback: str) -> str:
     return name if isinstance(name, str) and "/skills/" in name else fallback
 
 
-def _publish_one(api, skill: SkillDefinition, *, dry_run: bool) -> SkillPublishResult:
+def _dry_run_result(skill: SkillDefinition) -> SkillActionResult:
+    """What a publish *would* do. Takes no ``api`` because it needs none."""
     name = skill_resource_name(skill.skill_id)
-    if dry_run:
-        log.info("[dry-run] would publish %s -> %s", skill.skill_id, name)
-        return SkillPublishResult(skill.skill_id, ACTION_DRY_RUN, name)
+    log.info("[dry-run] would publish %s -> %s", skill.skill_id, name)
+    return SkillActionResult(skill.skill_id, ACTION_DRY_RUN, name)
+
+
+def _publish_one(api: "Skills", skill: SkillDefinition) -> SkillActionResult:
+    name = skill_resource_name(skill.skill_id)
+    # Set the moment `get` answers with a skill: from then on the registry has
+    # demonstrably served us, so a later 404 from `update` is a failure (the
+    # skill was deleted between the two calls) and never "preview not enabled".
+    surface_proven = False
 
     try:
         existing = _lookup(api, name)
+        surface_proven = existing is not None
         # The create/update call MUST happen inside this `with`: materialize_skill
         # deletes the directory on exit and the SDK zips `local_path` at call time.
         with materialize_skill(skill) as skill_dir:
@@ -255,23 +350,24 @@ def _publish_one(api, skill: SkillDefinition, *, dry_run: bool) -> SkillPublishR
                 )
                 action = ACTION_UPDATED
     except Exception as exc:
-        if _is_registry_unavailable(exc):
-            log.info("%s (%s not published: %s)", SKILL_REGISTRY_SKIP, skill.skill_id, exc)
-            return SkillPublishResult(skill.skill_id, ACTION_SKIPPED, name, str(exc))
-        log.error("FAILED to publish %s: %s", skill.skill_id, exc)
-        return SkillPublishResult(skill.skill_id, ACTION_FAILED, name, str(exc))
+        skipped = _log_skip_or_failure(
+            f"publish {skill.skill_id}", exc, api, surface_proven=surface_proven
+        )
+        return SkillActionResult(
+            skill.skill_id, ACTION_SKIPPED if skipped else ACTION_FAILED, name, str(exc)
+        )
 
     resource = _resource_name_of(result, name)
     log.info("%s %s -> %s", action, skill.skill_id, resource)
-    return SkillPublishResult(skill.skill_id, action, resource)
+    return SkillActionResult(skill.skill_id, action, resource)
 
 
 def publish_skills(
     skills: Iterable[SkillDefinition] | None = None,
     *,
-    client=None,
+    client: "Client | None" = None,
     dry_run: bool = False,
-) -> list[SkillPublishResult]:
+) -> list[SkillActionResult]:
     """Publish (create-or-update) each skill; one result per skill, never raises.
 
     Per-skill classification rather than fail-fast: one bad skill should not stop
@@ -280,18 +376,18 @@ def publish_skills(
     """
     definitions = tuple(SKILL_DEFINITIONS if skills is None else skills)
     if dry_run:
-        return [_publish_one(None, s, dry_run=True) for s in definitions]
+        return [_dry_run_result(s) for s in definitions]
     api = _skills_api(client if client is not None else build_client())
-    return [_publish_one(api, s, dry_run=False) for s in definitions]
+    return [_publish_one(api, s) for s in definitions]
 
 
-def list_skills(*, client=None) -> list:
+def list_skills(*, client: "Client | None" = None) -> list:
     """Every skill registered in this project/location."""
     api = _skills_api(client if client is not None else build_client())
     return list(api.list())
 
 
-def search_skills(query: str, *, client=None, top_k: int = DEFAULT_TOP_K) -> list:
+def search_skills(query: str, *, client: "Client | None" = None) -> list:
     """Semantic search over the registry — the surface an agent uses at runtime.
 
     This is the check that matters before wiring a skill into an agent: a skill
@@ -299,11 +395,22 @@ def search_skills(query: str, *, client=None, top_k: int = DEFAULT_TOP_K) -> lis
     invisible to the retrieval the agent itself performs.
     """
     api = _skills_api(client if client is not None else build_client())
-    response = api.retrieve(query=query, config={"top_k": top_k})
-    return list(getattr(response, "retrieved_skills", None) or [])
+    # top_k is fixed and small on purpose: the question this answers is "does the
+    # skill come back near the top for a plausible request", not "dump the
+    # registry" (that is --list). Nothing has needed to vary it.
+    response = api.retrieve(query=query, config={"top_k": 5})
+    # Attribute access, NOT `getattr(..., None)`: if the SDK renames this field,
+    # a default would make `--search` answer "0 matches" — a confident wrong
+    # answer to the one question the subcommand exists to ask — where an
+    # AttributeError surfaces as a red exit. `or []` still covers the field's
+    # real, documented None (a response with no hits). Pinned by
+    # tests/test_publish_skills.py::TestSdkResponseFields.
+    return list(response.retrieved_skills or [])
 
 
-def delete_skill(skill_id: str, *, client=None, dry_run: bool = False) -> SkillPublishResult:
+def delete_skill(
+    skill_id: str, *, client: "Client | None" = None, dry_run: bool = False
+) -> SkillActionResult:
     """Delete one skill by id (or absolute resource name).
 
     On a miss this deliberately probes the collection before deciding: a 404 from
@@ -314,41 +421,46 @@ def delete_skill(skill_id: str, *, client=None, dry_run: bool = False) -> SkillP
     name = skill_resource_name(skill_id)
     if dry_run:
         log.info("[dry-run] would delete %s", name)
-        return SkillPublishResult(skill_id, ACTION_DRY_RUN, name)
+        return SkillActionResult(skill_id, ACTION_DRY_RUN, name)
 
     api = _skills_api(client if client is not None else build_client())
+    what = f"delete {skill_id}"
     try:
         existing = _lookup(api, name)
     except Exception as exc:
-        if _is_registry_unavailable(exc):
-            log.info("%s (%s not deleted: %s)", SKILL_REGISTRY_SKIP, skill_id, exc)
-            return SkillPublishResult(skill_id, ACTION_SKIPPED, name, str(exc))
-        log.error("FAILED to delete %s: %s", skill_id, exc)
-        return SkillPublishResult(skill_id, ACTION_FAILED, name, str(exc))
+        skipped = _log_skip_or_failure(what, exc, api)
+        return SkillActionResult(
+            skill_id, ACTION_SKIPPED if skipped else ACTION_FAILED, name, str(exc)
+        )
 
     if existing is None:
         try:
             list(api.list(config={"page_size": 1}))
         except Exception as exc:
-            if _is_registry_unavailable(exc):
-                log.info("%s (%s not deleted)", SKILL_REGISTRY_SKIP, skill_id)
-                return SkillPublishResult(skill_id, ACTION_SKIPPED, name, str(exc))
-            log.error("FAILED to delete %s: %s", skill_id, exc)
-            return SkillPublishResult(skill_id, ACTION_FAILED, name, str(exc))
-        log.error("FAILED to delete %s: no such skill in the registry", skill_id)
-        return SkillPublishResult(skill_id, ACTION_FAILED, name, "no such skill")
+            skipped = _log_skip_or_failure(what, exc)
+            return SkillActionResult(
+                skill_id, ACTION_SKIPPED if skipped else ACTION_FAILED, name, str(exc)
+            )
+        log.error(
+            "FAILED to delete %s: no such skill in the registry "
+            "(project=%s, location=%s) — `--list` shows what is there",
+            skill_id,
+            GCP_PROJECT_ID,
+            GCP_REGION,
+        )
+        return SkillActionResult(skill_id, ACTION_FAILED, name, "no such skill")
 
     try:
         api.delete(name=name)
     except Exception as exc:
         log.error("FAILED to delete %s: %s", skill_id, exc)
-        return SkillPublishResult(skill_id, ACTION_FAILED, name, str(exc))
+        return SkillActionResult(skill_id, ACTION_FAILED, name, str(exc))
 
     log.info("deleted %s", name)
-    return SkillPublishResult(skill_id, ACTION_DELETED, name)
+    return SkillActionResult(skill_id, ACTION_DELETED, name)
 
 
-def _run_publish(client, *, dry_run: bool) -> int:
+def _run_publish(client: "Client | None", *, dry_run: bool) -> int:
     results = publish_skills(client=client, dry_run=dry_run)
     published = [r for r in results if r.ok]
     failed = [r for r in results if r.action == ACTION_FAILED]
@@ -357,57 +469,47 @@ def _run_publish(client, *, dry_run: bool) -> int:
     verb = "Would publish" if dry_run else "Published"
     log.info("%s %d/%d skill(s).", verb, len(published), len(results))
     if skipped:
-        log.info("%s (%d skill(s) not published)", SKILL_REGISTRY_SKIP, len(skipped))
+        log.info("%s — %d skill(s) not published", _skip_message(), len(skipped))
     for result in failed:
         log.error("  FAILED %s: %s", result.skill_id, result.error)
     return 1 if failed else 0
 
 
-def _run_list(client) -> int:
+def _run_list(client: "Client | None") -> int:
     try:
         skills = list_skills(client=client)
     except Exception as exc:
-        if _is_registry_unavailable(exc):
-            log.info("%s (%s)", SKILL_REGISTRY_SKIP, exc)
-            return 0
-        log.error("FAILED to list skills: %s", exc)
-        return 1
+        return 0 if _log_skip_or_failure("list skills", exc) else 1
     if not skills:
-        log.info("No skills registered.")
+        log.info("No skills registered in project=%s, location=%s.", GCP_PROJECT_ID, GCP_REGION)
         return 0
     log.info("%d skill(s) registered:", len(skills))
     for skill in skills:
-        print(f"  {getattr(skill, 'name', '<unknown>')} — {getattr(skill, 'display_name', '')}")
+        # Attribute access, not getattr-with-a-default: see search_skills.
+        print(f"  {skill.name} — {skill.display_name or ''}")
     return 0
 
 
-def _run_search(client, query: str, *, top_k: int) -> int:
+def _run_search(client: "Client | None", query: str) -> int:
     try:
-        hits = search_skills(query, client=client, top_k=top_k)
+        hits = search_skills(query, client=client)
     except Exception as exc:
-        if _is_registry_unavailable(exc):
-            log.info("%s (%s)", SKILL_REGISTRY_SKIP, exc)
-            return 0
-        log.error("FAILED to search skills: %s", exc)
-        return 1
+        return 0 if _log_skip_or_failure("search skills", exc) else 1
     # No hits is a legitimate answer (and a useful negative result about
     # discoverability), not an error — exit 0 and say so.
     log.info("%d match(es) for %r:", len(hits), query)
     for hit in hits:
-        print(f"  {getattr(hit, 'skill_name', '<unknown>')} — {getattr(hit, 'description', '')}")
+        print(f"  {hit.skill_name} — {hit.description or ''}")
     return 0
 
 
-def _run_delete(client, skill_id: str, *, dry_run: bool) -> int:
-    try:
-        result = delete_skill(skill_id, client=client, dry_run=dry_run)
-    except Exception as exc:
-        if _is_registry_unavailable(exc):
-            log.info("%s (%s)", SKILL_REGISTRY_SKIP, exc)
-            return 0
-        log.error("FAILED to delete %s: %s", skill_id, exc)
-        return 1
-    return 1 if result.action == ACTION_FAILED else 0
+def _run_delete(client: "Client | None", skill_id: str, *, dry_run: bool) -> int:
+    # No try/except: delete_skill classifies every error it can raise itself, and
+    # the only thing that escapes it — SkillRegistryUnavailable from _skills_api —
+    # is what main's outer handler exists for. _run_publish relies on the same.
+    return (
+        1 if delete_skill(skill_id, client=client, dry_run=dry_run).action == ACTION_FAILED else 0
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -427,9 +529,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     group.add_argument("--delete", metavar="SKILL_ID", help="Delete one skill by id.")
     parser.add_argument(
-        "--top-k", type=int, default=DEFAULT_TOP_K, help="Hits to request for --search."
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Plan only — make no registry calls (--publish / --delete; the read-only "
@@ -446,22 +545,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             client = build_client()
         except Exception as exc:
-            if _is_registry_unavailable(exc):
-                log.info("%s (%s)", SKILL_REGISTRY_SKIP, exc)
-                return 0
-            log.error("FAILED to construct the Agent Platform client: %s", exc)
-            return 1
+            # The project/location are defaulted silently by build_client, so an
+            # operator reading this line otherwise cannot tell what it addressed.
+            what = (
+                "construct the Agent Platform client for "
+                f"project={GCP_PROJECT_ID}, location={GCP_REGION}"
+            )
+            return 0 if _log_skip_or_failure(what, exc) else 1
 
     try:
         if args.list:
             return _run_list(client)
         if args.search:
-            return _run_search(client, args.search, top_k=args.top_k)
+            return _run_search(client, args.search)
         if args.delete:
             return _run_delete(client, args.delete, dry_run=args.dry_run)
         return _run_publish(client, dry_run=args.dry_run)
     except SkillRegistryUnavailable as exc:
-        log.info("%s (%s)", SKILL_REGISTRY_SKIP, exc)
+        log.info("%s — %s", _skip_message(), exc)
         return 0
 
 
