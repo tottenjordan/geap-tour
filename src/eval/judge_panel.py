@@ -31,10 +31,20 @@ The aggregation core is pure Python (``math``/``statistics``) — no cloud.
 
 from __future__ import annotations
 
+import logging
 import math
+import os
 import statistics
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
+
+# Cap on concurrent ITEMS scored at once. Bounded for the same reason
+# _sdk_patches throttles AGENT_MAX_WORKERS: an unbounded fan-out over a large
+# evalset opens hundreds of sockets and trips the judge model's quota.
+PAIR_MAX_WORKERS = int(os.environ.get("JUDGE_PANEL_MAX_WORKERS", "8"))
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -144,7 +154,30 @@ def score_with_panel(
     verdict was unparseable), the robust ``median``, the ``spread``
     (disagreement), and ``n_valid`` (judges that produced a score).
     """
-    per_judge = [parse_fn(judge(prompt)) for judge in judges]
+
+    # Concurrent across judges. These are independent network calls to different
+    # models, so the serial version cost sum(latencies) per item — and the panel is
+    # the priciest scorer here, run per rubric per item by the hourly cron.
+    #
+    # A judge that RAISES is treated exactly like one that returns an unparseable
+    # verdict (None). The serial version had no such handling: one judge erroring
+    # took the whole batch down, which for a panel whose entire purpose is
+    # "no single autorater decides" is the wrong failure mode.
+    #
+    # Order is by index, not completion, because Krippendorff alpha reads per-item
+    # rows positionally — judge i must stay column i.
+    def _score_one(judge):
+        try:
+            return parse_fn(judge(prompt))
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("panel judge raised; treating as no verdict", exc_info=True)
+            return None
+
+    if len(judges) == 1:
+        per_judge = [_score_one(judges[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(judges)) as pool:
+            per_judge = list(pool.map(_score_one, judges))
     return {
         "per_judge": per_judge,
         "median": median_score(per_judge),
@@ -184,10 +217,21 @@ def score_pairs_with_panel(
     medians (unparseable items dropped, not zeroed), the scored/total counts, and
     a ``reliability`` block (:func:`panel_reliability`).
     """
+    # Concurrent across ITEMS as well as judges (score_with_panel fans out
+    # internally), so a run is bounded by the slowest call rather than the sum.
+    # Capped so a large evalset cannot open hundreds of sockets at once or trip
+    # the judge model's quota — the same reason _sdk_patches throttles
+    # AGENT_MAX_WORKERS rather than letting the SDK fan out to 20.
+    rendered = [build_prompt(prompt, response) for prompt, response in pairs]
+    if len(rendered) <= 1:
+        results = [score_with_panel(p, judges, parse_fn) for p in rendered]
+    else:
+        with ThreadPoolExecutor(max_workers=min(PAIR_MAX_WORKERS, len(rendered))) as pool:
+            results = list(pool.map(lambda p: score_with_panel(p, judges, parse_fn), rendered))
+
     medians: list[float] = []
     per_item_scores: list[list[float | None]] = []
-    for prompt, response in pairs:
-        result = score_with_panel(build_prompt(prompt, response), judges, parse_fn)
+    for result in results:
         per_item_scores.append(result["per_judge"])
         if result["median"] is not None:
             medians.append(result["median"])

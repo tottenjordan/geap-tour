@@ -21,7 +21,11 @@ from src.config import GCP_PROJECT_ID, GCP_REGION
 # argument.
 EVAL_IMAGE_REPO = os.environ.get("EVAL_IMAGE_REPO", "geap-eval")
 EVAL_IMAGE_NAME = os.environ.get("EVAL_IMAGE_NAME", "eval-runner")
-EVAL_IMAGE_TAG = os.environ.get("EVAL_IMAGE_TAG", "v3")
+# v4 (2026-09-09) is the first image built against ADK 2.8.0 + aiplatform 2.x.
+# The Dockerfile COPYs pyproject.toml, so this tag must move whenever the locked
+# deps do — otherwise the pipeline runs stale code and still SUCCEEDS, which is
+# the worst kind of wrong.
+EVAL_IMAGE_TAG = os.environ.get("EVAL_IMAGE_TAG", "v4")
 IMAGE = os.environ.get("EVAL_IMAGE") or (
     f"{GCP_REGION}-docker.pkg.dev/{GCP_PROJECT_ID}/"
     f"{EVAL_IMAGE_REPO}/{EVAL_IMAGE_NAME}:{EVAL_IMAGE_TAG}"

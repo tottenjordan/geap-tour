@@ -77,8 +77,30 @@ log = logging.getLogger(__name__)
 
 
 def _drain_stream(agent, *, user_id: str, session_id: str, message: str) -> str:
-    """Send one turn and concatenate the visible assistant text from the stream."""
-    response = agent.stream_query(user_id=user_id, session_id=session_id, message=message)
+    """Send one turn and concatenate the visible assistant text from the stream.
+
+    Falls back to the raw-SSE reader on the parser skew. A recycled-but-healthy
+    engine streams NDJSON that google-api-core's array-only parser rejects with
+    ``Can only parse array of JSON objects``; nine other modules already absorb
+    this via :mod:`src.eval.raw_stream`, and this one did not — so a healthy engine
+    reported ``DEMO READINESS: NOT READY`` on a check marked critical, while
+    ``engine_live`` passed on the same engine in the same run.
+
+    The fallback reuses the caller's ``session_id`` deliberately: cross-session
+    recall is *defined* by asking in a brand-new session B, so minting a fresh
+    session here would make the whole test vacuous.
+    """
+    from src.eval import raw_stream
+
+    try:
+        response = list(agent.stream_query(user_id=user_id, session_id=session_id, message=message))
+    except ValueError as exc:
+        resource = raw_stream.agent_resource_name(agent)
+        if not raw_stream.is_sse_parse_skew(exc) or not resource:
+            raise
+        response = raw_stream.stream_query_events(
+            resource, message=message, user_id=user_id, session_id=session_id
+        )
     return "".join(_extract_text(chunk) for chunk in response)
 
 

@@ -33,6 +33,7 @@ from vertexai import agent_engines
 
 from src.armor.config import model_armor_plugin
 from src.config import (
+    ADK_MAX_LLM_CALLS,
     AGENT_ANALYTICS_TABLE,
     AGENT_ENGINE_ID,
     AGENT_GATEWAY_EGRESS_PATH,
@@ -110,7 +111,13 @@ REQUIREMENTS = [
     # Raise this only together with the `google-adk` pin above, after checking the
     # symbol still exists: ADK and mcp move as a pair.
     "mcp>=1.29.0,<2",
-    "fastmcp>=2.0.0",
+    # Upper bound is load-bearing, same as `mcp` above and for the same reason:
+    # fastmcp 4.x REQUIRES mcp 2.x, which ADK cannot import
+    # (`No module named 'mcp.shared.session'`). Unbounded, this resolved correctly
+    # only because the resolver happened to backtrack off the `mcp<2` pin above —
+    # and the container's resolver is not guaranteed to be uv. State the constraint
+    # rather than inferring it. Mirrors the pin in pyproject.toml.
+    "fastmcp>=3.4.7,<4",
     "python-dotenv>=1.0.0",
     "litellm>=1.83.14",
     "pydantic>=2.12.5",
@@ -421,6 +428,13 @@ def _build_config(
     """
     env_vars = {
         **OTEL_ENV_VARS,
+        # Runaway-loop ceiling (ADK 2.8.0). An agent that keeps calling its model
+        # burns quota and wall-clock with no natural stop, and this repo has been
+        # bitten twice by unbounded behaviour reaching production — an uncapped MCP
+        # tool payload that tripped the GenerateContent quota, and an unconstrained
+        # `mcp` dependency. A ceiling well above any legitimate turn costs nothing
+        # and converts "silently expensive" into a bounded, visible failure.
+        "ADK_MAX_LLM_CALLS": str(ADK_MAX_LLM_CALLS),
         "GCP_PROJECT_ID": GCP_PROJECT_ID,
         "GCP_REGION": GCP_REGION,
         "SEARCH_MCP_URL": SEARCH_MCP_URL,
@@ -560,7 +574,13 @@ def deploy_agent(
     floor = DEFAULT_MIN_INSTANCES if min_instances is None else min_instances
     config = _build_config(agent, display_name, min_instances=floor, memory=memory)
 
-    remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
+    # client.runtimes, not client.agent_engines: aiplatform 2.x removed the latter
+    # from the Client as part of the Agent Engines -> Agent Runtime rename. Same
+    # kwargs. NOTE this line is only ever exercised by a real deploy — every deploy
+    # test injects a fake client, so a fake will happily keep answering an attribute
+    # the SDK has deleted. tests/test_deploy_agents.py asserts against the REAL
+    # client surface for exactly that reason.
+    remote = _get_client().runtimes.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
     print(f"  Created: {resource_name}")
     return resource_name
@@ -588,7 +608,7 @@ def update_agent(
     print(f"\n--- Updating {agent.name} ({engine_id.split('/')[-1]}) ---")
     config = _build_config(agent, display_name, min_instances=min_instances, memory=memory)
 
-    remote = _get_client().agent_engines.update(
+    remote = _get_client().runtimes.update(  # see create_agent: 2.x renamed this
         name=engine_id,
         agent=_build_app(agent),
         config=config,

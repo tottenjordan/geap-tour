@@ -196,3 +196,46 @@ Diagnose with a single tightly-bounded Cloud Trace read (the read quota is
   each turn EMPTY / PARTIAL / FULL via the raw-SSE client.
 - `src/eval/raw_stream.py` — client-side SSE fallback; the SDK `stream_query`
   skews on NDJSON (see `agent-engine-sse-stream-parse.md`).
+
+## Could the router be a `google.adk.workflow` graph? Not yet (spike, 2026-09-08)
+
+ADK 2.8.0 ships the graph Workflow Runtime, whose conditional routes are the
+first-party equivalent of this repo's largest hand-rolled subsystem — the
+`before_agent_callback` classifier plus `TierRoutingLlm` swapping the model per turn.
+Spiked with `src/eval/spike_graph_router.py` (re-runnable).
+
+**The mechanism works.** A `classify -> {lite, flash}` graph routes and streams:
+2 events, 344 characters through `AdkApp.stream_query`. So unlike `transfer_to_agent`,
+graph routing is not structurally silent. That is the good news, and it is real.
+
+**Three findings say "not yet" anyway.**
+
+1. **A mis-emitted route is a silent empty stream.** Routes come from
+   `EventActions(route=...)` on a yielded `Event`; a node that *returns* its route key
+   sets the node's **output**, not its route. The graph then logs
+   `"...none were matched by the emitted route(s): None. The branch will end."` and
+   emits **0 characters at HTTP 200**. Measured in the spike. This repo has spent
+   enormous effort eliminating empty-at-200 — four distinct causes, a field guide, a
+   retry wrapper, infra-empty partitioning — and this is a fifth, reachable through a
+   brand-new mechanism, distinguishable from success only by a log line.
+2. **`Workflow` is not a `BaseAgent`** (MRO: `BaseNode -> BaseModel -> ABC`). `AdkApp`
+   duck-types it and `set_up()` succeeds, but the `root_agent` convention,
+   `_wants_memory()`, `engine_baseline` and the agent-config tests all assume a
+   `BaseAgent`. Broad blast radius for no new capability.
+3. **Two hard-won protections are attached to the model wrapper, not the agent.**
+   `RetryingLlm`'s silent-turn retry and `restore_tool_call_ids` (the Claude
+   mixed-tier fix) live in `TierRoutingLlm._select`. A graph routes to different
+   *agent nodes*, so both would need re-plumbing per node — and the tool-call-id bug
+   only reproduces in a mixed-tier session, so a regression there would be invisible
+   until a Claude turn followed a Gemini one in production.
+
+**Verdict: keep `TierRoutingLlm`.** The graph buys different syntax for routing that
+already works, and costs a new silent-empty failure mode plus re-plumbing two fixes
+that were each paid for by an outage. **Not tested on a deployed managed engine** —
+the spike runs locally, and local-vs-managed is exactly the distinction that made
+`transfer_to_agent` fail, so treat "it streams" as necessary, not sufficient.
+
+Re-run the spike when ADK's graph runtime matures; the verdict is about maturity, not
+impossibility. The thing that would change it: routes becoming a typed return value
+rather than a hand-built `Event`, so a mis-route is a type error instead of an empty
+stream.

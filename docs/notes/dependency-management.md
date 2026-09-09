@@ -78,3 +78,21 @@ uv run python -m src.eval.multi_agent_batch_eval --agents coordinator_agent \
 uv run python -m src.eval.verify_memory --user-id alice --engine-id <PROBE_ENGINE_ID>
 uv run python -m src.eval.verify_mcp_tools --json
 ```
+
+
+*Resolve the SERVING requirement set before deploying.* `deploy_agents.REQUIREMENTS`
+is a separately-resolved dependency list, and the container is where this repo's worst
+outages land. Copy it into a throwaway project and `uv lock` it — seconds, no deploy:
+
+```bash
+# Write deploy_agents.REQUIREMENTS into a scratch pyproject, then resolve it:
+uv run python -c "
+import json
+from src.deploy.deploy_agents import REQUIREMENTS
+print(json.dumps(REQUIREMENTS))"          # paste into /tmp/scratch/pyproject.toml
+cd /tmp/scratch && uv lock                 # must resolve fastmcp 3.x, mcp <2
+```
+
+Cheap as it is, it is still only a proxy: on 2026-09-09 the set resolved cleanly and
+the deploy *still* failed twice, on API changes no resolver can see. Resolution is
+necessary, not sufficient — follow it with a real deploy to the probe engine.

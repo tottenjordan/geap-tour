@@ -44,6 +44,26 @@ def get_model_armor_config() -> ModelArmorConfig:
     )
 
 
+def model_id(model: object) -> str | None:
+    """Normalize an agent's ``.model`` to a model-id string.
+
+    ``agent.model`` is NOT reliably a string here. The coordinator's is a
+    :class:`src.models.quota_retry.RetryingLlm` and the router's a
+    ``TierRoutingLlm``; both are ``BaseLlm`` wrappers carrying the id on ``.model``.
+    Passing the wrapper straight into the family check raised
+    ``'RetryingLlm' object has no attribute 'startswith'`` **at deploy time** — not
+    in any test, because the deploy tests build fake agents whose ``.model`` is a
+    plain string.
+
+    Unwraps one level and stops; nothing here nests wrappers, and a silent deep
+    search would hide a shape we would rather see fail.
+    """
+    if model is None or isinstance(model, str):
+        return model
+    inner = getattr(model, "model", None)
+    return inner if isinstance(inner, str) else None
+
+
 def _is_regional_gemini(model: str | None) -> bool:
     """True for Gemini-2.x / ``models/`` ids that serve on the regional endpoint.
 
@@ -90,6 +110,7 @@ def model_armor_plugin(model: str | None = None):
     """
     if not config.ENABLE_MODEL_ARMOR_PLUGIN:
         return None
+    model = model_id(model)
     if _is_regional_gemini(model):
         return None  # templates already cover this backbone natively
     try:

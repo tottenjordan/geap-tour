@@ -168,7 +168,7 @@ def run_one_arm(agent_id: str, limit: int | None) -> dict:
     arn = _resolve_agent_resource_name(agent_id)
 
     try:
-        warm_agent_engine(vertexai.agent_engines.get(name=arn))
+        warm_agent_engine(vertexai.agent_engines.get(arn))
     except Exception as exc:  # warmup is best-effort, exactly as in the real eval
         print(f"  warmup skipped: {exc}", file=sys.stderr)
 
