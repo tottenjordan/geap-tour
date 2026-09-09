@@ -65,7 +65,7 @@ class _FakeAgentEngines:
 
 class _FakeClient:
     def __init__(self):
-        self.agent_engines = _FakeAgentEngines()
+        self.runtimes = _FakeAgentEngines()  # aiplatform 2.x renamed this
 
 
 class TestWantsMemory:
@@ -114,7 +114,7 @@ class TestDeployWiring:
         resource = da.deploy_agent(_memory_agent())
 
         assert resource.endswith("999")
-        passed = client.agent_engines.create_kwargs["agent"]
+        passed = client.runtimes.create_kwargs["agent"]
         assert isinstance(passed, _FakeAdkApp)
         assert passed.kwargs["memory_service_builder"] is da._memory_service_builder
         assert passed.kwargs["session_service_builder"] is da._session_service_builder
@@ -127,7 +127,7 @@ class TestDeployWiring:
 
         da.update_agent(_memory_agent(), "123")
 
-        passed = client.agent_engines.update_kwargs["agent"]
+        passed = client.runtimes.update_kwargs["agent"]
         assert isinstance(passed, _FakeAdkApp)
         assert passed.kwargs["session_service_builder"] is da._session_service_builder
 
@@ -141,7 +141,7 @@ class TestDeployWiring:
         agent = _plain_agent()
         da.deploy_agent(agent)
 
-        passed = client.agent_engines.create_kwargs["agent"]
+        passed = client.runtimes.create_kwargs["agent"]
         assert isinstance(passed, _FakeAdkApp)
         assert passed.kwargs["agent"] is agent
         assert passed.kwargs["session_service_builder"] is da._session_service_builder

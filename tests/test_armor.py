@@ -283,3 +283,49 @@ class TestArmorIsNeverSilentlyAbsent:
             assert layers["server_side"] or layers["plugin"], (
                 f"{model} cannot get a server-side layer at all"
             )
+
+
+class TestArmorAcceptsARealAgentsModel:
+    """`agent.model` is a BaseLlm wrapper, not a string, on every real agent here.
+
+    Passing it straight into the family check raised
+    `'RetryingLlm' object has no attribute 'startswith'` AT DEPLOY TIME. No test
+    caught it because the deploy tests build fake agents whose `.model` is a plain
+    string — so these use the REAL agents.
+    """
+
+    def test_the_real_coordinator_model_normalizes(self):
+        from src.agents.coordinator_agent import coordinator_agent
+        from src.armor.config import model_id
+
+        resolved = model_id(coordinator_agent.model)
+        assert isinstance(resolved, str) and resolved, (
+            f"coordinator .model is {type(coordinator_agent.model).__name__}; "
+            "model_id must unwrap it to an id string"
+        )
+
+    def test_the_real_router_model_normalizes(self):
+        from src.armor.config import model_id
+        from src.router.agents import root_agent
+
+        assert isinstance(model_id(root_agent.model), str | type(None))
+
+    def test_plugin_selection_survives_a_wrapped_model(self, monkeypatch):
+        """The actual crash: model_armor_plugin() called with a wrapper."""
+        from src import config as cfg
+        from src.agents.coordinator_agent import coordinator_agent
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", True)
+        armor_cfg.model_armor_plugin(coordinator_agent.model)  # must not raise
+
+    def test_a_plain_string_still_works(self):
+        from src.armor.config import model_id
+
+        assert model_id("gemini-2.5-flash") == "gemini-2.5-flash"
+        assert model_id(None) is None
+
+    def test_an_unrecognised_shape_degrades_to_none_not_a_crash(self):
+        from src.armor.config import model_id
+
+        assert model_id(object()) is None

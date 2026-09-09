@@ -30,7 +30,7 @@ class _FakeAgentEngines:
 
 class _FakeClient:
     def __init__(self):
-        self.agent_engines = _FakeAgentEngines()
+        self.runtimes = _FakeAgentEngines()  # aiplatform 2.x renamed this
 
 
 def _stub_deploy(monkeypatch, tmp_path, agent_name, set_name):
@@ -469,3 +469,61 @@ class TestDeployedRequirementsMatchTheTestedEnvironment:
         assert not mismatched, (
             f"the deployed dependency set excludes the versions the tests run against: {mismatched}"
         )
+
+
+class TestTheDeployPathUsesAnApiThatExists:
+    """`create` / `update` broke on aiplatform 2.x and 1648 tests did not notice.
+
+    `Client.agent_engines` was removed in 2.x (renamed to `client.runtimes`). The
+    eval call sites were migrated; `deploy_agents.create_agent` / `update_agent`
+    were missed, so NO deploy of any kind worked:
+
+        AttributeError: 'Client' object has no attribute 'agent_engines'
+
+    Nothing caught it because every deploy test injects a fake client, so the
+    fakes kept answering `.agent_engines` long after the real SDK stopped. It
+    surfaced only on a real deploy — the same shape as the mcp 2.x outage, where
+    the deployed artifact was the one thing the suite could not speak for.
+
+    These assert against the REAL client surface, not a fake.
+    """
+
+    def test_the_client_really_exposes_what_deploy_calls(self):
+        """The load-bearing one: whatever attribute deploy_agents reaches for must
+        exist on a genuine agentplatform Client."""
+        import agentplatform
+
+        from src.config import GCP_PROJECT_ID, GCP_REGION
+
+        client = agentplatform.Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+        assert hasattr(client, "runtimes"), "the deploy surface moved again"
+        for method in ("create", "update", "get", "delete", "list"):
+            assert hasattr(client.runtimes, method), f"runtimes.{method} is gone"
+
+    def test_deploy_agents_does_not_reference_the_removed_attribute(self):
+        """`client.agent_engines` no longer exists on the Client in aiplatform 2.x.
+        (The module-level `vertexai.agent_engines` is a different thing and is
+        still fine — this only bans the Client attribute.)"""
+        import pathlib
+
+        src = pathlib.Path(__file__).resolve().parents[1] / "src/deploy/deploy_agents.py"
+        body = "\n".join(
+            ln for ln in src.read_text().splitlines() if not ln.lstrip().startswith("#")
+        )
+        assert "_get_client().agent_engines" not in body
+        assert "client.agent_engines" not in body
+
+    def test_create_and_update_signatures_still_match_our_kwargs(self):
+        """We call create(agent=, config=) and update(name=, agent=, config=). A
+        signature change would fail at deploy time, not import time."""
+        import inspect
+
+        import agentplatform
+
+        from src.config import GCP_PROJECT_ID, GCP_REGION
+
+        runtimes = agentplatform.Client(project=GCP_PROJECT_ID, location=GCP_REGION).runtimes
+        create = inspect.signature(runtimes.create).parameters
+        update = inspect.signature(runtimes.update).parameters
+        assert {"agent", "config"} <= set(create)
+        assert {"name", "agent", "config"} <= set(update)

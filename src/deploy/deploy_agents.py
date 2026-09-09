@@ -574,7 +574,13 @@ def deploy_agent(
     floor = DEFAULT_MIN_INSTANCES if min_instances is None else min_instances
     config = _build_config(agent, display_name, min_instances=floor, memory=memory)
 
-    remote = _get_client().agent_engines.create(agent=_build_app(agent), config=config)
+    # client.runtimes, not client.agent_engines: aiplatform 2.x removed the latter
+    # from the Client as part of the Agent Engines -> Agent Runtime rename. Same
+    # kwargs. NOTE this line is only ever exercised by a real deploy — every deploy
+    # test injects a fake client, so a fake will happily keep answering an attribute
+    # the SDK has deleted. tests/test_deploy_agents.py asserts against the REAL
+    # client surface for exactly that reason.
+    remote = _get_client().runtimes.create(agent=_build_app(agent), config=config)
     resource_name = getattr(remote, "resource_name", None) or remote.api_resource.name
     print(f"  Created: {resource_name}")
     return resource_name
@@ -602,7 +608,7 @@ def update_agent(
     print(f"\n--- Updating {agent.name} ({engine_id.split('/')[-1]}) ---")
     config = _build_config(agent, display_name, min_instances=min_instances, memory=memory)
 
-    remote = _get_client().agent_engines.update(
+    remote = _get_client().runtimes.update(  # see create_agent: 2.x renamed this
         name=engine_id,
         agent=_build_app(agent),
         config=config,
