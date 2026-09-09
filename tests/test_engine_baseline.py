@@ -189,13 +189,27 @@ class TestAdvisories:
         assert f.severity == "advisory"
         assert "scale to zero" in f.observed
 
-    def test_gemini3_coordinator_reports_armor_as_client_side_only(self):
+    def test_a_gemini3_coordinator_with_no_armor_layer_is_CRITICAL(self):
+        """Escalated from advisory 2026-09-09, once ENABLE_MODEL_ARMOR_PLUGIN was
+        measured and defaulted on. An engine serving with only the client-side
+        blocklist now fails config verification instead of emitting a finding
+        nobody has to act on."""
         env = _good_env()
         env["COORDINATOR_MODEL"] = "gemini-3.5-flash"
         f = _find(eb.evaluate(_good_spec(env=env), "coordinator"), "server_side_armor")
         assert not f.ok
-        assert f.severity == "advisory"
+        assert f.severity == "critical"
         assert "client-side guardrail only" in f.observed
+
+    def test_the_plugin_flag_satisfies_the_critical_check(self):
+        """The escalation is only fair because a remedy ships: a Gemini-3 engine
+        carrying ENABLE_MODEL_ARMOR_PLUGIN=1 must pass."""
+        env = _good_env()
+        env["COORDINATOR_MODEL"] = "gemini-3.5-flash"
+        env["ENABLE_MODEL_ARMOR_PLUGIN"] = "1"
+        f = _find(eb.evaluate(_good_spec(env=env), "coordinator"), "server_side_armor")
+        assert f.ok
+        assert "ModelArmorPlugin active" in f.observed
 
     def test_a_claude_coordinator_also_loses_server_side_armor(self):
         env = _good_env()

@@ -270,7 +270,7 @@ COORDINATOR_CHECKS: tuple[Check, ...] = (
     ),
     Check(
         name="server_side_armor",
-        severity="advisory",
+        severity="critical",
         expected="a server-side armor layer: templates (Gemini-2.x) or the ADK plugin",
         why=(
             "Model Armor templates are region-scoped and only honored for a "
@@ -284,9 +284,13 @@ COORDINATOR_CHECKS: tuple[Check, ...] = (
             "gemini-3.5-flash — the next deploy would drop to one layer. ADK 2.8.0 "
             "offers a REMEDY that did not exist before: the model-family-independent "
             "ModelArmorPlugin, behind ENABLE_MODEL_ARMOR_PLUGIN. This check now "
-            "accepts either layer. It stays ADVISORY until that flag is rolled out; "
-            "making it critical first would red engines for a gap with no deployed "
-            "fix yet."
+            "accepts either layer. ESCALATED TO CRITICAL 2026-09-09, once the remedy "
+            "was measured (the plugin blocked an injection BOTH the client blocklist "
+            "and the templates let through) and defaulted on. Escalating earlier "
+            "would have redded engines for a gap with no deployed fix; escalating "
+            "now costs nothing — both live engines are gemini-2.5-flash and pass on "
+            "templates — and means the next Gemini-3 deploy cannot land unarmored "
+            "in silence."
         ),
         predicate=lambda s: _armor_observation(s),
     ),
