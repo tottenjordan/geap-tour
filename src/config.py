@@ -148,6 +148,31 @@ ENABLE_MEMORY_PRELOAD_CACHE = os.environ.get("ENABLE_MEMORY_PRELOAD_CACHE", "0")
     "True",
 )
 
+# Skill Registry runtime discovery (opt-in; default off = the coordinator's
+# current tool surface, unchanged). ENABLE_SKILL_REGISTRY=1 hands the coordinator
+# a SkillToolset over the Gemini Enterprise Skill Registry (src/skills/toolset.py)
+# so it can search and load the skills published by src.skills.publish_skills at
+# run time, instead of carrying that procedure in its own instruction.
+#
+# Default OFF deliberately, and not as a formality: the toolset ADDS tools to the
+# coordinator's surface, and the tool surface is an input to `tool_use_accuracy`
+# — one of the three rubric metrics behind the monitored `agent_eval/*` series.
+# Flipping the default is a follow-up that has to be backed by a measurement of
+# that series, not by the assumption that more tools cannot hurt. Unset ⇒
+# byte-identical behavior, the same contract as ENABLE_MEMORY_PRELOAD_CACHE.
+ENABLE_SKILL_REGISTRY = os.environ.get("ENABLE_SKILL_REGISTRY", "0") in ("1", "true", "True")
+
+# The ONE location both halves of the Skill Registry integration use: the
+# publisher (src.skills.publish_skills) writes skills to it and the coordinator's
+# toolset (src.skills.toolset) reads them from it. They are separate modules
+# talking to the same API, so if they ever resolve different values the publisher
+# writes skills where the agent never looks — a failure with no local symptom at
+# all, since every offline test passes either way. Hence one constant, defaulting
+# to GCP_REGION so the two agree unless deliberately overridden, and an override
+# moves BOTH sides (deploy_agents bakes it alongside the flag so the deployed
+# engine resolves the same one).
+SKILL_REGISTRY_LOCATION = os.environ.get("SKILL_REGISTRY_LOCATION") or GCP_REGION
+
 
 def _optional_int_env(name: str) -> int | None:
     """Parse an optional int env var; unset/blank/invalid → None (feature off)."""

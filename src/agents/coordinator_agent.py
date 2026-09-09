@@ -21,12 +21,14 @@ from src.config import (
     COORDINATOR_MODEL,
     ENABLE_MEMORY_BANK,
     ENABLE_MEMORY_PRELOAD_CACHE,
+    ENABLE_SKILL_REGISTRY,
     EXPENSE_MCP_SERVER,
     SEARCH_MCP_SERVER,
 )
 from src.models.quota_retry import retrying_model
 from src.observability.tracing import set_span_attributes, traced
 from src.registry import get_mcp_tools
+from src.skills.toolset import get_skill_toolset
 
 # GEPA-optimized (opt-20260807-v6, candidate 2: valset 0.88 -> 1.0). Ported from
 # the optimizer sandbox (src/agents/coordinator/agent.py).
@@ -135,9 +137,35 @@ def _build_memory_tools(*, enable_bank: bool, enable_cache: bool) -> list:
     return [CachingPreloadMemoryTool() if enable_cache else PreloadMemoryTool()]
 
 
+# Skill Registry discovery is opt-in (ENABLE_SKILL_REGISTRY, default off) because
+# the toolset changes the coordinator's TOOL SURFACE, which is an input to
+# tool_use_accuracy and so to the monitored agent_eval/* series — see src/config.py.
+# Flag off returns [], so the splat into `tools=[...]` below contributes nothing
+# and the tool list is exactly what it was before this existed.
+def _build_skill_tools(*, enable: bool) -> list:
+    """Select the Skill Registry toolset for the coordinator's tool list.
+
+    - flag off → no skill tools (the shipped default).
+    - flag on, registry reachable → one ``SkillToolset``: the agent gets
+      ``search_skills``/``load_skill`` and fetches procedure at run time.
+    - flag on, registry unavailable → no skill tools, plus a WARNING from
+      ``get_skill_toolset``. The Skill Registry is a preview surface and this
+      runs at *import* time, so an agent that cannot reach it must still come up.
+
+    Takes its flag as an argument (like ``_build_memory_tools``) so all three
+    outcomes are testable without importing the agent under three env
+    permutations.
+    """
+    if not enable:
+        return []
+    toolset = get_skill_toolset()
+    return [toolset] if toolset is not None else []
+
+
 _memory_tools = _build_memory_tools(
     enable_bank=ENABLE_MEMORY_BANK, enable_cache=ENABLE_MEMORY_PRELOAD_CACHE
 )
+_skill_tools = _build_skill_tools(enable=ENABLE_SKILL_REGISTRY)
 _after_callback = save_memories_callback if ENABLE_MEMORY_BANK else None
 
 coordinator_agent = LlmAgent(
@@ -165,6 +193,11 @@ coordinator_agent = LlmAgent(
         get_mcp_tools(BOOKING_MCP_SERVER),
         get_mcp_tools(EXPENSE_MCP_SERVER),
         *_memory_tools,
+        # Skill Registry toolset — empty unless ENABLE_SKILL_REGISTRY=1, so the
+        # default surface is unchanged. When on, it adds search_skills/load_skill
+        # (ADK's SkillToolset) and the coordinator pulls a published skill's
+        # procedure on demand instead of carrying it in INSTRUCTION.
+        *_skill_tools,
         # No AgentTools: travel_agent/expense_agent were never called (0 across a
         # 10-invocation trace census) and delegation lands on the non-streaming
         # path above. They remain as independently deployed + evaluated agents

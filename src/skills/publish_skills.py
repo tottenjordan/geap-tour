@@ -54,7 +54,13 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.config import GCP_PROJECT_ID, GCP_REGION
+# SKILL_REGISTRY_LOCATION, never GCP_REGION: the publisher writes skills to the
+# location the coordinator's toolset (src/skills/toolset.py) reads them from,
+# and the only way to keep those two from drifting apart — a drift with no
+# local symptom, since both sides pass every offline test either way — is for
+# both to read one constant. It defaults to GCP_REGION, so the default
+# behaviour is unchanged; an override moves both halves at once.
+from src.config import GCP_PROJECT_ID, SKILL_REGISTRY_LOCATION
 from src.skills.definitions import SKILL_DEFINITIONS, SkillDefinition, materialize_skill
 
 if TYPE_CHECKING:  # import cost + the SDK is optional at runtime; annotations only
@@ -97,12 +103,12 @@ class SkillRegistryUnavailable(RuntimeError):
     """
 
 
-def _skip_message(project: str = GCP_PROJECT_ID, location: str = GCP_REGION) -> str:
+def _skip_message(project: str = GCP_PROJECT_ID, location: str = SKILL_REGISTRY_LOCATION) -> str:
     """The skip line, always naming what it tried to reach.
 
     "preview not enabled" mid-demo begs one question — *which project and
     region?* — and :func:`build_client` defaults both silently, so a skip caused
-    by a mis-set ``GCP_REGION`` looks identical to one caused by a genuinely
+    by a mis-set location looks identical to one caused by a genuinely
     unserved preview unless the message says.
     """
     return f"{SKILL_REGISTRY_SKIP} (project={project}, location={location})"
@@ -126,7 +132,9 @@ class SkillActionResult:
         return self.action in _SUCCESSFUL_ACTIONS
 
 
-def build_client(project: str = GCP_PROJECT_ID, location: str = GCP_REGION) -> "Client":
+def build_client(
+    project: str = GCP_PROJECT_ID, location: str = SKILL_REGISTRY_LOCATION
+) -> "Client":
     """Construct the Agent Platform client the Skill Registry lives on.
 
     ``agentplatform.Client``, never ``vertexai.Client``: they are separate module
@@ -143,7 +151,7 @@ def build_client(project: str = GCP_PROJECT_ID, location: str = GCP_REGION) -> "
 
 
 def skill_resource_name(
-    skill_id: str, *, project: str = GCP_PROJECT_ID, location: str = GCP_REGION
+    skill_id: str, *, project: str = GCP_PROJECT_ID, location: str = SKILL_REGISTRY_LOCATION
 ) -> str:
     """Absolute resource name for a skill id.
 
@@ -446,7 +454,7 @@ def delete_skill(
             "(project=%s, location=%s) — `--list` shows what is there",
             skill_id,
             GCP_PROJECT_ID,
-            GCP_REGION,
+            SKILL_REGISTRY_LOCATION,
         )
         return SkillActionResult(skill_id, ACTION_FAILED, name, "no such skill")
 
@@ -481,7 +489,11 @@ def _run_list(client: "Client | None") -> int:
     except Exception as exc:
         return 0 if _log_skip_or_failure("list skills", exc) else 1
     if not skills:
-        log.info("No skills registered in project=%s, location=%s.", GCP_PROJECT_ID, GCP_REGION)
+        log.info(
+            "No skills registered in project=%s, location=%s.",
+            GCP_PROJECT_ID,
+            SKILL_REGISTRY_LOCATION,
+        )
         return 0
     log.info("%d skill(s) registered:", len(skills))
     for skill in skills:
@@ -549,7 +561,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # operator reading this line otherwise cannot tell what it addressed.
             what = (
                 "construct the Agent Platform client for "
-                f"project={GCP_PROJECT_ID}, location={GCP_REGION}"
+                f"project={GCP_PROJECT_ID}, location={SKILL_REGISTRY_LOCATION}"
             )
             return 0 if _log_skip_or_failure(what, exc) else 1
 

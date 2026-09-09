@@ -52,6 +52,7 @@ from src.config import (
     ENABLE_MEMORY_BANK,
     ENABLE_MEMORY_PRELOAD_CACHE,
     ENABLE_MODEL_ARMOR_PLUGIN,
+    ENABLE_SKILL_REGISTRY,
     ENABLE_SPAN_CONTENT_CAPTURE,
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
@@ -71,6 +72,7 @@ from src.config import (
     ROUTER_MODEL,
     SEARCH_MCP_SERVER,
     SEARCH_MCP_URL,
+    SKILL_REGISTRY_LOCATION,
     SONNET_MODEL,
     TRAVEL_MODEL,
 )
@@ -509,6 +511,18 @@ def _build_config(
     # default deploys keep byte-identical env.
     if ENABLE_MEMORY_PRELOAD_CACHE:
         env_vars["ENABLE_MEMORY_PRELOAD_CACHE"] = "1"
+
+    # Skill Registry discovery (opt-in). Same reason as the memory-preload cache:
+    # the coordinator picks its tool list at import time INSIDE the container, so
+    # a flag that exists only in the operator's shell yields a deployed agent with
+    # no skill tools while every local test says it has them — invisible until
+    # someone asks the live engine. The LOCATION is baked alongside because the
+    # container's GCP_REGION is not necessarily the registry location: if the
+    # engine resolved a different one than src.skills.publish_skills wrote to, it
+    # would find an empty registry and report no skills rather than an error.
+    if ENABLE_SKILL_REGISTRY:
+        env_vars["ENABLE_SKILL_REGISTRY"] = "1"
+        env_vars["SKILL_REGISTRY_LOCATION"] = SKILL_REGISTRY_LOCATION
 
     # Model Armor plugin (opt-in server-side layer). Baked so a deployed engine's
     # spec records which armor layers it actually serves with — engine_baseline's
