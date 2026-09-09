@@ -33,28 +33,6 @@ def test_coordinator_agent_config():
     assert [t for t in coordinator_agent.tools if isinstance(t, SkillToolset)] == []
 
 
-def test_coordinator_tool_surface_with_skill_registry_enabled(monkeypatch):
-    """Flag ON adds exactly one tool, the ``SkillToolset`` — nothing else.
-
-    Paired with the exact count above, this pins the surface in both directions.
-    The stronger property — that flag-off is byte-identical to the pre-feature
-    agent, ordering and every other field included — is proved by rebuilding the
-    module under both flag values in
-    ``tests/test_skill_toolset.py::TestCoordinatorWiring``.
-    """
-    from google.adk.tools.skill_toolset import SkillToolset
-
-    from src.agents import coordinator_agent as mod
-
-    toolset = SkillToolset()
-    monkeypatch.setattr(mod, "get_skill_toolset", lambda: toolset)
-
-    tools = [*mod.coordinator_agent.tools, *mod._build_skill_tools(enable=True)]
-
-    assert len(tools) == 5
-    assert tools[-1] is toolset
-
-
 def test_every_agent_disables_afc():
     """AFC is on by default in google-genai and ADK never turns it off, so each
     agent carries the switch on its own generate_content_config. Pinning the

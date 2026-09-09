@@ -516,10 +516,9 @@ def _build_config(
     # the coordinator picks its tool list at import time INSIDE the container, so
     # a flag that exists only in the operator's shell yields a deployed agent with
     # no skill tools while every local test says it has them — invisible until
-    # someone asks the live engine. The LOCATION is baked alongside because the
-    # container's GCP_REGION is not necessarily the registry location: if the
-    # engine resolved a different one than src.skills.publish_skills wrote to, it
-    # would find an empty registry and report no skills rather than an error.
+    # someone asks the live engine. The LOCATION rides along because the
+    # container's GCP_REGION is not necessarily the registry location (see
+    # src/config.py:SKILL_REGISTRY_LOCATION).
     if ENABLE_SKILL_REGISTRY:
         env_vars["ENABLE_SKILL_REGISTRY"] = "1"
         env_vars["SKILL_REGISTRY_LOCATION"] = SKILL_REGISTRY_LOCATION

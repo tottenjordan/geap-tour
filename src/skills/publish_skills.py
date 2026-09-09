@@ -54,12 +54,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-# SKILL_REGISTRY_LOCATION, never GCP_REGION: the publisher writes skills to the
-# location the coordinator's toolset (src/skills/toolset.py) reads them from,
-# and the only way to keep those two from drifting apart — a drift with no
-# local symptom, since both sides pass every offline test either way — is for
-# both to read one constant. It defaults to GCP_REGION, so the default
-# behaviour is unchanged; an override moves both halves at once.
+# SKILL_REGISTRY_LOCATION, never GCP_REGION — the publisher must write where the
+# coordinator's toolset reads; see src/config.py for why that is one constant.
 from src.config import GCP_PROJECT_ID, SKILL_REGISTRY_LOCATION
 from src.skills.definitions import SKILL_DEFINITIONS, SkillDefinition, materialize_skill
 

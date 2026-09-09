@@ -18,11 +18,9 @@ Three properties, and each one is written so that it can actually fail:
   rebuilding the coordinator module under both flag values and diffing the
   results, rather than trusting the default.
 
-* **The publisher and the toolset agree on one location.** They are separate
-  modules that talk to the same registry; if they resolve different locations
-  the publisher writes skills where the agent never looks, and every offline
-  test still passes. ``TestLocationIsOneSourceOfTruth`` moves the override and
-  checks that *both* halves follow it.
+* **The publisher and the toolset agree on one location.**
+  ``TestLocationIsOneSourceOfTruth`` moves the override and checks that *both*
+  halves follow it (rationale: ``src/config.py:SKILL_REGISTRY_LOCATION``).
 """
 
 import asyncio
@@ -70,20 +68,29 @@ class TestGetSkillToolset:
         toolset = get_skill_toolset()
 
         assert toolset._code_executor is None
-        assert toolset._env is None
+        # ``skills_folder`` is None iff neither a folder nor an environment was
+        # given — the public read of ``_env is None``.
+        assert toolset.skills_folder is None
 
-    def test_exposes_the_registry_search_and_load_tools(self):
+    def test_exposes_exactly_the_four_useful_tools(self):
         """The point of the toolset: discovery at run time, not a baked list.
 
         ``search_skills`` exists only when a registry is configured (ADK adds
         ``SearchSkillsTool`` conditionally), so its presence is the observable
         proof that the registry actually reached the toolset.
+
+        Exact set, not a subset: ADK builds ``RunSkillScriptTool``
+        unconditionally and declares it to the model even with no executor and
+        no environment, so without the ``tool_filter`` the coordinator grows a
+        fifth callable tool that — our skills being instruction-only — can only
+        return ``SCRIPT_NOT_FOUND``. This fails if it comes back.
         """
         toolset = get_skill_toolset()
         assert toolset is not None
 
         names = {t.name for t in asyncio.run(toolset.get_tools())}
-        assert {"search_skills", "list_skills", "load_skill"} <= names
+        assert names == {"list_skills", "load_skill", "load_skill_resource", "search_skills"}
+        assert "run_skill_script" not in names
 
     def test_a_construction_failure_is_none_plus_a_named_warning(self, caplog, monkeypatch):
         """The ``get_mcp_tools`` posture: degrade, but never silently.
@@ -124,6 +131,23 @@ class TestGetSkillToolset:
             assert get_skill_toolset(registry_factory=_boom) is None
 
         assert "unexpected keyword argument" in caplog.text
+        # The type is what makes a broad handler diagnosable: ImportError (ADK
+        # too old) vs TypeError (our call shape) vs ValueError (bad config) are
+        # three different fixes, and a message-less exception renders as nothing
+        # at all without it.
+        assert "TypeError" in caplog.text
+
+    def test_the_warning_survives_a_message_less_exception(self, caplog):
+        """``raise ValueError()`` must not log an empty reason."""
+
+        def _boom(project_id, location):
+            raise ValueError()
+
+        with caplog.at_level(logging.WARNING):
+            assert get_skill_toolset(registry_factory=_boom) is None
+
+        assert "ValueError" in caplog.text
+        assert "publish_skills --list" in caplog.text, "no pointer to what to do next"
 
     def test_registry_factory_receives_project_and_location(self):
         """The seam the tests inject through carries the real config values."""
@@ -140,6 +164,23 @@ class TestGetSkillToolset:
             "project_id": cfg.GCP_PROJECT_ID,
             "location": cfg.SKILL_REGISTRY_LOCATION,
         }
+
+    def test_the_registry_class_itself_is_a_valid_factory(self):
+        """``GCPSkillRegistry.__init__`` is keyword-only — call it that way.
+
+        The most natural factory a caller can pass is the class itself. Called
+        positionally it raises ``TypeError: __init__() takes 1 positional
+        argument but 3 were given``, which the broad handler then reports as
+        "Skill Registry toolset unavailable" — our own bug wearing an
+        infrastructure failure's clothes, and indistinguishable from one in the
+        log. This is the regression test for that call shape.
+        """
+        toolset = get_skill_toolset(registry_factory=GCPSkillRegistry)
+
+        assert isinstance(toolset, SkillToolset)
+        assert isinstance(toolset._registry, GCPSkillRegistry)
+        assert toolset._registry.project_id == cfg.GCP_PROJECT_ID
+        assert toolset._registry.location == cfg.SKILL_REGISTRY_LOCATION
 
 
 class TestBuildSkillTools:
@@ -177,20 +218,6 @@ class TestBuildSkillTools:
         assert coordinator._build_skill_tools(enable=True) == []
 
 
-def _reload_coordinator(monkeypatch, *, enable: bool, toolset=None):
-    """Rebuild the coordinator module with ``ENABLE_SKILL_REGISTRY=enable``.
-
-    A reload (not a fresh import) because the flag is read at import time, which
-    is exactly the code path a deployed container takes. ``get_mcp_tools`` is
-    left alone so the MCP half of the tool list is the real thing.
-    """
-    import src.agents.coordinator_agent as coordinator
-
-    monkeypatch.setattr(cfg, "ENABLE_SKILL_REGISTRY", enable)
-    monkeypatch.setattr(toolset_mod, "get_skill_toolset", lambda: toolset)
-    return importlib.reload(coordinator)
-
-
 def _agent_fields(agent):
     """Everything about the agent except its tool list.
 
@@ -208,31 +235,56 @@ def _agent_fields(agent):
 
 
 @pytest.fixture
-def restore_coordinator():
-    """Undo any reload done by a test, so the module other tests import is real."""
-    yield
+def reload_coordinator(monkeypatch):
+    """Rebuild the coordinator module under a chosen ``ENABLE_SKILL_REGISTRY``.
+
+    A reload (not a fresh import) because the flag is read at import time, which
+    is exactly the code path a deployed container takes. ``get_mcp_tools`` is
+    left alone so the MCP half of the tool list is the real thing.
+
+    **One fixture owns both the patching and the undo, deliberately.** The
+    ordering here is load-bearing: the restoring reload has to run *after* the
+    flag patches are dropped, or the module left behind for the rest of the
+    session is the patched one — ``ENABLE_SKILL_REGISTRY`` stuck True and
+    ``get_skill_toolset`` stuck as a stub. That used to be a convention (request
+    a ``restore_coordinator`` fixture *before* ``monkeypatch``, so teardown ran
+    in the right order), which meant a two-token argument swap silently corrupted
+    every later test in the session with the whole suite still green. Owning the
+    order inside one fixture makes it unspellable. The explicit ``undo()`` also
+    keeps the failure recoverable: if a test's own reload raises, the module is
+    still rebuilt clean rather than left broken.
+    """
     import src.agents.coordinator_agent as coordinator
 
-    importlib.reload(coordinator)
+    real_get_skill_toolset = toolset_mod.get_skill_toolset
+
+    def _reload(*, enable: bool, toolset=None):
+        monkeypatch.setattr(cfg, "ENABLE_SKILL_REGISTRY", enable)
+        monkeypatch.setattr(toolset_mod, "get_skill_toolset", lambda: toolset)
+        return importlib.reload(coordinator)
+
+    yield _reload
+
+    monkeypatch.undo()  # drop the patches FIRST, explicitly...
+    rebuilt = importlib.reload(coordinator)  # ...then rebuild the real module.
+    # Belt and braces: assert the rebuild actually took, so a future edit that
+    # reorders these two lines fails HERE — loudly, in the test that broke it —
+    # instead of leaking a stubbed ``get_skill_toolset`` and a True flag into
+    # every later test in the session with the suite still green.
+    assert rebuilt.get_skill_toolset is real_get_skill_toolset
 
 
 class TestCoordinatorWiring:
     """Flag off must be byte-identical; flag on must add exactly one tool."""
 
-    # ``restore_coordinator`` is listed FIRST on purpose: fixture teardown runs
-    # in reverse setup order, so requesting it before ``monkeypatch`` makes the
-    # final reload happen *after* the flag patch is undone — otherwise the
-    # module left behind for the rest of the suite is the patched one.
-    def test_flag_off_and_flag_on_differ_by_exactly_the_skill_toolset(
-        self, restore_coordinator, monkeypatch
-    ):
+    def test_flag_off_and_flag_on_differ_by_exactly_the_skill_toolset(self, reload_coordinator):
         skill_toolset = SkillToolset()
 
-        off = _reload_coordinator(monkeypatch, enable=False)
+        off = reload_coordinator(enable=False)
         off_tools = list(off.coordinator_agent.tools)
         off_fields = _agent_fields(off.coordinator_agent)
 
-        on = _reload_coordinator(monkeypatch, enable=True, toolset=skill_toolset)
+        on = reload_coordinator(enable=True, toolset=skill_toolset)
         on_tools = list(on.coordinator_agent.tools)
         on_fields = _agent_fields(on.coordinator_agent)
 
@@ -245,13 +297,11 @@ class TestCoordinatorWiring:
         assert [type(t) for t in on_tools[:-1]] == [type(t) for t in off_tools]
         assert on_tools[-1] is skill_toolset
 
-    def test_flag_on_but_registry_unavailable_keeps_the_default_surface(
-        self, restore_coordinator, monkeypatch
-    ):
-        off = _reload_coordinator(monkeypatch, enable=False)
+    def test_flag_on_but_registry_unavailable_keeps_the_default_surface(self, reload_coordinator):
+        off = reload_coordinator(enable=False)
         off_types = [type(t) for t in off.coordinator_agent.tools]
 
-        on = _reload_coordinator(monkeypatch, enable=True, toolset=None)
+        on = reload_coordinator(enable=True, toolset=None)
 
         assert [type(t) for t in on.coordinator_agent.tools] == off_types
 
@@ -265,7 +315,12 @@ class TestDeployEnvBaking:
     says it has them — invisible until someone asks the live engine.
     """
 
-    def test_flag_off_bakes_nothing(self):
+    def test_flag_off_bakes_nothing(self, monkeypatch):
+        # Pinned, not inherited: without this the test passes only because
+        # nobody exported ENABLE_SKILL_REGISTRY=1, so a developer who has the
+        # flag set in their shell gets a failure in a test about *baking*.
+        monkeypatch.setattr(da, "ENABLE_SKILL_REGISTRY", False)
+
         env = _build_config(_fake_agent())["env_vars"]
 
         assert "ENABLE_SKILL_REGISTRY" not in env
@@ -278,14 +333,47 @@ class TestDeployEnvBaking:
         env = _build_config(_fake_agent())["env_vars"]
 
         assert env["ENABLE_SKILL_REGISTRY"] == "1"
-        # The location rides along with the flag: the container's GCP_REGION is
-        # not necessarily the registry location, and if the engine resolved a
-        # different one than the publisher used it would find no skills.
+        # The location rides along with the flag — see src/config.py.
         assert env["SKILL_REGISTRY_LOCATION"] == "europe-west4"
 
 
+@pytest.fixture
+def registry_location_override():
+    """Set ``SKILL_REGISTRY_LOCATION``, rebuild the three modules that read it, undo.
+
+    Hand-rolled rather than ``monkeypatch.setenv``, and for the same reason
+    ``reload_coordinator`` owns its own undo: the restoring reloads must run
+    *after* the env var is restored, and monkeypatch's teardown cannot be ordered
+    against a separate reload fixture. Owning set → yield → restore → reload in
+    one place makes that ordering structural, so a later "cleanup" to
+    ``monkeypatch.setenv`` can't silently leave the modules pointing at
+    europe-west4 for the rest of the session.
+    """
+    import src.skills.publish_skills as publisher
+
+    reloadable = (cfg, toolset_mod, publisher)
+
+    def _apply(location: str):
+        os.environ["SKILL_REGISTRY_LOCATION"] = location
+        return tuple(importlib.reload(m) for m in reloadable)
+
+    previous = os.environ.get("SKILL_REGISTRY_LOCATION")
+    try:
+        yield _apply
+    finally:
+        if previous is None:
+            os.environ.pop("SKILL_REGISTRY_LOCATION", None)
+        else:
+            os.environ["SKILL_REGISTRY_LOCATION"] = previous
+        for module in reloadable:
+            importlib.reload(module)
+
+
 class TestLocationIsOneSourceOfTruth:
-    """The publisher writes where the toolset reads — enforced, not assumed."""
+    """The publisher writes where the toolset reads — enforced, not assumed.
+
+    Rationale for the single constant: ``src/config.py:SKILL_REGISTRY_LOCATION``.
+    """
 
     def test_default_location_agrees_with_the_publishers_resource_names(self):
         import src.skills.publish_skills as publisher
@@ -296,46 +384,29 @@ class TestLocationIsOneSourceOfTruth:
         name = publisher.skill_resource_name("receipt-audit")
         assert f"/locations/{toolset._registry.location}/skills/" in name
 
-    def test_an_override_moves_both_halves_together(self, monkeypatch):
-        """Set ``SKILL_REGISTRY_LOCATION`` and rebuild both modules.
+    def test_an_override_moves_both_halves_together(self, monkeypatch, registry_location_override):
+        """The two constants are equal by default, so only an override separates them.
 
-        This is the test that fails if one side is re-pointed at ``GCP_REGION``:
-        the two constants are equal by default, so only an override can tell
-        them apart.
+        This is the test that fails if one side is re-pointed at ``GCP_REGION``.
         """
-        import src.skills.publish_skills as publisher
-
         seen = {}
 
         def _record_client(**kwargs):
             seen.update(kwargs)
             return types.SimpleNamespace(skills=None)
 
-        previous = os.environ.get("SKILL_REGISTRY_LOCATION")
-        os.environ["SKILL_REGISTRY_LOCATION"] = "europe-west4"
-        try:
-            importlib.reload(cfg)
-            reloaded_toolset = importlib.reload(toolset_mod)
-            reloaded_publisher = importlib.reload(publisher)
+        _cfg, reloaded_toolset, reloaded_publisher = registry_location_override("europe-west4")
 
-            import agentplatform
+        import agentplatform
 
-            monkeypatch.setattr(agentplatform, "Client", _record_client)
-            reloaded_publisher.build_client()
+        monkeypatch.setattr(agentplatform, "Client", _record_client)
+        reloaded_publisher.build_client()
 
-            toolset = reloaded_toolset.get_skill_toolset()
-            assert toolset is not None
+        toolset = reloaded_toolset.get_skill_toolset()
+        assert toolset is not None
 
-            assert toolset._registry.location == "europe-west4"
-            assert seen["location"] == "europe-west4"
-            assert "/locations/europe-west4/skills/" in (
-                reloaded_publisher.skill_resource_name("receipt-audit")
-            )
-        finally:
-            if previous is None:
-                del os.environ["SKILL_REGISTRY_LOCATION"]
-            else:
-                os.environ["SKILL_REGISTRY_LOCATION"] = previous
-            importlib.reload(cfg)
-            importlib.reload(toolset_mod)
-            importlib.reload(publisher)
+        assert toolset._registry.location == "europe-west4"
+        assert seen["location"] == "europe-west4"
+        assert "/locations/europe-west4/skills/" in (
+            reloaded_publisher.skill_resource_name("receipt-audit")
+        )
