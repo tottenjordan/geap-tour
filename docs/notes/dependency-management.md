@@ -84,8 +84,13 @@ uv run python -m src.eval.verify_mcp_tools --json
 is a separately-resolved dependency list, and the container is where this repo's worst
 outages land. Copy it into a throwaway project and `uv lock` it — seconds, no deploy:
 
-```python
-from src.deploy.deploy_agents import REQUIREMENTS   # write these into a scratch pyproject, then `uv lock`
+```bash
+# Write deploy_agents.REQUIREMENTS into a scratch pyproject, then resolve it:
+uv run python -c "
+import json
+from src.deploy.deploy_agents import REQUIREMENTS
+print(json.dumps(REQUIREMENTS))"          # paste into /tmp/scratch/pyproject.toml
+cd /tmp/scratch && uv lock                 # must resolve fastmcp 3.x, mcp <2
 ```
 
 Cheap as it is, it is still only a proxy: on 2026-09-09 the set resolved cleanly and
