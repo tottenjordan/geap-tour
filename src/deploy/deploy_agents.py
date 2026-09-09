@@ -125,11 +125,18 @@ REQUIREMENTS = [
     # reproduces in a mixed-tier session — so a litellm the workaround was never
     # tested against fails in the hardest place to notice.
     #
-    # Unbounded, the container resolved 1.100.0 while we test 1.96.2 (measured). The
-    # range below is the window google-cloud-aiplatform's `evaluation` extra allows
-    # on Python 3.14, which is what pins us locally — so container and tests agree
-    # by construction rather than by luck. Raise both together.
-    "litellm>=1.93.0,<1.97.0",
+    # Unbounded, the container resolved 1.100.0 (measured). The UPPER bound is the
+    # point; the floor stays permissive on purpose, because there is no single
+    # "version we test against" — aiplatform's `evaluation` extra caps litellm by
+    # INTERPRETER, so the tested version differs per environment:
+    #
+    #   local  (Python 3.14) -> litellm 1.96.2   (extra allows >=1.93,<1.97)
+    #   CI     (Python 3.12) -> litellm 1.85.7   (extra allows >=1.83.7,<1.86)
+    #
+    # A first attempt pinned >=1.93.0 to "match tested" and immediately reddened CI,
+    # which tests 1.85.7. The range below admits both and still excludes the
+    # 1.97+ territory nothing here has ever exercised.
+    "litellm>=1.83.14,<1.97.0",
     "pydantic>=2.12.5",
     "cloudpickle>=3.0,<4.0",
     # OTel instrumentation — Agent Engine auto-enables telemetry, but without
