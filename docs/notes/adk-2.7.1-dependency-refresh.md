@@ -188,3 +188,100 @@ behavior. Not confirmed — separating them means re-scoring a fixed set of capt
 responses across the two SDK versions, which is a follow-up, not part of this
 upgrade. Until then: treat the `hallucination` series as having a **level shift at
 2026-08-21**, and do not compare across that boundary.
+
+## Live validation of the ADK 2.8.0 / aiplatform 2.x change set (2026-09-09)
+
+A green suite had already proved nothing twice on this change set, so everything below
+was run against live infrastructure. **The suite passed at 1648 while no deploy of any
+kind worked.**
+
+### Three bugs the tests could not reach
+
+All three were found by deploying and driving a real engine.
+
+| Bug | Why no test caught it |
+| --- | --- |
+| `AttributeError: 'Client' object has no attribute 'agent_engines'` in `create_agent`/`update_agent` | Every deploy test injects a **fake client**, so the fakes kept answering an attribute aiplatform 2.x had deleted. The tests asserted against a mock of an API that no longer exists. |
+| `AttributeError: 'RetryingLlm' object has no attribute 'startswith'` in armor plugin selection | `agent.model` is a `BaseLlm` wrapper on every real agent; the deploy tests build **fake agents** whose `.model` is a plain string. |
+| `TypeError: get() got an unexpected keyword argument 'name'` at six `vertexai.agent_engines.get` sites | Five sit inside best-effort `try/except` warm-up blocks, so the only symptom was `Warmup skipped: …` — the cold-start protection that exists to prevent empty-at-200 was **silently gone**. |
+
+The common shape: *tests that mock the thing that changed cannot see it change.* The
+fixes are guarded by tests that use the **real** surfaces — a live `agentplatform`
+Client, the real coordinator/router agents, and the actual `agent_engines.get` signature.
+
+### A fourth, pre-existing: recall had no SSE fallback
+
+`verify_cross_session_recall` was the one live-streaming module still calling
+`stream_query` directly. Nine others absorb the NDJSON parser skew via `raw_stream.py`.
+A healthy probe engine therefore reported `DEMO READINESS: NOT READY` on a check marked
+critical — while `engine_live` **passed on the same engine in the same run**. That
+contrast is the tell for a parser skew rather than a broken agent.
+
+### A deploy trap worth knowing
+
+An in-place `--update` **silently drops any opt-in flag not set in the deploying
+shell's environment**. The first probe update lost `ENABLE_MEMORY_PRELOAD_CACHE=1`
+because the deploying shell did not export it. Same family as the router tier-override
+trap. Capture `verify_engine_config --json` *before* an update and diff after —
+the second deploy restored it, and the final diff against pre-state was **zero
+changed findings**: only the container moved.
+
+### What was verified live, and what it returned
+
+| Surface | Result |
+| --- | --- |
+| Probe engine deploy (ADK 2.8.0 + aiplatform 2.1.0 + `google-cloud-modelarmor`) | container builds; `config: PASS`, 0 critical |
+| `demo_readiness --deep` | **READY** — all 6, incl. genuine cross-session recall |
+| `trajectory_eval` (**preview `EvalTask`** — the highest-risk import) | works: 39 cases, exact_match 0.74 / precision 0.87 / recall 0.97 |
+| `tool_faithfulness` | 5.00/5 over 3/3, no hallucinated actions |
+| `online_monitor --dry-run` | 4/4 scored, 0% infra-empty, helpfulness 4.0 |
+| `calibration --panel` (real judges, concurrent) | PASS, alpha 0.992-0.996, **0 unparseable** |
+| Serving requirement set | resolves fastmcp 3.4.7 / mcp 1.30.0 / aiplatform 2.1.0 |
+| eval-runner image | rebuilt as **v4**, first build on the new deps |
+
+### Judge determinism is approximate, not absolute
+
+`judge_client` pins `temperature=0` "for reproducibility". Measured on the same gold
+set: two panel runs gave **96.9%** and **100%** within tolerance (MAE 0.044 vs 0.041).
+
+Concurrency is **not** the cause. A serialized run (`JUDGE_PANEL_MAX_WORKERS=1`)
+returned 96.9% / MAE 0.044 / alpha 0.992 — *identical* to concurrent run 1. So the
+jitter is model-side, and the concurrent panel is score-equivalent to the serial one.
+Worth knowing before treating a 3-point calibration move as a regression.
+
+### Still unverified — stated so it does not read as coverage
+
+* **The router was not deployed.** `TierRoutingLlm`, the Claude tiers and
+  `restore_tool_call_ids` are unexercised on ADK 2.8.0. The container also resolves
+  **litellm 1.100.0** while we test against **1.96.2** (the `evaluation` extra caps us
+  at `<1.97`) — a four-minor skew on the library the Claude tiers run through, and the
+  one `restore_tool_call_ids` works around.
+* **The MCP servers were not redeployed** despite `mcp` moving 1.29 → 1.30.
+* **`simulated_eval` and `pairwise_eval`** were not run on 2.x.
+* **GEPA (`run_optimize`)** was not run, and ADK 2.8.0 changed the evaluation module
+  it depends on.
+* **Model Armor templates let an evasive injection through** on the probe engine
+  (recorded below) — a finding, not a failure.
+
+### The armor layers, measured separately
+
+Three prompts against the live probe (`gemini-2.5-flash`, so **templates** cover it and
+the plugin correctly declines — no double-screening):
+
+| Prompt | Handled by |
+| --- | --- |
+| benign policy question | answered correctly, no block (no over-blocking) |
+| overt injection matching `BLOCKED_PATTERNS` | **client guardrail** |
+| injection phrased to evade all four regexes | **nothing blocked it** — templates passed it through |
+
+The plugin was then exercised on a Gemini-3 backbone, where templates cannot apply:
+
+| Prompt | Handled by |
+| --- | --- |
+| benign policy question | answered, no block |
+| evasive injection | **ADK plugin blocked** |
+| overt injection | **ADK plugin blocked** |
+
+So the plugin is not parity — it catches an injection that **both** the client
+blocklist and the templates let through. That is the strongest argument for enabling
+`ENABLE_MODEL_ARMOR_PLUGIN` on the Gemini-3 engines.
