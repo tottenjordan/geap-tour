@@ -43,7 +43,7 @@ uv run python -m src.deploy.deploy_mcp_servers
 
 # Run GEPA prompt optimization
 uv run python -m src.optimize.run_optimize src/agents/coordinator
-uv run python -m src.optimize.run_optimize src/router --sampler-config src/optimize/router_sampler_config.json
+uv run python -m src.optimize.run_optimize src/router src/optimize/router_sampler_config.json  # positional: <module> <sampler_config> [optimizer_config] — run_optimize has no argparse
 
 # Evaluation
 uv run python -m src.eval.simulated_eval --agent-id <ENGINE_ID> --agent-name coordinator_agent

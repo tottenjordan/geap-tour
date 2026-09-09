@@ -10,25 +10,122 @@ Usage:
 
 
 def _patch_evals_extra_fields():
-    """Patch ConversationTurn to accept extra fields from agent engine responses.
+    """Let ``ConversationTurn`` keep the fields the API actually returns.
 
-    The Vertex AI API returns turn data with fields (model_version, content,
-    id, timestamp, author, actions, invocation_id, etc.) not defined in the
-    SDK's ConversationTurn pydantic model. The base class sets extra='forbid',
-    causing ValidationError. Fix: set extra='ignore' so unknown fields are
-    accepted during parsing but excluded from model_dump().
+    The API returns turn data carrying ADK **Event** fields — ``content``,
+    ``author``, ``actions``, ``invocation_id``, ``id``, ``timestamp``,
+    ``usage_metadata`` — that the SDK's ``ConversationTurn`` does not declare. The
+    base class is ``extra='forbid'``, so parsing raises ``ValidationError``.
 
-    Note: turn_index injection (Bug 2) was fixed in SDK 1.153.0.
-    Tracked upstream: https://github.com/googleapis/python-aiplatform/issues/6785
+    **``extra='allow'``, NOT ``'ignore'``.** That one word is the whole fix. This
+    patch used to say ``'ignore'``, which stops the exception by **discarding every
+    unrecognised field** — and on this SDK those fields *are* the conversation. The
+    result was a green run over nothing:
+
+        extra='ignore'  ->  1 turn,  every field dropped, events=[]  -> metrics {}
+        extra='allow'   ->  3 turns, content/author/actions preserved
+
+    Measured 2026-09-09 against aiplatform 2.1.0. The eval run reported
+    ``SUCCEEDED`` with ``total_items=2, failed_items=None`` and
+    ``metric_results: {}`` for every case — the multi-turn raters correctly scored
+    nothing, because nothing survived parsing. `simulated_eval` then printed
+    "(no metrics returned)" and still wrote ``all_passed: true``.
+
+    So the failure mode this patch was written to prevent (a loud ValidationError)
+    was replaced by a silent one. Prefer keeping data you do not understand over
+    dropping it: an unexpected extra field is a much smaller problem than an empty
+    conversation that scores as a pass.
+
+    Applied module-wide rather than to a named list, mirroring how
+    ``src/optimize/run_optimize.py:_patch_adk`` handles the same problem for ADK.
+    Naming classes individually is how this stayed broken: the first fix relaxed
+    ``ConversationTurn`` and ``AgentData``, and the very next layer down —
+    ``AgentEvent``, which declares only 5 of the ~12 fields the API sends — threw
+    the identical error one level deeper.
+
+    Upstream: https://github.com/googleapis/python-aiplatform/issues/6785
     """
-    from agentplatform._genai.types import evals as evals_types
+    import importlib
 
-    ct = evals_types.ConversationTurn
-    ct.model_config["extra"] = "ignore"
-    ct.__pydantic_complete__ = False
-    ct.model_rebuild(force=True)
-    evals_types.AgentData.__pydantic_complete__ = False
-    evals_types.AgentData.model_rebuild(force=True)
+    import pydantic
+
+    # BOTH copies. `agentplatform._genai` and `vertexai._genai` are separate module
+    # objects with separate classes (`agentplatform.types is vertexai.types` -> False,
+    # see docs/notes/agentplatform-client-migration.md), and patching only one is a
+    # silent no-op — the same trap that made `_sdk_patches` collapse every metric to
+    # ~0. Verified 2026-09-09: both declare ConversationTurn as extra='forbid'.
+    modules = []
+    for path in ("agentplatform._genai.types.evals", "vertexai._genai.types.evals"):
+        try:
+            modules.append(importlib.import_module(path))
+        except ImportError:  # pragma: no cover - one copy may not ship forever
+            continue
+
+    for evals_types in modules:
+        for name in dir(evals_types):
+            cls = getattr(evals_types, name, None)
+            if (
+                isinstance(cls, type)
+                and issubclass(cls, pydantic.BaseModel)
+                and cls.model_config.get("extra") == "forbid"
+            ):
+                cls.model_config["extra"] = "allow"
+                cls.__pydantic_complete__ = False
+                cls.model_rebuild(force=True)
+
+
+def regroup_events_into_turns(agent_data: dict | None) -> dict | None:
+    """Reshape flat ADK events into the ``ConversationTurn`` structure raters read.
+
+    ``ConversationTurn`` is declared as ``{turn_index, turn_id, events[]}``, but on
+    aiplatform 2.1.0 ``run_inference`` returns each ADK **Event** as a top-level
+    entry in ``turns`` — ``author``/``content``/``actions``/``invocation_id`` sit
+    directly on the turn and ``events`` is empty. The multi-turn raters read
+    ``turn.events``, find nothing, and return **no metrics at all** while the
+    evaluation run still reports ``SUCCEEDED``.
+
+    Grouping key is **``invocation_id``**, not position: one invocation is one
+    user-visible turn (a user message plus the agent's events answering it), which
+    is exactly the unit "multi-turn" means. Order is preserved, and each group gets
+    the ``turn_index`` the raters expect. Events with no ``invocation_id`` fall back
+    to one-event-per-turn rather than being merged into a neighbour, because a
+    wrong grouping produces plausible-looking multi-turn scores, which is worse than
+    a conservative one.
+
+    Already-correct data passes through untouched: a turn that has a non-empty
+    ``events`` list is left exactly as-is, so this is a no-op the moment the SDK or
+    service starts returning the declared shape.
+    """
+    if not isinstance(agent_data, dict):
+        return agent_data
+    turns = agent_data.get("turns")
+    if not turns:
+        return agent_data
+    # Already the declared shape — do not touch it.
+    if any((t or {}).get("events") for t in turns):
+        return agent_data
+
+    grouped: list[dict] = []
+    current_key = object()  # sentinel: never equal to a real invocation_id
+    for event in turns:
+        if not isinstance(event, dict):
+            continue
+        key = event.get("invocation_id")
+        if key is None or key != current_key:
+            grouped.append({"turn_index": len(grouped), "turn_id": key, "events": []})
+            current_key = key if key is not None else object()
+        grouped[-1]["events"].append(event)
+
+    return {**agent_data, "turns": grouped}
+
+
+def regroup_dataset_turns(inference_result):
+    """Apply :func:`regroup_events_into_turns` to every row's ``agent_data``."""
+    df = getattr(inference_result, "eval_dataset_df", None)
+    if df is None or "agent_data" not in getattr(df, "columns", []):
+        return inference_result
+    df["agent_data"] = [regroup_events_into_turns(cell) for cell in df["agent_data"]]
+    return inference_result
 
 
 GENERATION_INSTRUCTIONS = {
@@ -110,6 +207,10 @@ def run_simulated_eval(
             },
         },
     )
+    # The raters read turn.events; on aiplatform 2.1.0 run_inference returns flat
+    # ADK events as turns with events=[]. Regroup before scoring, or every metric
+    # comes back empty while the run still reports SUCCEEDED.
+    eval_dataset_with_traces = regroup_dataset_turns(eval_dataset_with_traces)
     print("  Inference complete")
 
     import time
@@ -189,8 +290,17 @@ def run_simulated_eval(
             }
             print(f"  {metric_name:50s} {avg:.2f} / {normalized_threshold:.2f}  [{status}]")
 
-    if not raw_metrics:
-        print("  (no metrics returned — check console for results)")
+    if not metric_results:
+        # A run that scored NOTHING must not report success. `all_pass` starts True
+        # and only flips on a failing metric, so zero metrics used to sail through
+        # as `all_passed: true` — the exact green-over-nothing this repo keeps
+        # finding, and how the extra='ignore' data loss above stayed invisible.
+        # An empty result is an INFRA outcome, not a quality verdict.
+        all_pass = False
+        print("  NO METRICS RETURNED — this run measured nothing, so it is a FAIL.")
+        print("    The eval run itself may report SUCCEEDED: the service scores what")
+        print("    it is given, and an empty conversation scores as no metrics.")
+        print("    Check agent_data.turns[].events before suspecting the agent.")
         print(f"  Eval run: {getattr(evaluation_run, 'name', 'N/A')}")
 
     import json

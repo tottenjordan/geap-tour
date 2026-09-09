@@ -369,3 +369,67 @@ Two prompts produced **no** tool call — the agent asked for a missing date ins
 That is agent behaviour on an under-specified request, not a server fault, and it is
 why the confirming prompts had to be fully specified. Worth knowing before reading an
 empty trajectory as a broken server.
+### The last three eval surfaces, run on 2.x (2026-09-09)
+
+`pairwise_eval`, `simulated_eval` and GEPA were the remainder — none runs in CI, the
+cron, or `demo_readiness`, so nothing had executed them since the SDK moved. **All
+three were structurally sound** (imports resolve, patch targets bind, signatures
+match), which is exactly why running them was the only thing left that could tell us
+anything.
+
+| Surface | Result |
+| --- | --- |
+| `pairwise_eval` | **PASS.** 61 cases, 40 decisive, win-rate 0.575, p=0.43 (not significant) — the near-tie expected from two `gemini-2.5-flash` engines. Zero `Warmup skipped`, so the `agent_engines.get` call site fixed in #106 genuinely works. |
+| `simulated_eval` | **BROKEN upstream** — two of our defects fixed, the surface still returns no metrics. See below. |
+| GEPA | **Machinery works.** Bounded run (`max_metric_calls` 12) completed on ADK 2.8.0: 13 metric calls, 1 candidate, optimized instruction produced, all three ADK patches held. Scores came back `0.0/0.0` — see the caveat below. |
+
+#### `simulated_eval`: a green verdict over a destroyed conversation
+
+The eval run reported **SUCCEEDED**, the harness printed "(no metrics returned)", and
+the result file said **`all_passed: true`**. Two separate defects, both ours, both fixed:
+
+* **`extra='ignore'` was discarding the conversation.** The API returns turn data
+  carrying ADK **Event** fields (`content`, `author`, `actions`, `invocation_id`,
+  `id`, `timestamp`). `ConversationTurn` is `extra='forbid'`, so parsing raises; the
+  patch silenced that with `'ignore'`, which **drops every unrecognised field** — and
+  on this SDK those fields *are* the data:
+
+      extra='ignore'  ->  1 turn,  all fields dropped, events=[]
+      extra='allow'   ->  3 turns, content/author/actions preserved
+
+  Now applied **module-wide across both copies**. Naming classes individually is how
+  it stayed broken: relaxing `ConversationTurn` and `AgentData` just moved the
+  identical error one level down to `AgentEvent` (which declares 5 of the ~12 fields
+  sent). And `agentplatform._genai` / `vertexai._genai` are separate module objects,
+  so patching one is a silent no-op — the same trap that once collapsed every
+  `_sdk_patches` metric to ~0.
+* **Zero metrics reported success.** `all_pass` starts `True` and only flips on a
+  *failing* metric, so a run that scored nothing sailed through. An empty result is an
+  **infra outcome, not a quality verdict**; it now fails loudly and says where to look.
+
+**Honest state: the surface is still broken.** `regroup_events_into_turns()` (regroup
+flat events by `invocation_id`, since the raters read `turn.events`) is implemented
+and unit-tested but **did not restore metrics live**. The relaxation verifiably
+applies to every class in both copies, yet the service still logs `extra_forbidden`
+internally and substitutes empties — so the residual mismatch looks like it is inside
+the SDK's own parsing, not ours. Treat `simulated_eval` as **known-broken on
+aiplatform 2.1.0**; the value delivered is that it now *fails* instead of passing
+quietly.
+
+#### GEPA's `0.0` scores — unresolved, and why
+
+The run is legitimate machinery-wise, but `best_score 0.0 / baseline 0.0 / lift 0.0`
+is degenerate. The travel evalset does carry real references
+(`"I found flights from SFO to JFK: United FL001 at $450…"`), and the agents are known
+to ask a clarifying question rather than answer directly when a prompt is
+under-specified — which scores 0 on `final_response_match_v2`. So `0.0` is
+**consistent with reference staleness rather than SDK breakage**, but a 12-call budget
+cannot distinguish the two. Do not read it either way without a fuller run.
+
+#### A doc bug found on the way
+
+`CLAUDE.md` documents
+`run_optimize src/router --sampler-config src/optimize/router_sampler_config.json`.
+`run_optimize` has **no argparse** — it reads `sys.argv[1..3]` positionally — so that
+command fails with `FileNotFoundError: '--sampler-config'`. The working form is
+positional: `run_optimize <module> <sampler_config> [optimizer_config]`.
