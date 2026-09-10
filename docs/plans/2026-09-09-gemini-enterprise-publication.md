@@ -109,7 +109,7 @@ API-level verification is automatable; **confirming the agent is selectable and 
 in the GE UI is a human step.** Say so plainly rather than implying end-to-end proof.
 
 Then: write `docs/notes/gemini-enterprise-publication.md`, add its index line to
-`docs/notes/README.md` (**at 199 of a 200-line budget — reclaim a line first**), and
+`docs/notes/README.md` (**at 198 of a 200-line budget — reclaim a line first**), and
 correct the stale declination in `notebooks/demo/platform_sdk_demo.ipynb`.
 
 ---

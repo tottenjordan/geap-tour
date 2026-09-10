@@ -520,6 +520,22 @@ def _run_delete(client: "Client | None", skill_id: str, *, dry_run: bool) -> int
     )
 
 
+def _non_empty(value: str) -> str:
+    """An argparse ``type`` that rejects an empty ``--search`` / ``--delete``.
+
+    Rejected at parse time (exit 2, naming the flag) rather than passed through:
+    the realistic way an empty string arrives is an unset shell variable —
+    ``--delete "$SKILL_ID"`` — and the alternative is a doomed round trip that
+    comes back as a 404/INVALID_ARGUMENT on a malformed resource name, i.e. the
+    registry refusing us. Distinguishing "our request was nonsense" from "the
+    registry said no" is the whole point of this module's failure posture, so
+    the nonsense case must not reach it.
+    """
+    if not value:
+        raise argparse.ArgumentTypeError("expected a non-empty value")
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # First line only: the module docstring is a design note, not `--help` text.
     parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
@@ -533,9 +549,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     group.add_argument(
         "--search",
         metavar="QUERY",
+        type=_non_empty,
         help="Semantic search the registry — the same retrieval an agent does at runtime.",
     )
-    group.add_argument("--delete", metavar="SKILL_ID", help="Delete one skill by id.")
+    group.add_argument(
+        "--delete", metavar="SKILL_ID", type=_non_empty, help="Delete one skill by id."
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -544,7 +563,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    read_only = bool(args.list or args.search)
+    # `is not None`, not truthiness, here and in the dispatch below: these two
+    # options carry a string, and a falsy one used to fall past every branch into
+    # the default publish — a flag stating destructive intent quietly performing a
+    # write. `_non_empty` already rejects the only falsy value argparse can
+    # produce; this keeps the branch honest if that validator is ever relaxed.
+    read_only = bool(args.list) or args.search is not None
     client = None
     if read_only or not args.dry_run:
         # A --dry-run publish/delete constructs nothing: building the client runs
@@ -564,9 +588,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.list:
             return _run_list(client)
-        if args.search:
+        if args.search is not None:
             return _run_search(client, args.search)
-        if args.delete:
+        if args.delete is not None:
             return _run_delete(client, args.delete, dry_run=args.dry_run)
         return _run_publish(client, dry_run=args.dry_run)
     except SkillRegistryUnavailable as exc:

@@ -539,6 +539,31 @@ class TestListSearchDelete:
             assert publisher.main(["--delete", "receipt-audit"]) == 0
         assert publisher.SKILL_REGISTRY_SKIP in caplog.text
 
+    @pytest.mark.parametrize("flag", ["--search", "--delete"])
+    def test_an_empty_argument_is_rejected_and_never_publishes(
+        self, client, api, monkeypatch, flag
+    ):
+        # Regression: both options were dispatched on *truthiness*, so an empty
+        # string fell past every branch into the default action and `--delete ""`
+        # exited 0 having quietly PUBLISHED. Publishing is idempotent so nothing
+        # was destroyed, but a flag stating destructive intent must never perform
+        # a write. It is now a parse-time error: exit 2, registry untouched.
+        monkeypatch.setattr(publisher, "build_client", lambda: client)
+        published: list[object] = []
+
+        def _record_publish(*args, **kwargs) -> int:
+            published.append(kwargs)
+            return 0
+
+        monkeypatch.setattr(publisher, "_run_publish", _record_publish)
+
+        with pytest.raises(SystemExit) as excinfo:
+            publisher.main([flag, ""])
+
+        assert excinfo.value.code == 2
+        assert published == []
+        assert api.calls == []
+
 
 class TestClientConstruction:
     def test_builds_an_agentplatform_client_not_a_vertexai_one(self, monkeypatch):

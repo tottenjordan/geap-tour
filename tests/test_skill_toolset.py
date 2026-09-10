@@ -2,9 +2,11 @@
 
 Three properties, and each one is written so that it can actually fail:
 
-* **The toolset is real.** ``GCPSkillRegistry.__init__`` performs no I/O (it
-  reads env, optionally loads an mTLS cert, and validates its arguments —
-  credentials are resolved lazily on the first request), and ``SkillToolset``
+* **The toolset is real.** ``GCPSkillRegistry.__init__`` makes no registry call
+  — it validates its arguments and reads env, and credentials are resolved
+  lazily on the first request — though it is not literally I/O-free: with a
+  default client cert source it writes two tempfiles and loads a cert chain
+  (``src/skills/toolset.py:_gcp_skill_registry``). ``SkillToolset``
   only assembles tool objects. So these tests build the *real* objects and
   assert on them, instead of asserting that a mock was called: a fake registry
   that answers anything would prove nothing about the SDK surface we depend on
