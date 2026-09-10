@@ -13,15 +13,16 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 | **Multi-Model Router** | 5-tier complexity router across Gemini and Claude — one direct-tools agent that swaps **model + prompt** per tier |
 | **Memory Bank** | Cross-session recall via `VertexAiMemoryBankService`, an optional per-invocation preload cache, and seed/verify CLIs |
 | **Deployment** | Agent Runtime deployment with SPIFFE identity, gateway, keep-warm `--min-instances`, and OTel tracing |
-| **Evaluation** | Offline batch (6 metrics), multi-turn simulated eval, a continuous **online quality monitor**, tool-call **faithfulness**, a diverse judge panel, and judge-vs-human calibration |
+| **Evaluation** | Offline batch (6 metrics), a continuous **online quality monitor**, tool-call **faithfulness**, a diverse judge panel, and judge-vs-human calibration. Multi-turn `simulated_eval` is **quarantined** — it returns zero metrics on google-cloud-aiplatform 2.1.0 for reasons inside the SDK's own parsing; it still runs in CI so we find out if upstream fixes it |
 | **Monitoring** | Three published metric surfaces (`agent_eval/*`, `agent_online_eval/*`, `agent_router/*`) plus managed engine-health alerts and rolling-baseline anomaly detection |
 | **Experiments** | DOE framework (fractional-factorial → one Vertex PipelineJob per design point) and a Gemini-vs-Claude coordinator bake-off |
 | **Optimization** | GEPA (Gemini Evolutionary Prompt Algorithm) with sampler configs for the coordinator, router, travel, expense, and all 5 model-tier agents |
-| **Model Armor** | Model Armor templates for input/output screening + a client-side guardrail with block telemetry |
+| **Model Armor** | Two layers — ADK's first-party Model Armor plugin (default **on**) and region-scoped templates, plus a client-side guardrail with block telemetry that is the guaranteed layer on every backbone |
+| **Skill Registry** | Three instruction-only travel/expense skills in git, an idempotent publish CLI, and an opt-in `SkillToolset` (default **off**) — publishing is verified live; runtime discovery is blocked upstream and [documented as such](docs/notes/skill-registry.md) |
 | **Governance** | Agent identity (SPIFFE), agent gateway (ingress + egress), Agent Registry, Semantic Governance Policies (SGP) |
 | **A2A** | Agent-to-agent card publication + discovery for the coordinator (preview-optional, degrades gracefully) |
 | **Topology** | App Hub registration for agent-to-MCP topology visualization |
-| **CI/CD** | Always-on unit tests, an advisory label-gated eval gate, and the eval DAG as a Vertex Managed Pipeline |
+| **CI/CD** | Always-on unit tests, an advisory eval gate (label-gated **and** weekly, because a label-only gate went 15 runs without executing once), and the eval DAG as a Vertex Managed Pipeline |
 
 ## Documentation
 
@@ -30,7 +31,7 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 | [Workshop Guide](docs/workshop_guide.md) | Full 4-session hands-on walkthrough |
 | [Component FAQ](docs/faq.md) | What each component does and why it matters |
 | [Evaluation Guide](docs/eval_operations.md) | Evaluation pipeline operations |
-| [Engineering Notes](docs/notes/README.md) | 30 root-cause / design notes (streaming, quota, latency, memory scope, eval bridges) |
+| [Engineering Notes](docs/notes/README.md) | 44 root-cause / design notes (streaming, quota, latency, memory scope, eval bridges) |
 | [Demo Notebooks](notebooks/demo/README.md) | SDK-first platform + evaluation tours; every billable cell is opt-in |
 | [GEPA Analysis](docs/gepa_optimization_analysis.md) | Prompt optimization before/after results |
 | [Cross-Model Experiment](docs/cross_model_experiment.md) | All models × all complexity tiers |
@@ -41,15 +42,19 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 ## Quick Start
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies — --all-groups matters. tests/conftest.py drops the DOE and
+# pipeline modules when pyDOE3/kfp are absent, so a bare `uv sync` gives you a
+# green run that is quietly ~40 tests short, with no skips and no warning.
+uv sync --all-groups
 
 # Copy and configure environment
 cp .env.example .env
 # Edit .env with your GCP project details
 
-# Run tests (offline — no live GCP or MCP connections needed)
-uv run pytest tests/
+# Run tests (offline — no live GCP or MCP connections needed). Expect 1793.
+# Use --no-sync: a bare `uv run` re-syncs to the default groups and re-creates
+# the same silent shortfall.
+uv run --no-sync pytest tests/
 
 # Deploy everything in one command
 bash scripts/deploy_all.sh
@@ -69,6 +74,10 @@ uv run python -m src.deploy.deploy_agents coordinator --update
 
 # Prove the deployed agent's MCP toolsets actually resolve their tools
 uv run python -m src.eval.verify_mcp_tools --json
+
+# A merged fix is not a deployed fix — diff a LIVE engine against the baseline
+# (read-only; exits non-zero only on critical drift, e.g. a 4Gi container)
+uv run python -m src.deploy.verify_engine_config
 
 # Score sampled live traffic and publish the online quality surface
 uv run python -m src.eval.online_monitor --agent-id <ENGINE_ID>
@@ -147,7 +156,9 @@ Both deployables hold their MCP toolsets **directly** on the root agent. That is
 
 `travel_agent` and `expense_agent` are no longer wired under the coordinator, but they remain **independently evaluated** agents with their own evalsets (`multi_agent_batch_eval --agents travel_agent`) — separate deployables, not duplication.
 
-Router tiers by complexity score (defaults, DOE-tuned for cost savings): `<0.44` lite (`gemini-3.1-flash-lite`), `0.44–0.60` flash (`gemini-3.5-flash`), `0.60–0.80` sonnet (`claude-sonnet-4-6`), `0.80–0.95` pro (`gemini-3.1-pro-preview`), `≥0.95` opus (`claude-opus-4-6`). All four cut-points are env-overridable (`COMPLEXITY_LOW` / `MEDIUM_SPLIT` / `COMPLEXITY_HIGH` / `HIGH_SPLIT`).
+Router tiers by complexity score (defaults): `<0.25` lite (`gemini-3.1-flash-lite`), `0.25–0.60` flash (`gemini-3.5-flash`), `0.60–0.925` sonnet (`claude-sonnet-4-6`), `0.925–0.95` pro (`gemini-3.1-pro-preview`), `≥0.95` opus (`claude-opus-4-6`). All four cut-points are env-overridable (`COMPLEXITY_LOW` / `MEDIUM_SPLIT` / `COMPLEXITY_HIGH` / `HIGH_SPLIT`) and both outer ones are guarded as **critical** by the deployed-engine baseline, because they bake in at deploy time and drift silently otherwise.
+
+Two of those cut-points were deliberately moved **off** their DOE-tuned values by paired side-by-side tests, because a dataset *mean* had diluted a real regression to noise. At the DOE's 0.44 low cut every 0.40-scoring "medium" prompt went to lite, where flash beat it **18–1** (p=0.0001) — so `COMPLEXITY_LOW` dropped to 0.25. `COMPLEXITY_HIGH` moved the other way, 0.80 → 0.925, after sonnet beat pro **17–1**. Net effect: `routing_accuracy_pct` 50% → **82.5%** for 0.3pp of cost savings, so the two monitored series were never actually in conflict. One consequence worth stating plainly rather than glossing: **the pro tier now receives nothing on this workload**, joining opus — the 5-tier router serves three tiers here. See [docs/notes/router-boundary-experiment.md](docs/notes/router-boundary-experiment.md).
 
 ### Paper Banana Architecture Diagrams
 
@@ -201,6 +212,11 @@ src/
 │   ├── publish_router_efficiency.py # Router efficiency → agent_router/*
 │   ├── quality_alerts.py, baseline.py, verify_monitors.py  # Alerts + z-score anomalies
 │   ├── verify_mcp_tools.py, verify_memory.py, verify_cross_session_recall.py
+│   ├── verify_router_health.py       # Empty-at-200 rate, Wilson interval, non-zero exit
+│   ├── demo_readiness.py             # Pre-demo preflight across every live surface
+│   ├── trajectory_eval.py            # Ordered tool calls + a `returned` flag per call
+│   ├── dataset_manifest.py           # Evalset drift vs a committed manifest (CI-enforced)
+│   ├── annotate.py                   # Blind second-annotation pass over the gold set
 │   ├── seed_demo_memories.py, latency_probe.py, cost_model.py, pairwise_eval.py
 │   ├── complexity_metrics.py        # Router accuracy + cost efficiency
 │   ├── cross_model_experiment.py    # All models × all tiers
@@ -221,8 +237,15 @@ src/
 ├── deploy/                    # Deployment (Agent Runtime + Cloud Run)
 │   ├── deploy_agents.py       # Deploy/update agents with auto .env write
 │   ├── deploy_mcp_servers.py  # Deploy MCP servers to Cloud Run
+│   ├── engine_baseline.py     # Executable serving-config baseline (rules as data)
+│   ├── verify_engine_config.py # Diff a LIVE engine against it; non-zero on critical drift
+│   ├── find_orphan_engines.py # Engines nothing in .env references any more
 │   ├── register_a2a.py        # Publish / discover the A2A agent card
 │   └── deploy_all.py          # Python end-to-end deployment
+├── skills/                    # Skill Registry (opt-in, ENABLE_SKILL_REGISTRY)
+│   ├── definitions.py         # 3 instruction-only skills in git; no code_executor
+│   ├── publish_skills.py      # Idempotent create-or-update publish/inspect CLI
+│   └── toolset.py             # SkillToolset via GCPSkillRegistry; degrades to None
 ├── optimize/                  # GEPA optimization configs + runner
 │   └── run_optimize.py        # Python-native GEPA runner
 ├── traffic/                   # Traffic generation for OTel traces
@@ -255,5 +278,5 @@ docs/                          # Workshop guide, analysis reports, charts, and n
 ├── prompts/                       # Before/after prompt comparisons
 ├── charts/                        # Matplotlib + PaperBanana visualizations
 └── notes/                         # Engineering session notes (indexed in notes/README.md)
-tests/                         # 78 test files, offline — no live GCP or MCP needed
+tests/                         # 102 test files, offline — no live GCP or MCP needed
 ```
