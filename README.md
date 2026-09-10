@@ -172,6 +172,11 @@ Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.s
 > `07_agent_armor` matters most — the rendered image says a Gemini-3 or Claude
 > backbone has the client-side guardrail as its *only* layer, which stopped being
 > true when ADK's Model Armor plugin became the default in #111.
+>
+> Re-rendering needs a `GOOGLE_API_KEY` (or `OPENAI_API_KEY`) in the environment;
+> without one every item fails individually while the batch still exits 0, so read
+> the per-item table rather than the exit code. Set the key and run
+> `./scripts/generate_diagrams.sh`, then delete this note.
 
 | Diagram | Description |
 |---------|-------------|
