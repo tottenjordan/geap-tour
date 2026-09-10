@@ -162,7 +162,16 @@ Two of those cut-points were deliberately moved **off** their DOE-tuned values b
 
 ### Paper Banana Architecture Diagrams
 
-Regenerated 2026-08-22 against the current system. Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.sh`.
+Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.sh`.
+
+> **Four specs are ahead of their rendered PNGs (2026-09-10).** The images below were
+> generated 2026-08-22. `01_multi_agent_topology`, `05_observability_stack`,
+> `06_ci_cd_flow` and `07_agent_armor` have since been corrected in
+> `diagrams/inputs/` but **not re-rendered**, so those four PNGs still show the older
+> content. The specs are the source of truth; read them if the two disagree.
+> `07_agent_armor` matters most — the rendered image says a Gemini-3 or Claude
+> backbone has the client-side guardrail as its *only* layer, which stopped being
+> true when ADK's Model Armor plugin became the default in #111.
 
 | Diagram | Description |
 |---------|-------------|

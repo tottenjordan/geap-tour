@@ -10,7 +10,8 @@ Right group, labeled "Multi-Model Router (5 tiers)":
 - One green rounded rectangle "Router Agent", subtitle "TierRoutingLlm swaps the model per turn"
 - Below it a horizontal row of five small purple boxes, left to right:
   "lite gemini-2.5-flash-lite", "flash gemini-2.5-flash", "pro gemini-2.5-pro", "sonnet claude-sonnet-4-6", "opus claude-opus-4-6"
-- A blue box feeding the router: "Complexity Classifier - scores 0 to 1"
+- A blue box feeding the router: "Complexity Classifier - scores 0 to 1", with the cut-points listed underneath in small text: "lite below 0.25, flash to 0.60, sonnet to 0.925, pro to 0.95, opus above"
+- The "pro" and "opus" boxes are drawn FADED / greyed out, with a small note beside them: "no traffic on this workload - 5 tiers are wired, 3 actually serve"
 
 Center bottom, a blue bordered region labeled "MCP Tool Servers on Cloud Run":
 - Three teal rounded rectangles: "Search MCP", "Booking MCP", "Expense MCP", each subtitled "FastMCP, streamable-http"

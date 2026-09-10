@@ -26,6 +26,7 @@ from google.cloud import monitoring_dashboard_v1 as dashboard_v1
 
 from src.config import GCP_PROJECT_ID, RESOURCE_LABELS
 from src.observability.metrics import (
+    INFRA_EMPTY_METRIC_TYPES,
     ONLINE_QUALITY_METRIC_TYPES,
     QUALITY_METRIC_TYPES,
     ROUTER_METRIC_TYPES,
@@ -53,6 +54,12 @@ _TITLES = {
     "custom.googleapis.com/agent_router/classifier_accuracy_pct": "Router: Classifier Accuracy (%)",
     "custom.googleapis.com/agent_router/cost_savings_pct": ("Router: Cost Savings vs All-Opus (%)"),
     "custom.googleapis.com/agent_router/classifier_latency_ms": ("Router: Classifier Latency (ms)"),
+    # Read these next to the helpfulness tiles: a quality dip here is usually
+    # empty-at-200 responses, not the model getting worse.
+    "custom.googleapis.com/agent_eval/infra_empty_rate": "Infra: Empty-Response Rate (offline)",
+    "custom.googleapis.com/agent_online_eval/infra_empty_rate": (
+        "Infra: Empty-Response Rate (online)"
+    ),
 }
 
 _TILE_WIDTH = 6
@@ -113,6 +120,7 @@ def build_dashboard() -> dashboard_v1.Dashboard:
         for mt in list(TRAFFIC_METRIC_TYPES)
         + list(QUALITY_METRIC_TYPES)
         + list(ONLINE_QUALITY_METRIC_TYPES)
+        + list(INFRA_EMPTY_METRIC_TYPES)
         + list(ROUTER_METRIC_TYPES)
     ]
     specs += [

@@ -16,7 +16,7 @@ Right: a red octagon "Alert Policies" with two grouped lists:
 - "Managed engine health: p99 latency > 5s, 5xx rate > 5%"
 Arrow from Alert Policies to a gray box "Notification channel".
 
-A gray dashed box at the bottom, faded, labeled "BigQuery agent analytics - DORMANT (opt-in, not wired)".
+A gray dashed box at the bottom, faded, labeled "BigQuery agent analytics - wired but OFF by default (ENABLE_AGENT_ANALYTICS)".
 
 Callout box: "The managed engine metrics page even with no client-side instrumentation running. The custom series exist only while a publisher runs."
 
