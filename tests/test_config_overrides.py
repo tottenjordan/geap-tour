@@ -94,8 +94,13 @@ def test_boundary_overrides(reloaded_config, monkeypatch):
     assert cfg.COMPLEXITY_HIGH == 0.70
     assert cfg.MEDIUM_SPLIT == 0.40
     assert cfg.HIGH_SPLIT == 0.85
-    # Backwards-compat alias tracks COMPLEXITY_HIGH.
-    assert cfg.COMPLEXITY_THRESHOLD_HIGH == 0.70
+    # The router has exactly FOUR cut-points and no fifth spelling. A
+    # `COMPLEXITY_THRESHOLD_HIGH` alias used to shadow COMPLEXITY_HIGH here: it
+    # was set to 0.65 in .env, read from env by nothing, and baked into every
+    # deployed engine holding COMPLEXITY_HIGH's value instead — so anyone tuning
+    # the router through that name changed nothing and got no error. Assert it
+    # stays gone rather than leaving the trap re-addable.
+    assert not hasattr(cfg, "COMPLEXITY_THRESHOLD_HIGH")
 
 
 def test_prompt_variant_override(reloaded_config, monkeypatch):
