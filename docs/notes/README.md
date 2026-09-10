@@ -98,17 +98,12 @@ file; keep this index short (< 200 lines).
   opt-in `BigQueryAgentAnalyticsPlugin` (runner-level, model-neutral) streams full
   prompt/response/tool content to BQ independent of the OTEL surface the managed
   runtime strips; flags, IAM prereqs, and the pending live-capture gate.
-- [Tool-call faithfulness (did it do what it said?)](./tool-call-faithfulness.md) —
-  a grounded judge compares completion claims against the real executed
-  `stream_query` trajectory to catch **hallucinated actions** — the gap
-  `tool_use_judge` can't cover (`run_inference` yields text but no trajectory).
-  Publishes `agent_eval/tool_faithfulness` + the online twin, floor 3.0. The
-  load-bearing trajectory-visibility fork **resolved live → Branch A**: nested MCP
-  calls are visible client-side, so faithfulness is action-level.
-- [Tool-call faithfulness — the console demo](./tool-faithfulness-demo.md) — a
-  curated 5-case dataset (`src/eval/data/faithfulness_demo.json`) where look-alike
-  confident responses differ only in the executed trajectory; the eval catches 3
-  fabrications → 2.60/5, below the floor, moving the console tile + firing the alert.
+- [Tool-call faithfulness](./tool-call-faithfulness.md) + [its console demo](./tool-faithfulness-demo.md)
+  — a grounded judge compares completion claims against the real executed `stream_query` trajectory
+  to catch **hallucinated actions**, the gap `tool_use_judge` can't cover (`run_inference` yields
+  text, no trajectory); publishes `agent_eval/tool_faithfulness` + the online twin, floor 3.0.
+  Trajectory visibility **resolved live → Branch A**, so it is action-level; the demo's 5 curated
+  look-alikes differ only in trajectory — 3 fabrications caught → 2.60/5, under the floor.
 - [Coordinator `tool_use_quality` ~0.27: root-cause finding](./coordinator-tool-use-quality.md)
   — mis-rubric (generic `TOOL_USE_QUALITY` wired instead of the delegation-aware
   `geap_tool_use`) plus a suspected trajectory-capture artifact; not an agent
@@ -162,6 +157,10 @@ file; keep this index short (< 200 lines).
   denial, not a platform block). Remediated by granting `roles/agentregistry.viewer`
   to the engine's own principal and recycling cached toolsets with an in-place
   `--update`; "Session terminated" fixed separately by `stateless_http`.
+- [Skill Registry: publishing works, discovery reads another store](./skill-registry.md) —
+  publishing is real and idempotent live (116 → 119 over two runs), but ADK's `GCPSkillRegistry`
+  reads `agentregistry.googleapis.com`, not the aiplatform store `client.skills` writes to, and
+  its `skills:search` returns `{}`. Discovery unusable here; `ENABLE_SKILL_REGISTRY` stays OFF.
 - [Agent Engine `stream_query` SSE-parse skew + raw-SSE fallback](./agent-engine-sse-stream-parse.md)
   — a recycled engine streams NDJSON via `:streamQuery?alt=sse`, but the installed
   (latest) `google-api-core` ships an **array-only** REST parser, so `stream_query`
