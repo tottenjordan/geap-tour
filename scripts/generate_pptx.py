@@ -565,9 +565,9 @@ def build_deck():
         Inches(5.5),
         Inches(2.5),
         [
-            "Coordinator Agent — routes requests to specialists",
-            "Travel Agent — searches flights/hotels, makes bookings",
-            "Expense Agent — submits expenses, enforces policy limits",
+            "Coordinator Agent — holds all three MCP toolsets directly",
+            "Travel Agent — flights/hotels; deployed + evaluated on its own",
+            "Expense Agent — expenses/policy; deployed + evaluated on its own",
         ],
         title="Three ADK Agents",
         title_color=BLUE,
@@ -691,8 +691,8 @@ def build_deck():
         Inches(1.3),
         Inches(5.5),
         Inches(1.4),
-        "Coordinator Pattern",
-        "Root agent uses sub_agents=[travel, expense] to delegate by intent",
+        "Direct-Tools Pattern",
+        "Root agent holds the MCP toolsets itself — no sub_agents, no delegation",
         BLUE,
     )
     add_card(
@@ -722,8 +722,13 @@ def build_deck():
         "ADK agents use LlmAgent as the base class. The key config: model, instruction, and tools. "
         "Agents discover MCP servers via the Agent Registry using registry.get_mcp_toolset() — "
         "no hardcoded URLs. The registry resolves the server's resource name to a live connection. "
-        "The Coordinator pattern uses sub_agents to delegate: it doesn't call tools directly, "
-        "it routes to the specialist agent best suited for the user's intent. "
+        "The coordinator uses the DIRECT-TOOLS pattern: it holds all three toolsets and calls "
+        "them itself. It has no sub_agents and delegates to nobody. This is not a style "
+        "preference — on the managed Agent Runtime only the ROOT agent's output streams back, "
+        "so a delegated turn (transfer_to_agent, or a nested AgentTool MCP call) never streamed "
+        "the specialist's answer. A trace census over 10 invocations also recorded ZERO AgentTool "
+        "calls, so the delegation the old design advertised was not even happening. "
+        "travel_agent and expense_agent remain as independently deployed and evaluated agents. "
         "OTel tracing is built in — every agent call automatically generates spans.",
     )
 
@@ -1854,9 +1859,13 @@ def build_deck():
         s,
         "The multi-model router uses a before_agent_callback to classify prompt complexity "
         "before the agent runs. classify_complexity() uses a lightweight Gemini call to score 0-1. "
-        "Based on the score, the router delegates to lite_agent (Flash Lite), flash_agent (Flash), "
-        "or opus_agent (Claude Opus via LiteLLM). This cuts costs 60-80% by sending simple queries "
-        "to cheap models while reserving expensive models for complex reasoning. "
+        "Based on the score the router SWAPS ITS OWN MODEL for the turn — it does not delegate to "
+        "lite_agent/flash_agent/opus_agent. Like the coordinator, it is ONE direct-tools agent; a "
+        "TierRoutingLlm dispatcher picks the backbone per request. The five standalone tier agents "
+        "still exist, but as independently deployed and evaluated engines, not as sub-agents. "
+        "Cut-points: below 0.25 lite, to 0.60 flash, to 0.925 sonnet, to 0.95 pro, above that opus. "
+        "Two of those were moved off their DOE-tuned values by paired side-by-side tests, and on "
+        "this workload pro and opus receive no traffic — five tiers are wired, three actually serve. "
         "The callback stores the classification in session state so the router agent's instruction can read it.",
     )
 

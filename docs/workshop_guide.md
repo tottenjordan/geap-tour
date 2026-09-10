@@ -76,11 +76,20 @@ gcloud services enable \
 **Diagram**: `diagrams/outputs/01_multi_agent_topology.png`
 
 Our workshop system has three ADK agents sharing three MCP tool servers:
-- **Coordinator Agent** — routes requests to specialists
-- **Travel Agent** — searches flights/hotels, makes bookings
-- **Expense Agent** — submits expenses, enforces policy limits
+- **Coordinator Agent** — holds all three MCP toolsets directly and fulfils requests itself
+- **Travel Agent** — flights/hotels; deployed and evaluated independently
+- **Expense Agent** — expenses/policy; deployed and evaluated independently
 
 **Key insight**: Multiple agents can share the same MCP server (e.g., both Travel Agent and Coordinator use the Search MCP), demonstrating the 1-to-many topology.
+
+**Key insight #2 — the coordinator delegates to nobody.** It used to hold `travel_agent`
+and `expense_agent` as sub-agents, and that was removed on 2026-08-20 for a reason worth
+teaching: on the managed Agent Runtime only the **root** agent's output streams back, so a
+delegated turn (`transfer_to_agent`, or a nested `AgentTool` MCP call) worked in-process
+locally and stalled once deployed. A trace census over 10 invocations had also recorded
+**zero** sub-agent calls, so the delegation the design advertised was not even happening.
+Travel and expense remain as separate deployables with their own evalsets — two things to
+deploy, not duplication.
 
 ![Multi-Agent Topology](../diagrams/outputs/01_multi_agent_topology.png)
 
@@ -140,11 +149,18 @@ travel_agent = LlmAgent(
 )
 ```
 
-**Multi-agent orchestration** ([`src/agents/coordinator_agent.py:48`](../src/agents/coordinator_agent.py)):
+**Direct-tools composition** ([`src/agents/coordinator_agent.py`](../src/agents/coordinator_agent.py)):
 ```python
 coordinator_agent = LlmAgent(
     ...
-    sub_agents=[travel_agent, expense_agent],
+    tools=[
+        get_mcp_tools(SEARCH_MCP_SERVER),
+        get_mcp_tools(BOOKING_MCP_SERVER),
+        get_mcp_tools(EXPENSE_MCP_SERVER),
+        *_memory_tools,          # PreloadMemoryTool (or the caching subclass)
+    ],
+    # No sub_agents. See "Key insight #2" above — delegated turns do not stream
+    # back through the managed runtime, and the census showed none were happening.
 )
 ```
 
@@ -1015,13 +1031,20 @@ async def classify_complexity(prompt: str) -> ComplexityResult:
 The router agent uses a `before_agent_callback` to classify complexity and store it in session state, then delegates to the appropriate sub-agent:
 
 ```python
-# src/router/agents.py
+# src/router/agents.py — ONE direct-tools agent that swaps its own model per turn.
 router_agent = LlmAgent(
-    model=_resolve_model(LITE_MODEL),
+    model=TierRoutingLlm(...),  # dispatcher: picks the tier's backbone per request
     name="router_agent",
     instruction=ROUTER_INSTRUCTION,  # reads complexity_level from state
-    tools=[PreloadMemoryTool()],
-    sub_agents=[lite_agent, flash_agent, opus_agent],
+    tools=[
+        get_mcp_tools(SEARCH_MCP_SERVER),
+        get_mcp_tools(BOOKING_MCP_SERVER),
+        get_mcp_tools(EXPENSE_MCP_SERVER),
+        PreloadMemoryTool(),
+    ],
+    # No sub_agents, for the same streaming reason as the coordinator. The five
+    # tier agents still exist as independently deployed engines — the router just
+    # doesn't route *to* them, it becomes them for a turn.
     before_agent_callback=complexity_router_callback,
     after_agent_callback=save_memories_callback,
 )
