@@ -33,9 +33,9 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 | [Evaluation Guide](docs/eval_operations.md) | Evaluation pipeline operations |
 | [Engineering Notes](docs/notes/README.md) | 44 root-cause / design notes (streaming, quota, latency, memory scope, eval bridges) |
 | [Demo Notebooks](notebooks/demo/README.md) | SDK-first platform + evaluation tours; every billable cell is opt-in |
-| [GEPA Analysis](docs/gepa_optimization_analysis.md) | Prompt optimization before/after results |
-| [Cross-Model Experiment](docs/cross_model_experiment.md) | All models × all complexity tiers |
-| [Cost Comparison](docs/multi_model_cost_comparison.md) | Multi-model routing cost analysis |
+| [GEPA Analysis](docs/gepa_optimization_analysis.md) | Prompt optimization before/after results — **historical (2026-05)**, engine ids dead |
+| [Cross-Model Experiment](docs/cross_model_experiment.md) | All models × all complexity tiers — **historical (2026-08-05)**; its "use Lite for medium" conclusion was later measured and rejected |
+| [Cost Comparison](docs/multi_model_cost_comparison.md) | Multi-model routing cost analysis — **historical**; three-tier framing and model ids superseded |
 | [Code Standards](CODE_STANDARDS.md) | Git, Python tooling, and testing conventions |
 | [Slides](docs/slides.pptx) | Workshop deck (34 slides) |
 
