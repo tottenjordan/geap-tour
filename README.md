@@ -164,19 +164,16 @@ Two of those cut-points were deliberately moved **off** their DOE-tuned values b
 
 Specs live in `diagrams/inputs/`; regenerate with `./scripts/generate_diagrams.sh`.
 
-> **Four specs are ahead of their rendered PNGs (2026-09-10).** The images below were
-> generated 2026-08-22. `01_multi_agent_topology`, `05_observability_stack`,
-> `06_ci_cd_flow` and `07_agent_armor` have since been corrected in
-> `diagrams/inputs/` but **not re-rendered**, so those four PNGs still show the older
-> content. The specs are the source of truth; read them if the two disagree.
-> `07_agent_armor` matters most — the rendered image says a Gemini-3 or Claude
-> backbone has the client-side guardrail as its *only* layer, which stopped being
-> true when ADK's Model Armor plugin became the default in #111.
->
-> Re-rendering needs a `GOOGLE_API_KEY` (or `OPENAI_API_KEY`) in the environment;
-> without one every item fails individually while the batch still exits 0, so read
-> the per-item table rather than the exit code. Set the key and run
-> `./scripts/generate_diagrams.sh`, then delete this note.
+All eight regenerated 2026-09-10 from corrected specs, after four of them
+(`01_multi_agent_topology`, `05_observability_stack`, `06_ci_cd_flow`,
+`07_agent_armor`) were found to disagree with the system they describe.
+`07_agent_armor` was the worst: it claimed a Gemini-3 or Claude backbone ran with
+the client-side guardrail as its *only* layer, which stopped being true when ADK's
+Model Armor plugin became the default in #111.
+
+Regeneration needs `GOOGLE_API_KEY` (or `OPENAI_API_KEY`), read from `.env` or the
+environment. Note that a missing or unusable key fails **every item individually
+while the batch still exits 0** — read the per-item table, not the exit code.
 
 | Diagram | Description |
 |---------|-------------|
