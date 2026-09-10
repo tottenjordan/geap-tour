@@ -79,11 +79,13 @@ file; keep this index short (< 200 lines).
   — a sweep after hitting the same shape five times: a check whose broken state reads
   identical to its healthy one. Found two more (a second alerted-but-unpublished series,
   an orphaned policy) plus the meta-gap that `verify_monitors` couldn't report it.
-- [The deployed-engine baseline](./deployed-engine-baseline.md) — what "configured
-  correctly" means, as **executable** rules (`engine_baseline.py`) plus a verifier that
-  diffs the live spec and exits non-zero (`verify_engine_config`). Catches the silent
-  class: 4Gi containers, tiers regressed to Gemini-3 by a plain `--update`, a thinking
-  classifier collapsing traffic to lite. First run: the `.env` coordinator was still on 4Gi.
+- [Eval reliability audit](./eval-reliability-audit.md) — what the suite cannot see: the
+  safety corpus restates the 4 blocklist regexes (1/10 held-out injections blocked);
+  calibration is blind at the 3.0 floor; a routing collapse *improves* `cost_savings_pct`.
+- [The deployed-engine baseline](./deployed-engine-baseline.md) — "configured correctly"
+  as **executable** rules (`engine_baseline.py`) plus a verifier that diffs the live spec
+  and exits non-zero (`verify_engine_config`). Catches the silent class: 4Gi containers,
+  tiers regressed to Gemini-3 by `--update`, a thinking classifier collapsing traffic.
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap, a shared `RetryingLlm` 429 wrapper, domain
@@ -94,10 +96,9 @@ file; keep this index short (< 200 lines).
 - [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
   — one-time provisioning checklist + run-of-show for the four demo money-shots
   (observability, trace debugging, periodic-snapshot eval, governance blocking).
-- [Agent-analytics content logging to BigQuery](./agent-analytics-bigquery.md) —
-  opt-in `BigQueryAgentAnalyticsPlugin` (runner-level, model-neutral) streams full
-  prompt/response/tool content to BQ independent of the OTEL surface the managed
-  runtime strips; flags, IAM prereqs, and the pending live-capture gate.
+- [Agent-analytics content logging to BigQuery](./agent-analytics-bigquery.md) — opt-in
+  `BigQueryAgentAnalyticsPlugin` streams full prompt/response/tool content to BQ,
+  independent of the OTEL surface the managed runtime strips; flags, IAM, live gate.
 - [Tool-call faithfulness](./tool-call-faithfulness.md) + [its console demo](./tool-faithfulness-demo.md)
   — a grounded judge compares completion claims against the real executed `stream_query` trajectory
   to catch **hallucinated actions**, the gap `tool_use_judge` can't cover (`run_inference` yields
