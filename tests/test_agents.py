@@ -16,10 +16,21 @@ def test_expense_agent_config():
 
 
 def test_coordinator_agent_config():
+    """Exact tool count, not ``>= 4``.
+
+    The tool surface is an input to ``tool_use_accuracy`` and therefore to the
+    monitored ``agent_eval/*`` series, and a ``>=`` bound cannot see a tool being
+    added (the opt-in Skill Registry toolset is the live example) — only one
+    disappearing. This is the flag-OFF surface: 3 MCP toolsets + PreloadMemory,
+    with ``ENABLE_SKILL_REGISTRY`` at its default off.
+    """
+    from google.adk.tools.skill_toolset import SkillToolset
+
     from src.agents.coordinator_agent import coordinator_agent
 
     assert coordinator_agent.name == "coordinator_agent"
-    assert len(coordinator_agent.tools) >= 4  # 3 MCP toolsets + PreloadMemory
+    assert len(coordinator_agent.tools) == 4
+    assert [t for t in coordinator_agent.tools if isinstance(t, SkillToolset)] == []
 
 
 def test_every_agent_disables_afc():

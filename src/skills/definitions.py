@@ -1,0 +1,413 @@
+"""Travel/expense skill definitions for the Gemini Enterprise Skill Registry.
+
+**The registry is a deployment target, not the source of truth.** A skill's
+whole payload is a `SKILL.md` — YAML frontmatter (`name`, `description`) plus a
+Markdown instruction body — and prose that steers a production agent deserves
+the same review as the agent's own prompt. So the content lives here, in git,
+where it is diffable and reviewable, and the publisher (a separate module) only
+uploads it. Same reasoning as ``src/optimize/*sampler_config.json``.
+
+**These are instruction-only skills — no executable scripts, deliberately.**
+ADK's ``SkillToolset`` accepts a ``code_executor`` for skills that ship scripts;
+we do not use it. Doing so would drag a sandbox and an arbitrary-code-execution
+surface into a demo that gains nothing from either. Nobody should "finish" this
+by adding one.
+
+**The design constraint that makes these worth publishing:** each skill must
+encode procedure the coordinator's ``INSTRUCTION``
+(``src/agents/coordinator_agent.py``) does *not* already contain. That
+instruction already covers searching, booking, booking management, calling
+``check_expense_policy`` before every submission, the flat category limits, the
+submit-and-flag rule for over-policy expenses, and proactive next steps. A skill
+that restates any of that proves nothing about skill discovery, because the
+agent would behave identically without it. The three below therefore cover
+*judgement between* those tool calls: how to decompose an ambiguous receipt into
+checkable line items, how to assemble and present a multi-leg itinerary before
+booking any of it, and how to reconcile a receipt against the booking record it
+claims to cover.
+
+The bodies are grounded in the real MCP tool surface (``src/mcp_servers/``) —
+real tool names, real argument names, real response fields — because a skill
+that references an invented tool teaches a procedure the agent cannot execute.
+"""
+
+import contextlib
+import json
+import tempfile
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+SKILL_MD_FILENAME = "SKILL.md"
+
+
+@dataclass(frozen=True)
+class SkillDefinition:
+    """One publishable skill: registry metadata plus its `SKILL.md` payload.
+
+    ``skill_id`` is both the registry id and the frontmatter ``name`` (the
+    registry treats the frontmatter name as the package identifier, so the two
+    must agree). ``description`` is what semantic retrieval scores a user's
+    request against at runtime — it is a *usage cue*, not a title.
+    """
+
+    skill_id: str
+    display_name: str
+    description: str
+    skill_md: str
+
+
+def _skill_md(*, skill_id: str, description: str, body: str) -> str:
+    """Compose a `SKILL.md` from the same metadata the registry is handed.
+
+    Composing rather than hand-writing the frontmatter is what keeps the
+    published ``description`` and the in-file one from drifting apart — a drift
+    that is invisible until retrieval matches on one and the console shows the
+    other.
+
+    ``description`` is emitted with ``json.dumps`` because a JSON string *is* a
+    valid YAML double-quoted scalar (stdlib, no new dependency), and quoting it
+    is the only way to keep the frontmatter parseable no matter what the prose
+    contains. As a bare scalar it breaks on a ``": "`` sequence, but also on a
+    leading ``#``, ``[``, ``{``, ``&``, ``*`` or ``>``, on a trailing colon, and
+    on an embedded newline — a rule nobody can be expected to enforce by hand
+    from a docstring in another file. ``skill_id`` stays bare: it is
+    slug-constrained and a test pins that.
+    """
+    return f"---\nname: {skill_id}\ndescription: {json.dumps(description)}\n---\n{body.strip()}\n"
+
+
+def _define(*, skill_id: str, display_name: str, description: str, body: str) -> SkillDefinition:
+    return SkillDefinition(
+        skill_id=skill_id,
+        display_name=display_name,
+        description=description,
+        skill_md=_skill_md(skill_id=skill_id, description=description, body=body),
+    )
+
+
+EXPENSE_POLICY_TRIAGE = _define(
+    skill_id="expense-policy-triage",
+    display_name="Expense policy triage",
+    description=(
+        "Decides which corporate expense-policy clauses apply to an ambiguous receipt before it "
+        "is checked or submitted. Use this skill when a receipt spans more than one expense "
+        "category, is a multi-night lodging total, is in a foreign currency, or does not map "
+        "cleanly onto the meals, transport, lodging, supplies and entertainment categories."
+    ),
+    body="""\
+# Expense Policy Triage
+
+`check_expense_policy(amount, category)` scores exactly **one** amount against
+**one** category limit, and `submit_expense(amount, category, description, user_id)`
+files exactly one line item. Receipts rarely arrive in that shape. This skill
+covers the step before the check: turning a receipt into line items the tools
+can actually adjudicate.
+
+## Decide the line items first
+
+Split the receipt into one line item per policy category, then run one
+`check_expense_policy(...)` and one `submit_expense(...)` per line item. Never
+sum across categories and check the total under whichever category is largest: a
+$220 client dinner checked as `meals` reads as a large over-limit violation,
+while the same receipt split into a $70 own-meal (`meals`) and a $150 hosting
+portion (`entertainment`) is two in-policy items. Split first, and each item
+carries its own verdict and its own expense_id.
+
+## Category boundaries the receipt does not settle
+
+- **meals vs entertainment** — decided by who was present and why, not by the
+  venue. The traveller's own food is `meals`; hosting a customer, candidate or
+  team event is `entertainment`. A hotel restaurant charge is still `meals`.
+- **transport vs lodging** — airfare, rail, taxi, rideshare and parking are
+  `transport`; only the room charge is `lodging`. Room service is `meals`.
+- **supplies** — consumables bought for the trip. Durable or IT-issued equipment
+  is not a travel expense at all; say so rather than forcing it into a category.
+
+## Lodging is a per-night limit
+
+The lodging limit applies to the **nightly rate**, not the invoice total. The
+tool does no per-night arithmetic — `check_expense_policy(...)` compares the one
+amount you hand it against a flat limit and knows nothing about nights — so the
+division is yours to do. Given a total, divide by the number of nights and check
+the nightly figure: a 3-night $900 invoice is $300/night and within policy,
+whereas checking $900 reports a violation that does not exist. When the stay came
+from a booking, confirm the nights from `get_booking_details(booking_id)`
+(`checkin` and `checkout`) instead of trusting the count in the request, and
+state the nightly rate and night count you used.
+
+**Check the nightly rate, but submit the invoice total.** The per-night figure is
+only how the limit is evaluated; the reimbursable amount is the whole stay. Pass
+$300 to `check_expense_policy(...)` and $900 to `submit_expense(...)`, and record
+the nightly rate and night count in the `description` so a reviewer can re-derive
+both. Filing the $300 you checked would under-reimburse the traveller by two
+nights.
+
+Expect the filed record to come back `status: "pending_review"`, with a
+`policy_check` whose `reason` repeats the $400 limit: `submit_expense(...)`
+re-runs the same flat check on the amount it is handed, and it is handed the
+total. That is the tool restating its own arithmetic, not a second opinion on the
+stay. Report the **nightly** rate as the policy verdict, and say why the record
+disagrees — the total is under review only because the limit is per night and
+the filed amount is for three of them — so a reviewer reading pending_review
+against an in-policy stay is not left to guess.
+
+## Foreign currency
+
+`check_expense_policy(...)` and `submit_expense(...)` take USD, and there is no
+conversion tool. Never pass a foreign-currency figure as though it were USD. Ask
+for the USD amount the card was actually charged; if the user supplies a rate
+instead, do the arithmetic, then record the original amount, currency and rate
+in the `description` you submit so a reviewer can re-derive the number.
+
+## An unknown category is not a violation
+
+For a category outside the accepted vocabulary the tool returns
+`within_policy: false` with an "Unknown category" reason. That is a
+*classification* failure, not a policy breach — do not report it to the user as
+"your expense exceeds policy". Re-map to the nearest valid category and re-check,
+or ask the user which category applies.
+
+## Report the split, not just the verdicts
+
+State how you split the receipt and why, then give each line item's verdict with
+the limit it was judged against. Triage decides *which* limit applies; it never
+decides whether an item gets filed. Over-limit items are still submitted and
+flagged for review.
+""",
+)
+
+
+TRIP_PLANNING_BRIEF = _define(
+    skill_id="trip-planning-brief",
+    display_name="Multi-city trip planning brief",
+    description=(
+        "Assembles a multi-city itinerary into a single reviewable brief — leg sequencing, "
+        "connection buffers, derived hotel nights and a trip total — and gets one confirmation "
+        "before booking anything. Use this skill when a travel request involves more than one "
+        "flight leg, more than one city, or overnight stays whose dates follow from the flights."
+    ),
+    body="""\
+# Multi-City Trip Planning Brief
+
+`search_flights(origin, destination, date)` searches exactly one leg and
+`search_hotels(city, max_price)` exactly one city. A multi-city trip is therefore
+a *sequence* of searches you assemble yourself and present as one brief the
+traveller confirms once — not a stream of bookings made as each option appears.
+
+## 1. Sequence the legs
+
+Chain them: each leg's destination airport is the next leg's origin. Search one
+leg at a time, in travel order, carrying the chosen option's arrival date
+forward — a value you compute, not one the result carries; step 3 defines it.
+Later legs depend on which option was chosen for the earlier ones, so never
+search them all against the date in the original request.
+
+## 2. Apply the connection rules
+
+Flight results carry local clock `departure` and `arrival` times and no time
+zone, so:
+
+- Allow at least 2 hours between one leg's arrival and the next leg's departure
+  for a same-day domestic connection, 3 hours if either leg is international.
+- An arrival time earlier than its departure time is an overnight leg: it lands
+  the **next** day. Do not chain a morning departure off it, and count that
+  night as spent in the air, not in a hotel.
+- A connection inside the buffer is not silently dropped. Keep the leg, mark it
+  tight in the brief, and let the traveller decide.
+
+## 3. Derive hotel nights from the itinerary
+
+Do not ask for check-in dates you can compute. No result carries an arrival
+*date* — only a `date`, which is the day it departs, and clock-only `departure`
+and `arrival` times. So a leg's arrival date is its `date`, plus one day when
+`arrival` is earlier than `departure` (the overnight case from step 2). For each
+city with an overnight stay, `checkin` is the inbound leg's arrival date computed
+that way, `checkout` is the outbound leg's `date`, and nights is the difference.
+Taking `date` as the arrival date books the room a night early on exactly the
+overnight leg step 2 just flagged.
+
+Search by city *name* — `search_hotels("New York")` — because flights use
+airport codes and hotels do not; passing an airport code returns nothing and is
+not the same as "no availability".
+
+## 4. Pre-check the nightly rate against policy
+
+Before proposing a hotel, run `check_expense_policy(price_per_night, "lodging")`.
+A room the traveller can book but cannot expense is a worse recommendation than a
+cheaper one. If every option in the city is over the limit, say so and propose
+the cheapest, flagged.
+
+## 5. Present the brief, then ask once
+
+Before booking anything, present:
+
+- each leg: id, airline, date, departure and arrival times, price;
+- each city: hotel, nights, price per night, and nights x rate;
+- the trip total;
+- every unresolved gap — a leg with no results, a connection inside the buffer,
+  a night with no hotel, a nightly rate over policy.
+
+Completeness beats brevity here, and this is the one response where it does. The
+general instruction to stay concise and skip excessive detail does not apply to
+the brief: the full itemisation *is* the deliverable, because a traveller cannot
+give one confirmation for an itinerary they were shown only a summary of.
+Compress everything else in the conversation; never the brief.
+
+Then ask for a single confirmation of the whole brief. Do not book a leg because
+it looks like the obvious choice.
+
+## 6. Book in itinerary order, and stop on failure
+
+After confirmation, book flights in travel order with
+`book_flight(flight_id, passenger_name)`, then hotels with
+`book_hotel(hotel_id, guest_name, checkin, checkout)`, reporting each returned
+`booking_id` as you go. If one booking fails partway through, **stop** — do not
+carry on down the itinerary. Report exactly which segments are booked and their
+ids so the traveller can retry or unwind them with `cancel_booking(booking_id)`.
+A half-booked trip whose ids were never reported cannot be cleaned up.
+""",
+)
+
+
+RECEIPT_AUDIT = _define(
+    skill_id="receipt-audit",
+    display_name="Receipt audit against bookings",
+    description=(
+        "Reconciles a receipt against the booking record it claims to cover and names the "
+        "discrepancy class before the expense is filed. Use this skill when a user expenses "
+        "travel that was booked through this assistant, or when a receipt amount, date or "
+        "traveller name may not match the booking."
+    ),
+    body="""\
+# Receipt Audit
+
+An expense that references a trip has a ground truth: the booking record. Check
+the receipt against it *before* submitting, and name what differs. A reviewer can
+act on "amount_mismatch: receipt $520, booked $450"; nobody can act on "this
+looks fine".
+
+## 1. Fetch the booking record
+
+With a booking id, call `get_booking_details(booking_id)`. Without one, call
+`list_all_bookings(limit)` and match on `type`, `item_id`, traveller name and —
+for a hotel — the `checkin`/`checkout` range. If nothing matches and `truncated`
+is true, the booking may simply be older than the returned window — say that,
+rather than concluding no booking exists.
+
+The record is thinner than it looks. It carries `booking_id`, `type`, `item_id`,
+`status` and `created_at`, plus `passenger_name` for a flight or `guest_name`,
+`checkin` and `checkout` for a hotel (and `cancelled_at` once cancelled). It
+carries **no price and no travel date**: `created_at` is when the booking was
+made, not when the trip happens.
+
+## 2. Price the booking from the search catalogue
+
+So the two figures an audit most needs — what the trip cost and when it was — are
+not on the record. Resolve them by looking `item_id` up in the catalogue the
+booking came from:
+
+- **flight** — `search_flights(origin, destination)`, then take the result whose
+  `id` equals the booking's `item_id`. Its `price` is the booked fare and its
+  `date`, `departure` and `arrival` are the booked travel times. Leave the
+  optional date argument off deliberately: the only travel date you have is the
+  receipt's, so filtering the catalogue by it is the same back-fill error as
+  taking the price from the receipt. A receipt for the wrong day would then
+  either return nothing (and get reported as "booked amount could not be
+  established") or match by construction — either way the date_mismatch class
+  below can never fire. `item_id` is unique across the catalogue, so the route
+  alone resolves it.
+- **hotel** — `search_hotels(city)`, matched on `id` the same way. Its
+  `price_per_night` x the nights between the booking's `checkin` and `checkout`
+  is the booked total.
+
+The route and city are not on the booking record either, so take them from the
+receipt or the conversation, or ask. If `item_id` resolves to nothing, say the
+booked amount could not be established and audit only the fields you do have.
+Never back-fill the booked price from the receipt you are auditing — that makes
+every amount match by construction.
+
+## 3. Classify the difference by name
+
+Compare the receipt against the record and the figures from step 2, and report
+every class that applies:
+
+- **no_matching_booking** — no record covers this trip. Not necessarily improper
+  (it may have been booked elsewhere); ask before assuming.
+- **cancelled_booking_charge** — the record's `status` is `cancelled`. A charge
+  against a cancelled booking needs an explanation before it is reimbursable;
+  quote the `cancelled_at` timestamp.
+- **amount_mismatch** — the receipt total differs from the booked figure
+  resolved in step 2: a flight's `price`, or a hotel's `price_per_night` x
+  nights. Quote both figures. Upgrades, fare changes and resort fees all land in
+  this class; the explanation is the traveller's.
+- **date_mismatch** — receipt dates fall outside the flight `date` resolved in
+  step 2, or outside the booking's `checkin`/`checkout` range. Never compare
+  against `created_at`: a trip booked in March for June is not a date mismatch.
+  Extra nights are usually also an amount_mismatch; report both.
+- **traveller_mismatch** — the receipt name differs from `passenger_name` or
+  `guest_name`. Somebody else's ticket is not reimbursable to this user.
+- **clean_match** — every compared field agrees. Say so explicitly: a silent
+  audit is indistinguishable from no audit.
+
+Quote the two values you compared. Never assert a mismatch without both numbers.
+
+## 4. Check for a duplicate before filing
+
+`submit_expense(...)` mints a new expense_id on every call and nothing
+de-duplicates, so re-submitting a receipt creates a second reimbursable record.
+Call `get_user_expenses(user_id, limit)` and look for an existing record with the
+same `amount` and `category`. Let the `description` corroborate a match; never
+require it. Step 5 puts the audit finding in that field, so a receipt filed
+before this skill ran carries a different description for the same charge, and an
+all-three-must-agree test waves through precisely the duplicate it was meant to
+catch. The listing is bounded: if nothing matches and `truncated` is true, the
+earlier filing may simply be older than the returned window — say that, rather
+than treating the receipt as unfiled. On a match, **ask before submitting** and
+quote the existing expense_id. This is the one case where you pause instead of
+filing — it is not the over-limit case, where an expense is always submitted and
+flagged for review.
+
+## 5. File with the finding attached
+
+Then submit. Put the discrepancy class and both compared values into the
+`description` you pass to `submit_expense(...)`. That description is the only
+part of the audit a reviewer ever sees, so a finding that lives only in the chat
+reply is lost the moment the expense is filed. Tell the user the class by name
+and what you compared.
+""",
+)
+
+
+SKILL_DEFINITIONS: tuple[SkillDefinition, ...] = (
+    EXPENSE_POLICY_TRIAGE,
+    TRIP_PLANNING_BRIEF,
+    RECEIPT_AUDIT,
+)
+
+
+def get_skill(skill_id: str) -> SkillDefinition:
+    """Look one skill up by id. Raises ``KeyError`` for an unknown id."""
+    for skill in SKILL_DEFINITIONS:
+        if skill.skill_id == skill_id:
+            return skill
+    known = ", ".join(s.skill_id for s in SKILL_DEFINITIONS)
+    raise KeyError(f"Unknown skill_id {skill_id!r}. Known skills: {known}")
+
+
+@contextlib.contextmanager
+def materialize_skill(skill: SkillDefinition) -> Iterator[Path]:
+    """Write ``skill`` into a fresh temp directory as `SKILL.md`, and yield the dir.
+
+    The registry client uploads a *directory* (``config={"local_path": ...}``),
+    so a definition has to hit the filesystem before it can be published. This
+    uses ``tempfile.TemporaryDirectory`` rather than the notebook's fixed
+    ``/tmp/sample_math_skill`` on purpose: a fixed path collides between
+    concurrent publishes and silently leaves a previous run's `SKILL.md` behind
+    for the next one to upload. A context manager (not a bare path return) so
+    the directory is guaranteed to be cleaned up even if the publish raises.
+    """
+    with tempfile.TemporaryDirectory(prefix=f"geap-skill-{skill.skill_id}-") as tmpdir:
+        directory = Path(tmpdir)
+        (directory / SKILL_MD_FILENAME).write_text(skill.skill_md, encoding="utf-8")
+        yield directory
