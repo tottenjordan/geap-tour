@@ -316,12 +316,15 @@ opus_agent = LlmAgent(
     before_agent_callback=input_guardrail_callback,
 )
 
-# src/router/agents.py:120-128 — Router delegates by complexity level
+# src/router/agents.py — ONE direct-tools agent that swaps its own model per turn.
+# It does NOT delegate: a sub-agent's turn never streamed back through the
+# managed runtime, so the router holds the toolsets itself and a TierRoutingLlm
+# dispatcher selects the backbone per request.
 router_agent = LlmAgent(
-    model=_resolve_model(LITE_MODEL),
+    model=TierRoutingLlm(...),
     name="router_agent",
     instruction=ROUTER_INSTRUCTION,
-    sub_agents=[lite_agent, flash_agent, opus_agent],
+    tools=[...],  # the same three MCP toolsets the coordinator holds
     before_agent_callback=complexity_router_callback,
     after_agent_callback=save_memories_callback,
 )

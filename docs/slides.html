@@ -353,9 +353,9 @@
     <div>
       <h3>Three ADK Agents</h3>
       <ul>
-        <li><strong>Coordinator Agent</strong> — routes requests to specialists</li>
-        <li><strong>Travel Agent</strong> — searches flights/hotels, makes bookings</li>
-        <li><strong>Expense Agent</strong> — submits expenses, enforces policy limits</li>
+        <li><strong>Coordinator Agent</strong> — holds all three MCP toolsets directly</li>
+        <li><strong>Travel Agent</strong> — flights/hotels; deployed + evaluated on its own</li>
+        <li><strong>Expense Agent</strong> — expenses/policy; deployed + evaluated on its own</li>
       </ul>
       <h3 style="margin-top: 24px;">Three MCP Servers</h3>
       <ul>
@@ -435,8 +435,8 @@ travel_agent = LlmAgent(
     <div>
       <h3>Multi-Agent Coordination</h3>
       <div class="card" style="margin-bottom: 16px;">
-        <h3>Coordinator Pattern</h3>
-        <p>Root agent uses <code>sub_agents=[travel, expense]</code> to delegate by intent</p>
+        <h3>Direct-Tools Pattern</h3>
+        <p>Root agent holds the MCP toolsets itself — no <code>sub_agents</code>, no delegation. On the managed runtime only the <em>root</em> agent's output streams back, so a delegated turn never reached the caller.</p>
       </div>
       <div class="card green" style="margin-bottom: 16px;">
         <h3>Session Management</h3>
