@@ -1,5 +1,24 @@
 # Cross-Model Complexity Experiment
 
+> **HISTORICAL — measured 2026-08-05 on Gemini-3 tier engines. Its headline
+> recommendation has since been measured and rejected.**
+>
+> The numbers below are real, and they are kept as measured. What changed is the
+> conclusion drawn from them. This report says "**Use Lite** for medium complexity —
+> no reason to spend more", on the strength of Lite scoring 0.73 vs Sonnet's 0.79 on
+> the medium tier: a **dataset mean**.
+>
+> A later paired side-by-side test on the individual prompts found the opposite.
+> On the medium prompts the router was actually sending to Lite, **flash beat lite
+> 18–1 (p=0.0001)** — a real quality loss the mean had diluted to roughly 0.04.
+> `COMPLEXITY_LOW` was dropped 0.44 → 0.25 specifically to stop routing those
+> prompts to Lite, taking `routing_accuracy_pct` from 50% to 82.5% for 0.3pp of cost
+> savings. See [router-boundary-experiment.md](notes/router-boundary-experiment.md).
+>
+> Read this report as evidence for *why an aggregate can mislead*, not as current
+> routing guidance. The tier agents were also on Gemini-3 model ids then and are
+> pinned to Gemini-2.5 now, so the per-model scores are not comparable to today's.
+
 ## Experiment Overview
 
 This experiment tests all 5 model-tier agents on all 3 complexity levels to measure how each model handles queries above and below its intended tier.

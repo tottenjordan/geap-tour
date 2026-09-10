@@ -7,12 +7,13 @@ Layer 1, a red octagon labeled "Client-side guardrail (ALWAYS ACTIVE)":
 - Bullet list: "blocklist patterns", "length limits", "emits guardrail.blocked span + metric"
 - Two outgoing arrows: a red one labeled "blocked" to a red box "Rejection message", and a green one labeled "allowed" continuing right.
 
-Layer 2, a red octagon labeled "Model Armor templates (CONDITIONAL)":
-- Subtitle "server-side screening: prompt injection, content safety, sensitive data, malicious URLs"
-- A prominent yellow decision box in front of it reading: "Only attached when the backbone is REGIONAL GEMINI 2.x"
-- Two branches out of the decision:
-  - Green branch "gemini-2.5-flash -> templates active"
-  - Gray branch "Gemini 3.x (global endpoint) or Claude (LiteLLM) -> templates omitted, client-side guardrail is the only layer"
+Layer 2, a prominent yellow decision diamond labeled "Which backbone?" feeding two mutually exclusive server-side paths:
+- Green branch "Regional Gemini 2.x" to a red octagon "Model Armor templates":
+  subtitle "server-side screening: prompt injection, content safety, sensitive data, malicious URLs"
+- Blue branch "Gemini 3.x global endpoint, or Claude via LiteLLM" to a red octagon "ADK Model Armor plugin (ENABLE_MODEL_ARMOR_PLUGIN, default ON)":
+  subtitle "request-path screening where region-scoped templates cannot attach"
+
+A small note beside the decision: "Exactly one server-side layer is active at a time - the plugin covers the backbones the templates cannot reach, so no backbone falls back to the local blocklist alone."
 
 Right: a green rounded rectangle "Agent Engine" then a purple rounded rectangle "Vertex AI Model".
 

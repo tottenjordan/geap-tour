@@ -1,56 +1,45 @@
-diagrams:
-  - name: "01_multi_agent_topology"
-    input: "inputs/01_multi_agent_topology.txt"
-    output: "outputs/01_multi_agent_topology.png"
-    width: 3840
-    height: 2160
-    format: png
+# Batch manifest for the GEAP architecture diagrams.
+#
+# SCHEMA (paperbanana 0.3.0, the version pinned in pyproject.toml): a TOP-LEVEL
+# LIST of items, each requiring `input` and `caption`, with an optional `id`.
+# This file previously used a `diagrams:` mapping with `output`/`width`/`height`
+# /`format` per item — that schema was dropped, and `paperbanana batch` fails the
+# whole run with "Manifest must be a list of items or an object with an 'items'
+# list". Rendered size and format are now batch-level flags on the CLI
+# (see scripts/generate_diagrams.sh), not per-item manifest fields.
+#
+# `caption` is REQUIRED and is not decoration: it is the communicative intent the
+# generator and its critic loop grade the image against. A caption that just
+# restates the title produces a worse diagram than one that states the point.
 
-  - name: "02_deployment_architecture"
-    input: "inputs/02_deployment_architecture.txt"
-    output: "outputs/02_deployment_architecture.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "01_multi_agent_topology"
+  input: "inputs/01_multi_agent_topology.txt"
+  caption: "Two independent direct-tools agent topologies on Vertex AI Agent Engine: a coordinator and a five-tier complexity router, each holding all three MCP toolsets directly rather than delegating to sub-agents. The pro and opus tiers are greyed out because they receive no traffic on this workload."
 
-  - name: "03_eval_pipeline"
-    input: "inputs/03_eval_pipeline.txt"
-    output: "outputs/03_eval_pipeline.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "02_deployment_architecture"
+  input: "inputs/02_deployment_architecture.txt"
+  caption: "Deployment topology on Vertex AI Agent Engine: per-engine SPIFFE identity, the mandatory cpu 4 / memory 16Gi resource limits, managed Sessions and Memory Bank, and MCP tool servers on Cloud Run."
 
-  - name: "04_agent_identity_gateway"
-    input: "inputs/04_agent_identity_gateway.txt"
-    output: "outputs/04_agent_identity_gateway.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "03_eval_pipeline"
+  input: "inputs/03_eval_pipeline.txt"
+  caption: "Three independent evaluation publishing surfaces - an offline rubric snapshot that is the canonical source, a client-side online monitor that partitions infrastructure failures out of the quality mean, and router efficiency in native units - converging on Cloud Monitoring."
 
-  - name: "05_observability_stack"
-    input: "inputs/05_observability_stack.txt"
-    output: "outputs/05_observability_stack.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "04_agent_identity_gateway"
+  input: "inputs/04_agent_identity_gateway.txt"
+  caption: "Per-engine SPIFFE workload identity and the registry grant it needs, with Agent Gateway shown greyed out because it is not enabled in this project. Recreating an engine mints a new identity and requires a fresh grant."
 
-  - name: "06_ci_cd_flow"
-    input: "inputs/06_ci_cd_flow.txt"
-    output: "outputs/06_ci_cd_flow.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "05_observability_stack"
+  input: "inputs/05_observability_stack.txt"
+  caption: "Two independent telemetry paths: platform-emitted traces, logs and engine metrics that are always on, versus self-reported quality series that exist only while an eval publisher runs, feeding alert policies for both."
 
-  - name: "07_agent_armor"
-    input: "inputs/07_agent_armor.txt"
-    output: "outputs/07_agent_armor.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "06_ci_cd_flow"
+  input: "inputs/06_ci_cd_flow.txt"
+  caption: "Three GitHub Actions workflows: required cloud-free unit tests that block merge, an advisory eval gate that runs on a label or weekly, and a scheduled monitoring publish whose cron is hourly but which GitHub drops to roughly seven runs a day."
 
-  - name: "08_platform_overview"
-    input: "inputs/08_platform_overview.txt"
-    output: "outputs/08_platform_overview.png"
-    width: 3840
-    height: 2160
-    format: png
+- id: "07_agent_armor"
+  input: "inputs/07_agent_armor.txt"
+  caption: "Layered prompt screening: an always-on client-side guardrail, then exactly one backbone-dependent server-side layer - region-scoped Model Armor templates for regional Gemini 2.x, or ADK's Model Armor plugin for Gemini 3.x and Claude - so no backbone falls back to the local blocklist alone."
+
+- id: "08_platform_overview"
+  input: "inputs/08_platform_overview.txt"
+  caption: "Single-slide overview of the corporate travel and expense agent system: clients through a client-side guardrail to the two agents, down to MCP tool servers and models, with three evaluation surfaces feeding Cloud Monitoring and alert policies."

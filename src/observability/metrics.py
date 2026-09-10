@@ -88,6 +88,18 @@ ONLINE_QUALITY_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_online_eval/{name}" for name, _threshold in ONLINE_MONITORED_METRICS
 ]
 
+# The infra-empty rate is NOT in *_MONITORED_METRICS: those are 1-5 rubric scores
+# with a shared 3.0 floor, and this is a verbatim 0-1 rate with its own GT-0.2
+# alert. It still needs to be *visible*, which is a separate question from how it
+# is alerted — a helpfulness dip on this system is usually empty-at-200 responses
+# rather than a model regression, and a dashboard showing the dip without the
+# explanation sends the reader looking for a quality problem that isn't there.
+INFRA_EMPTY_RATE = "infra_empty_rate"
+INFRA_EMPTY_METRIC_TYPES = [
+    f"{METRIC_PREFIX}agent_eval/{INFRA_EMPTY_RATE}",
+    f"{METRIC_PREFIX}agent_online_eval/{INFRA_EMPTY_RATE}",
+]
+
 # Traffic metric types (bare, un-prefixed) emitted from a load-run summary.
 TRAFFIC_LATENCY_P50 = "agent_traffic/request_latency_p50"
 TRAFFIC_LATENCY_P95 = "agent_traffic/request_latency_p95"

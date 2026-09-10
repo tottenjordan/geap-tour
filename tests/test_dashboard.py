@@ -16,6 +16,7 @@ from src.observability.dashboard import (
     create_or_update_dashboard,
 )
 from src.observability.metrics import (
+    INFRA_EMPTY_METRIC_TYPES,
     ONLINE_QUALITY_METRIC_TYPES,
     QUALITY_METRIC_TYPES,
     ROUTER_METRIC_TYPES,
@@ -50,13 +51,16 @@ def test_build_returns_dashboard_with_display_name():
 def test_build_has_widget_per_metric():
     d = build_dashboard()
     tiles = list(d.mosaic_layout.tiles)
-    # One tile per traffic + quality + online-quality + router metric, PLUS a
-    # per-model breakdown variant for every traffic + quality + online-quality
-    # metric (router is a single agent, no per-model split).
+    # One tile per traffic + quality + online-quality + infra-empty + router
+    # metric, PLUS a per-model breakdown variant for every traffic + quality +
+    # online-quality metric (router is a single agent, no per-model split; the
+    # infra-empty rate is an engine-level infra signal, not a per-model quality
+    # comparison, so it gets an aggregate tile only).
     base = (
         len(TRAFFIC_METRIC_TYPES)
         + len(QUALITY_METRIC_TYPES)
         + len(ONLINE_QUALITY_METRIC_TYPES)
+        + len(INFRA_EMPTY_METRIC_TYPES)
         + len(ROUTER_METRIC_TYPES)
     )
     breakdown = (
@@ -99,6 +103,7 @@ def test_every_metric_type_appears_in_some_widget():
         TRAFFIC_METRIC_TYPES
         + QUALITY_METRIC_TYPES
         + ONLINE_QUALITY_METRIC_TYPES
+        + INFRA_EMPTY_METRIC_TYPES
         + ROUTER_METRIC_TYPES
     ):
         assert mt in blob, f"metric type {mt} missing from dashboard widgets"
@@ -195,3 +200,18 @@ def test_import_needs_no_credentials():
     assert d is not None
     with pytest.raises(AttributeError):
         _ = d.does_not_exist
+
+
+def test_infra_empty_rate_is_visible_next_to_quality():
+    """The tile that explains most quality dips must be on the dashboard.
+
+    A helpfulness dip on this system is usually empty-at-200 responses rather
+    than a model regression (docs/notes/online-quality-monitor.md). The rate is
+    published on both surfaces and alerted at GT 0.2, but was absent from the
+    dashboard -- so the board showed the symptom and hid the cause. Assert both
+    tiles exist rather than trusting the metric list, which does not include it
+    (it is a verbatim 0-1 rate, not a 1-5 rubric with the shared 3.0 floor).
+    """
+    titles = {t.widget.title for t in build_dashboard().mosaic_layout.tiles}
+    assert "Infra: Empty-Response Rate (offline)" in titles
+    assert "Infra: Empty-Response Rate (online)" in titles

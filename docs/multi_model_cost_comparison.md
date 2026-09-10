@@ -5,6 +5,22 @@
 > "The future is multi-model — right model for right task and needs at hand."
 > — [gemini-model-router](https://github.com/jswortz/gemini-model-router)
 
+> **HISTORICAL — the three-tier framing and the model ids below are both
+> superseded.** Kept for the cost thesis and the worked example, not as a
+> description of what runs today. Three specific things to not carry away:
+>
+> * **The router has five tiers, not three** — lite → flash → sonnet → pro → opus.
+> * **The model ids never existed here.** "Gemini 2.0 Flash Lite" and "Claude Opus
+>   4-7" are not models this repo has used; the tiers are `gemini-3.1-flash-lite`,
+>   `gemini-3.5-flash`, `gemini-3.1-pro-preview`, `claude-sonnet-4-6` and
+>   `claude-opus-4-6` by default, and the deployed router pins the Gemini tiers to
+>   2.5. `src/config.py` is the source of truth.
+> * **The routed examples below are now wrong.** Under the current cut-points a
+>   0.30 score routes to **flash** (not lite) and 0.80 routes to **sonnet** (not
+>   opus) — `COMPLEXITY_LOW` is 0.25 and `COMPLEXITY_HIGH` is 0.925, and pro/opus
+>   receive nothing on this workload. See
+>   [router-boundary-experiment.md](notes/router-boundary-experiment.md).
+
 This demo routes prompts by complexity to the most cost-effective model:
 - **Low** (simple lookups) → Gemini 2.0 Flash Lite ($0.075/M input)
 - **Medium** (moderate reasoning) → Gemini 2.5 Flash ($0.15/M input)

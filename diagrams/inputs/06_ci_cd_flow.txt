@@ -7,13 +7,16 @@ From GitHub Actions, three horizontal lanes:
 Lane 1, green, labeled "tests.yaml - REQUIRED, cloud-free":
 "uv sync --all-groups" arrow "pytest (unit + config + safety corpus)" arrow green check "Blocks merge on failure"
 
-Lane 2, yellow, labeled "eval_gate.yaml - ADVISORY, label-gated":
-"Verify deployed engine config" arrow "Coordinator rubric eval" arrow "Multi-turn + empty-stream smoke" arrow yellow warning "Reports to job summary, does NOT block merge"
+Lane 2, yellow, labeled "eval_gate.yaml - ADVISORY, run-eval label OR weekly":
+"Verify deployed engine config" arrow "Coordinator rubric eval" arrow "Empty-stream smoke" arrow yellow warning "Reports to job summary, does NOT block merge"
+- A small gray box hanging off the smoke step, faded: "Multi-turn smoke QUARANTINED - broken upstream on aiplatform 2.1.0. Still run, but excluded from the fail guard."
 - Small red note under this lane: "Scores a SHARED deployed engine, not the PR diff."
+- Small note: "Weekly cron added because a label-only gate went 15 invocations without executing once."
 
-Lane 3, blue, labeled "monitoring_publish.yaml - SCHEDULED hourly":
-"Verify engine config" arrow "Publish offline quality" arrow "Publish online quality" arrow "Summarize monitored surfaces"
+Lane 3, blue, labeled "monitoring_publish.yaml - SCHEDULED":
+"Verify engine config" arrow "Publish offline quality" arrow "Publish tool-call faithfulness" arrow "Publish online quality" arrow "Publish router efficiency" arrow "Scan for orphaned engines" arrow "Summarize monitored surfaces"
 - Small note: "Runs unattended so the series never go stale."
+- Small red note: "Cron is hourly, but GitHub DROPS scheduled runs under load - measured ~7 per day. The 48h alert lookback is sized for that."
 
 Right: all lanes point to a purple rounded rectangle "Cloud Monitoring".
 
