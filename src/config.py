@@ -304,10 +304,24 @@ ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", 
 # operation but bounds the cost of a loop that would otherwise burn quota silently.
 ADK_MAX_LLM_CALLS = int(os.environ.get("ADK_MAX_LLM_CALLS", "100"))
 
-ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "0") in (
-    "1",
-    "true",
-    "True",
+# DEFAULT ON as of 2026-09-09. It was off while unproven; it is now measured — on a
+# Gemini-3 backbone the plugin blocked an injection that BOTH the client blocklist
+# and the Model Armor templates let through. Leaving it off meant the protection
+# existed and guarded nothing.
+#
+# Safe to default on because it is inert where it is not needed: model_armor_plugin()
+# returns None on a regional Gemini-2.x backbone, where the templates already screen,
+# so no request is ever double-screened. Both currently-deployed engines are
+# gemini-2.5-flash, so flipping this changes nothing about them today — the point is
+# that the NEXT Gemini-3 deploy (which .env's AGENT_MODEL=gemini-3.5-flash would
+# produce) is covered by default instead of silently unarmored.
+#
+# Set ENABLE_MODEL_ARMOR_PLUGIN=0 to opt out.
+ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
 )
 
 # ENABLE_SPAN_CONTENT_CAPTURE=1 deploys the coordinator with

@@ -120,3 +120,72 @@ class TestEvalsetCasesMatchTheSystem:
         real = {t for tools in EXPECTED_TOOLS.values() for t in tools} | {"transfer_to_agent"}
         offenders = {t for _, _, tools, _ in self._invocations() for t in tools if t not in real}
         assert not offenders, f"eval cases expect non-existent tools: {sorted(offenders)}"
+
+
+class TestSamplerCriteriaCanActuallyBeScored:
+    """A criterion that always errors does not measure safety — it zeroes the objective.
+
+    Measured 2026-09-09. Every GEPA run returned `best 0.0 / baseline 0.0 / lift 0.0`,
+    which read as a hopeless agent. Per-metric detail on the travel set said otherwise:
+
+        response_match_score     0.35  PASSED
+        final_response_match_v2  1.00  PASSED   <- the reference is perfect
+        safety_v1                0.00  NOT_EVALUATED
+
+    `safety_v1` fails server-side on the LOCAL ADK path with
+    `400 INVALID_ARGUMENT: Constraint is too tall: 18558 (vs max of 5888)` — its
+    constrained-decoding schema exceeds the serving model's limit. `_patch_adk` then
+    coerces the resulting `None` to `0.0` (it must; the SDK does `round(None)` and
+    crashes), and that single zero collapsed the whole aggregate. Every case, every
+    agent, all nine sampler configs.
+
+    Removing it took the travel objective from a flat 0.0 to **6/7 cases at 1.0**, and
+    a bounded GEPA run from `0.0/0.0/0.0` to **baseline 0.714 -> best 1.0, lift 0.286**.
+
+    **No safety coverage was lost.** `safety_v1` works fine on the *Vertex eval
+    service* path — the same-day batch eval scored `safety_v1 1.00` — so safety is
+    still measured where it works (`multi_agent_batch_eval`), plus the client-side
+    guardrail and Model Armor. What was removed is a criterion that, on this path,
+    only ever contributed a zero.
+    """
+
+    @staticmethod
+    def _sampler_configs():
+        """SAMPLER configs only.
+
+        `*_config.json` would also match the OPTIMIZER configs
+        (`coordinator_optimizer_config.json`, `gepa_smoke_config.json`), which carry
+        `max_metric_calls` rather than criteria and are correctly empty here.
+        """
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        return sorted((root / "src" / "optimize").glob("*sampler_config.json"))
+
+    def test_no_sampler_config_scores_safety_v1(self):
+        import json
+
+        offenders = [
+            p.name
+            for p in self._sampler_configs()
+            if "safety_v1"
+            in ((json.loads(p.read_text()).get("eval_config") or {}).get("criteria") or {})
+        ]
+        assert not offenders, (
+            "safety_v1 errors on the local ADK path (constraint too tall) and its "
+            f"None score is coerced to 0.0, zeroing the whole objective: {offenders}"
+        )
+
+    def test_every_config_still_scores_something(self):
+        """Guard the guard: removing criteria must not leave an empty objective, which
+        would be a different way of measuring nothing."""
+        import json
+
+        for p in self._sampler_configs():
+            crit = (json.loads(p.read_text()).get("eval_config") or {}).get("criteria") or {}
+            assert crit, f"{p.name} has no criteria left — the objective is empty"
+
+    def test_the_discovery_glob_finds_the_configs(self):
+        """A moved file must not silently empty this sweep — the same failure the
+        evalset sweep guards against."""
+        assert len(self._sampler_configs()) >= 9

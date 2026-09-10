@@ -394,25 +394,43 @@ class TestTheEvalGateReportsItsOwnBreakage:
         assert "steps.online_smoke.outcome" in run
         assert ".conclusion" not in run
 
-    def test_a_wholly_broken_smoke_harness_fails_the_job(self):
-        """Otherwise a permanently broken step is one word in a table nobody opens."""
-        guard = _step(_gate_steps(), "Fail if every smoke check failed")["if"]
-        assert "steps.multiturn.outcome == 'failure'" in guard
+    def test_the_guard_excludes_the_quarantined_check(self):
+        """multi-turn is QUARANTINED (simulated_eval is broken on aiplatform 2.1.0,
+        so it fails every run). Leaving it in an AND guard would make the guard
+        unreachable and let a real online-smoke failure pass unnoticed — a
+        two-signal guard that is really a zero-signal one."""
+        guard = _step(_gate_steps(), "Fail if the un-quarantined smoke check failed")["if"]
         assert "steps.online_smoke.outcome == 'failure'" in guard
+        assert "multiturn" not in guard, (
+            "the quarantined check must not gate the job — it fails by construction"
+        )
 
-    def test_one_flaky_smoke_check_does_not_fail_the_job(self):
-        """`&&`, not `||`: a single failure is a flaky live engine, and an advisory
-        gate that reds on that gets ignored."""
-        guard = _step(_gate_steps(), "Fail if every smoke check failed")["if"]
-        assert "&&" in guard
-        assert "||" not in guard
+    def test_the_quarantine_is_labelled_where_a_reader_will_see_it(self):
+        """A red row with no explanation trains people to ignore the table."""
+        names = [s.get("name") or "" for s in _gate_steps()]
+        assert any("QUARANTINED" in n for n in names)
+        row = _step(_gate_steps(), "Publish smoke results")["run"]
+        assert "QUARANTINED" in row
+
+    def test_the_quarantine_has_an_exit_condition(self):
+        """A quarantine with no way out becomes permanent. This step is the only
+        thing that will tell us the upstream fix landed."""
+        step = _step(_gate_steps(), "Notice if the quarantined check starts passing")
+        assert "steps.multiturn.outcome == 'success'" in step["if"]
+        assert "lift the quarantine" in step["run"]
+
+    def test_the_quarantined_step_still_runs(self):
+        """Skipping it would guarantee we never learn it was fixed."""
+        step = _step(_gate_steps(), "Multi-turn smoke")
+        assert "if" not in step, "the quarantined step must still execute"
+        assert step.get("continue-on-error") is True
 
     def test_the_score_summary_still_publishes_after_the_guard(self):
         """The guard exits 1 before it, so it must be `always()` or a failing smoke
         harness would also hide the rubric scores."""
         steps = _gate_steps()
         names = [s.get("name") or "" for s in steps]
-        guard_i = next(i for i, n in enumerate(names) if "Fail if every smoke" in n)
+        guard_i = next(i for i, n in enumerate(names) if "Fail if the un-quarantined" in n)
         score_i = next(i for i, n in enumerate(names) if "Publish score" in n)
         assert score_i > guard_i
         assert "always()" in steps[score_i]["if"]

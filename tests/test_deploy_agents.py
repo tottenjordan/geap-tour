@@ -259,20 +259,31 @@ def test_analytics_plugin_disabled_returns_none(monkeypatch):
 
 
 def test_build_app_wires_analytics_plugin_when_enabled(monkeypatch):
-    """When enabled, _build_app forwards the analytics plugin to AdkApp."""
+    """When enabled, _build_app forwards the analytics plugin to AdkApp.
+
+    Asserts membership, not equality: the Model Armor plugin also rides in this
+    list (default ON since 2026-09-09), and pinning the exact list would make an
+    unrelated plugin addition look like an analytics regression.
+    """
     sentinel = object()
     monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
     monkeypatch.setattr(da, "_analytics_plugin", lambda: sentinel)
 
     da._build_app(_memory_agent())
 
-    assert _CapturingAdkApp.last_kwargs.get("plugins") == [sentinel]
+    assert sentinel in (_CapturingAdkApp.last_kwargs.get("plugins") or [])
 
 
-def test_build_app_no_plugins_when_disabled(monkeypatch):
-    """When disabled, _build_app passes plugins=None (default runtime wrap)."""
+def test_build_app_passes_no_plugins_when_every_plugin_is_off(monkeypatch):
+    """`plugins=None`, not `[]`, when nothing is enabled — the disabled path must
+    stay byte-identical to the pre-plugin behaviour.
+
+    Both plugins have to be disabled for this: ENABLE_MODEL_ARMOR_PLUGIN now
+    defaults ON, so stubbing only the analytics one leaves armor attached.
+    """
     monkeypatch.setattr(da.agent_engines, "AdkApp", _CapturingAdkApp)
     monkeypatch.setattr(da, "_analytics_plugin", lambda: None)
+    monkeypatch.setattr(da, "model_armor_plugin", lambda _model=None: None)
 
     da._build_app(_memory_agent())
 

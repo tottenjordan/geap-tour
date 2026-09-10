@@ -433,3 +433,43 @@ cannot distinguish the two. Do not read it either way without a fuller run.
 `run_optimize` has **no argparse** — it reads `sys.argv[1..3]` positionally — so that
 command fails with `FileNotFoundError: '--sampler-config'`. The working form is
 positional: `run_optimize <module> <sampler_config> [optimizer_config]`.
+
+### Follow-ups: GEPA's 0.0 resolved, simulated_eval quarantined, armor defaulted on (2026-09-09)
+
+**GEPA's `0.0` is a real score, not an unmeasured one.** The suspicion was that the
+`None`→`0.0` coercion in `_patch_adk`'s third patch (needed because the SDK does
+`round(None)` and crashes) was turning NOT_EVALUATED into zero. It was not:
+instrumenting the guard to count and warn produced **no coercion at all** on a
+re-run — every score was genuinely evaluated and genuinely 0.0.
+
+So the remaining explanation is the one this repo already tracks as **G2**: the
+travel evalset's frozen references (`"I found flights from SFO to JFK: United FL001
+at $450…"`) do not match how the agent now answers, and `final_response_match_v2`
+scores that 0. The instrumentation stays — it proved a negative here and will catch
+the real thing later, when a run near 0 *is* an unmeasured one.
+
+**`simulated_eval` is quarantined in the weekly eval gate, with an exit condition.**
+Because it now (correctly) fails, it would otherwise have produced a permanent red
+from the first scheduled run on 2026-09-14 — the "check people learn to skim" shape.
+Three deliberate choices:
+
+* it is **still run**, not skipped — a skipped step can never tell us upstream fixed it;
+* it is **removed from the fail-guard**, which was `multiturn AND online_smoke`. Leaving
+  a permanently-failing step in an AND guard makes the guard unreachable and lets a
+  real online-smoke failure pass unnoticed: a two-signal guard that is really a
+  zero-signal one;
+* a step **fires a `::warning::` if it starts passing**, because a quarantine with no
+  exit condition becomes permanent.
+
+**The Model Armor plugin now defaults ON, and its baseline check is CRITICAL.** It
+had been built, tested and left off — protection that existed and guarded nothing.
+Worth stating plainly: **flipping it changes nothing about the two live engines**,
+which are `gemini-2.5-flash` and already covered by templates (the plugin returns
+`None` there, so no request is double-screened). The value is prospective — `.env`'s
+`AGENT_MODEL=gemini-3.5-flash` means the *next* coordinator deploy would otherwise
+land with only the client-side blocklist.
+
+That is also why this was the right moment to escalate `server_side_armor` from
+advisory to **critical**: a remedy now ships and is on by default, both live engines
+pass on templates, so the escalation costs nothing today and means the next Gemini-3
+deploy cannot land unarmored in silence.

@@ -163,7 +163,19 @@ jobs:
       #   * empty-at-200 — a zero-character HTTP 200 is an INFRA failure that the
       #     rubric path can score as merely low quality.
       # Deliberately small and advisory; both are billable, so keep the counts low.
-      - name: Multi-turn smoke (advisory)
+      # QUARANTINED 2026-09-09 — known broken upstream, not a regression here.
+      # simulated_eval returns zero metrics on google-cloud-aiplatform 2.1.0: the
+      # service returns flat ADK events where ConversationTurns are expected, the
+      # multi-turn raters read turn.events, find nothing, and the run still reports
+      # SUCCEEDED. Two defects on our side are fixed (silent data loss, and zero
+      # metrics reporting all_passed=true) so it now FAILS loudly, but the residual
+      # mismatch is inside the SDK's own parsing.
+      #
+      # It is deliberately still RUN rather than skipped: a skipped step can never
+      # tell us upstream fixed it. What changes is that it no longer counts toward
+      # the both-failed guard below, which would otherwise silently degrade to
+      # "fail only if the ONLINE smoke fails" while looking like a two-signal guard.
+      - name: Multi-turn smoke (QUARANTINED — known broken on aiplatform 2.1.0)
         id: multiturn
         continue-on-error: true
         run: |
@@ -188,7 +200,7 @@ jobs:
             echo ""
             echo "| Check | Result | Catches |"
             echo "|---|---|---|"
-            echo "| multi-turn (simulated_eval) | ${{ steps.multiturn.outcome }} | context loss across turns |"
+            echo "| multi-turn (simulated_eval) | ${{ steps.multiturn.outcome }} | QUARANTINED — known broken on aiplatform 2.1.0 |"
             echo "| online quality (dry-run) | ${{ steps.online_smoke.outcome }} | empty-at-200 infra failures |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
@@ -200,13 +212,25 @@ jobs:
       # BOTH, not either: one failing smoke check is a flaky live engine and must not
       # red an advisory gate. Both failing is the harness itself being broken (a
       # renamed flag, a moved module), which is what needs to be loud.
-      - name: Fail if every smoke check failed
-        if: >-
-          ${{ steps.multiturn.outcome == 'failure' &&
-          steps.online_smoke.outcome == 'failure' }}
+      # Only the online smoke counts while multi-turn is quarantined. Leaving the
+      # quarantined step in an AND guard would make the guard unreachable and let a
+      # real online-smoke failure pass unnoticed — a two-signal guard that is really
+      # a zero-signal one.
+      - name: Fail if the un-quarantined smoke check failed
+        if: ${{ steps.online_smoke.outcome == 'failure' }}
         run: |
-          echo "::error::Both smoke checks failed — the harness is broken, not just the agent."
+          echo "::error::The online smoke check failed — the harness is broken, not just the agent."
           exit 1
+
+      # A quarantine with no exit condition becomes permanent. This is the only
+      # thing that will tell us the upstream fix landed.
+      - name: Notice if the quarantined check starts passing
+        if: ${{ steps.multiturn.outcome == 'success' }}
+        run: |
+          echo "::warning::multi-turn smoke PASSED — simulated_eval may be fixed upstream."
+          echo "Re-check docs/notes/adk-2.7.1-dependency-refresh.md and lift the quarantine."
+          echo "> **multi-turn is passing again** — lift the quarantine in eval_gate.yaml." \
+            >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish score to job summary
         if: always()

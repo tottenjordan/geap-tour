@@ -221,18 +221,30 @@ class TestArmorIsNeverSilentlyAbsent:
         assert server_side_armor_enabled("gemini-3.5-flash") is False
         assert server_side_armor_enabled("claude-sonnet-5") is False
 
-    def test_a_gemini3_coordinator_is_reported_as_single_layer_by_default(self):
-        """THE regression, stated honestly: with the flag off, a Gemini-3 backbone
-        really does run on the client-side guardrail alone.
+    def test_a_gemini3_backbone_is_covered_by_default(self):
+        """The plugin defaults ON since 2026-09-09, so a Gemini-3 backbone — which
+        templates cannot cover — gets a server-side layer without anyone opting in.
 
-        The fix is not that this became false by default — it is that it is now
-        *visible*. Before `armor_layers` there was no way to ask."""
+        This assertion is the inverse of the one it replaces. The original pinned
+        the old opt-in default and read "single layer, but at least visible"; the
+        default was flipped once the plugin was measured blocking an injection both
+        other layers let through."""
         from src.armor.config import armor_layers
 
         layers = armor_layers("gemini-3.5-flash")
         assert layers["client_guardrail"] is True
         assert layers["server_side"] is False, "templates do not apply to Gemini-3"
-        assert layers["plugin"] is False, "plugin is opt-in and defaults off"
+        assert layers["plugin"] is True, "the plugin should cover what templates cannot"
+
+    def test_turning_the_plugin_off_is_reported_not_hidden(self, monkeypatch):
+        """Opting out is allowed, but it must be *visible* — that detectability was
+        the original point of `armor_layers` and survives the default flip."""
+        from src import config as cfg
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", False)
+        layers = armor_cfg.armor_layers("gemini-3.5-flash")
+        assert layers == {"client_guardrail": True, "server_side": False, "plugin": False}
 
     def test_the_plugin_closes_the_gap_when_enabled(self, monkeypatch):
         """Turning the flag on gives a Gemini-3 backbone a server-side layer."""

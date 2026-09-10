@@ -79,11 +79,30 @@ def _patch_adk():
     _orig_extract = sampler_mod.LocalEvalSampler._extract_eval_data
 
     def _patched_extract(self, eval_set_id, eval_results):
+        # The coercion is required — the SDK does round(None) and crashes — but it
+        # makes "we could not measure this" indistinguishable from "we measured
+        # zero". A 2026-09-09 bounded run reported best 0.0 / baseline 0.0 / lift
+        # 0.0, which read as a terrible agent and may simply have been metrics
+        # returning NOT_EVALUATED. So count it and say so: a run where most scores
+        # were coerced is not a quality signal, it is a broken measurement.
+        coerced = total = 0
         for case_result in eval_results:
             for inv in getattr(case_result, "eval_metric_result_per_invocation", []):
                 for mr in getattr(inv, "eval_metric_results", []):
+                    total += 1
                     if mr.score is None:
                         mr.score = 0.0
+                        coerced += 1
+        if coerced:
+            pct = 100.0 * coerced / total if total else 0.0
+            log.warning(
+                "GEPA: %d/%d metric scores were None (NOT_EVALUATED) and were "
+                "coerced to 0.0 (%.0f%%). A resulting score near 0.0 reflects "
+                "UNMEASURED metrics, not a poor agent.",
+                coerced,
+                total,
+                pct,
+            )
         return _orig_extract(self, eval_set_id, eval_results)
 
     sampler_mod.LocalEvalSampler._extract_eval_data = _patched_extract
