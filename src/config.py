@@ -45,8 +45,12 @@ SEARCH_MCP_URL = os.environ.get("SEARCH_MCP_URL", "http://localhost:8001/mcp")
 BOOKING_MCP_URL = os.environ.get("BOOKING_MCP_URL", "http://localhost:8002/mcp")
 EXPENSE_MCP_URL = os.environ.get("EXPENSE_MCP_URL", "http://localhost:8003/mcp")
 
-# Agent Registry — MCP server resource names (global location)
-AGENT_REGISTRY_LOCATION = os.environ.get("AGENT_REGISTRY_LOCATION", "us-central1")
+# Agent Registry — MCP server resource names.
+# Defaults to GCP_REGION rather than a second hardcoded "us-central1", so moving
+# the deployment region moves the registry lookup with it. Identical today (both
+# us-central1); the old literal silently ignored GCP_REGION. Same derive-from-
+# GCP_REGION shape as SKILL_REGISTRY_LOCATION below.
+AGENT_REGISTRY_LOCATION = os.environ.get("AGENT_REGISTRY_LOCATION") or GCP_REGION
 SEARCH_MCP_SERVER = os.environ.get("SEARCH_MCP_SERVER", "")
 BOOKING_MCP_SERVER = os.environ.get("BOOKING_MCP_SERVER", "")
 EXPENSE_MCP_SERVER = os.environ.get("EXPENSE_MCP_SERVER", "")
@@ -286,9 +290,6 @@ COMPLEXITY_LOW = float(os.environ.get("COMPLEXITY_LOW", "0.25"))
 COMPLEXITY_HIGH = float(os.environ.get("COMPLEXITY_HIGH", "0.925"))
 MEDIUM_SPLIT = float(os.environ.get("MEDIUM_SPLIT", "0.60"))
 HIGH_SPLIT = float(os.environ.get("HIGH_SPLIT", "0.95"))
-
-# Backwards-compat alias: still imported by src/deploy/deploy_agents.py
-COMPLEXITY_THRESHOLD_HIGH = COMPLEXITY_HIGH
 
 # Complexity classifier for the router's before_agent_callback. Must be a model
 # that reliably returns the JSON verdict: a Gemini-3 *thinking* model (e.g.

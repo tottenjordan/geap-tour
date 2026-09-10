@@ -45,7 +45,6 @@ from src.config import (
     CLASSIFIER_MODEL,
     COMPLEXITY_HIGH,
     COMPLEXITY_LOW,
-    COMPLEXITY_THRESHOLD_HIGH,
     COORDINATOR_MODEL,
     DEPLOY_TAG,
     ENABLE_AGENT_ANALYTICS,
@@ -465,7 +464,6 @@ def _build_config(
         "PRO_MODEL": PRO_MODEL,
         "LITE_MODEL": LITE_MODEL,
         "FLASH_MODEL": FLASH_MODEL,
-        "COMPLEXITY_THRESHOLD_HIGH": str(COMPLEXITY_THRESHOLD_HIGH),
         # DOE factor env — baked into the engine so config-overridden variants
         # take effect at import time inside the deployed container.
         "AGENT_MODEL": AGENT_MODEL,
