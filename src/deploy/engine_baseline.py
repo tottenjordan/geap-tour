@@ -96,6 +96,24 @@ def _limits(spec: dict) -> dict:
     return spec.get("resource_limits") or {}
 
 
+def _gateway_attached(spec: dict) -> tuple[bool, str]:
+    """Gateway binding must be present *iff* the engine was deployed with the flag.
+
+    Reads the engine's own baked ``ENABLE_AGENT_GATEWAY``, not the local
+    environment: the question is whether this engine is serving what it was
+    deployed to serve, and the verifier frequently runs from a shell whose flags
+    differ from the ones baked into the engine.
+    """
+    wanted = _env(spec, "ENABLE_AGENT_GATEWAY") in ("1", "true", "True")
+    cfg = spec.get("agent_gateway_config") or {}
+    modes = sorted(k for k in ("agent_to_anywhere_config", "client_to_agent_config") if k in cfg)
+    if not wanted:
+        return True, "not requested (ENABLE_AGENT_GATEWAY unset on the engine)"
+    if not cfg:
+        return False, "ENABLE_AGENT_GATEWAY=1 but agentGatewayConfig is ABSENT"
+    return True, ", ".join(modes)
+
+
 # --------------------------------------------------------------------- shared
 
 SHARED_CHECKS: tuple[Check, ...] = (
@@ -179,6 +197,23 @@ SHARED_CHECKS: tuple[Check, ...] = (
         predicate=lambda s: _all_set(
             s, ("SEARCH_MCP_SERVER", "BOOKING_MCP_SERVER", "EXPENSE_MCP_SERVER")
         ),
+    ),
+    Check(
+        name="gateway_attached",
+        severity="advisory",
+        expected="agentGatewayConfig set when ENABLE_AGENT_GATEWAY=1",
+        why=(
+            "Agent Gateway is provisioned in this project (both modes, engines "
+            "eligible) but nothing is attached yet, so this is deliberately "
+            "ADVISORY rather than critical — a critical rule would red every "
+            "engine that has not been migrated. Its job is the other direction: "
+            "once an engine IS attached, a routine in-place `--update` that "
+            "rebuilds deploymentSpec can drop agentGatewayConfig with no error "
+            "and no log, exactly as one dropped ENABLE_MEMORY_PRELOAD_CACHE. "
+            "Conditional on the engine's own baked flag so an unattached engine "
+            "reads as intentionally-off, not as drift."
+        ),
+        predicate=lambda s: _gateway_attached(s),
     ),
     Check(
         name="genai_enterprise_alias",
