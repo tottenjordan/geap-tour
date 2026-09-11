@@ -607,3 +607,48 @@ class TestVersionCoupledServingDepsHaveUpperBounds:
         assert Version(md.version("litellm")) in Requirement(spec).specifier, (
             f"tested litellm {md.version('litellm')} is outside the serving range {spec}"
         )
+
+
+class TestGatewayConfigSetsBothModes:
+    """One deploy path should express the whole binding.
+
+    Agent Runtime supports an engine bound to an egress AND an ingress gateway
+    simultaneously, but this repo had the halves split: `_build_gateway_config`
+    set only `agent_to_anywhere`, while ingress was PATCHed separately by
+    `scripts/setup_governance_policies.sh`.
+    """
+
+    @staticmethod
+    def _build(monkeypatch, *, enabled, egress="", ingress=""):
+        import importlib
+
+        import src.deploy.deploy_agents as da
+
+        monkeypatch.setattr(da, "ENABLE_AGENT_GATEWAY", enabled)
+        monkeypatch.setattr(da, "AGENT_GATEWAY_EGRESS_PATH", egress)
+        monkeypatch.setattr(da, "AGENT_GATEWAY_PATH", ingress)
+        importlib.reload  # noqa: B018 - referenced to document no reload is needed
+        return da._build_gateway_config()
+
+    def test_flag_off_is_none_regardless_of_paths(self, monkeypatch):
+        assert self._build(monkeypatch, enabled=False, egress="e", ingress="i") is None
+
+    def test_both_paths_yield_both_modes(self, monkeypatch):
+        cfg = self._build(monkeypatch, enabled=True, egress="e", ingress="i")
+        assert cfg == {
+            "agent_to_anywhere_config": {"agent_gateway": "e"},
+            "client_to_agent_config": {"agent_gateway": "i"},
+        }
+
+    def test_egress_only_still_works(self, monkeypatch):
+        cfg = self._build(monkeypatch, enabled=True, egress="e")
+        assert cfg == {"agent_to_anywhere_config": {"agent_gateway": "e"}}
+
+    def test_ingress_only_is_expressible(self, monkeypatch):
+        """Previously impossible through the deploy path — ingress needed a PATCH."""
+        cfg = self._build(monkeypatch, enabled=True, ingress="i")
+        assert cfg == {"client_to_agent_config": {"agent_gateway": "i"}}
+
+    def test_flag_on_but_no_paths_is_none_not_empty_dict(self, monkeypatch):
+        """An empty dict would be sent to the API as a binding request."""
+        assert self._build(monkeypatch, enabled=True) is None

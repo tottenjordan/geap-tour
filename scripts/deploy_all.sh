@@ -250,14 +250,50 @@ step "10/11" "Setting up governance policies (IAM Allow + SGP + Model Armor)"
 bash scripts/setup_governance_policies.sh 2>&1 | grep -E "(Layer|IAM|SGP|policy|Done)" || warn "Governance policy setup had warnings"
 ok "Governance policies configured"
 
-# ─── Step 11: Verify CI/CD ─────────────────────────────────────────
-step "11/11" "Verifying CI/CD configuration"
-if [[ -f .github/workflows/eval_ci.yaml ]]; then
-    ok "GitHub Actions workflow found: .github/workflows/eval_ci.yaml"
-    echo "  Triggers on: pull_request to main (src/agents/** or src/mcp_servers/**)"
+# ─── Step 10b: Recycle engines so the registry grant takes effect ──
+# NOT optional, and not reorderable. Step 8 deployed the engines; step 10 granted
+# roles/agentregistry.viewer to each engine's principal://<effectiveIdentity>. But
+# MCP toolsets resolve ONCE PER CONTAINER, at step 8 — before that grant existed —
+# so every engine is still holding the direct-Cloud-Run-URL fallback it resolved
+# then, signalled only by a WARNING in its own log.
+#
+# The grant genuinely cannot move earlier: grant_registry_read reads
+# effectiveIdentity off the DEPLOYED engine spec. So the sequence has to be
+# deploy -> grant -> recycle, and this is the recycle.
+#
+# Without it a clean end-to-end run reproduces the incident in
+# docs/notes/agent-registry-mcp-resolution.md, which was remediated by hand twice.
+step "10b/11" "Recycling engines to pick up the registry grant"
+for _role in coordinator router; do
+    if uv run python -m src.deploy.deploy_agents "$_role" --update 2>&1 | tail -3; then
+        ok "${_role}: recycled (toolsets re-resolve against Agent Registry)"
+    else
+        warn "${_role}: recycle failed — it will stay on the direct-URL fallback path"
+    fi
+done
+unset _role
+if uv run python -m src.eval.verify_mcp_tools 2>&1 | tail -4 | grep -q "PASS (overall)"; then
+    ok "MCP toolsets resolve through Agent Registry"
 else
-    warn "No CI/CD workflow found"
+    warn "verify_mcp_tools did not report PASS — check for 'falling back to direct URL' in the engine log"
 fi
+
+# ─── Step 11: Verify CI/CD ─────────────────────────────────────────
+# Checked `eval_ci.yaml` until 2026-09-11 — a file that has never existed under that
+# name, so this step always reported "No CI/CD workflow found" while four workflows
+# sat next to it. Enumerate what is actually there instead of naming one guess.
+step "11/11" "Verifying CI/CD configuration"
+_wf_found=0
+for _wf in tests.yaml eval_gate.yaml eval_vertex.yaml monitoring_publish.yaml; do
+    if [[ -f ".github/workflows/${_wf}" ]]; then
+        ok "GitHub Actions workflow found: .github/workflows/${_wf}"
+        _wf_found=$((_wf_found + 1))
+    else
+        warn "Missing expected workflow: .github/workflows/${_wf}"
+    fi
+done
+[ "$_wf_found" -eq 0 ] && warn "No CI/CD workflows found at all"
+unset _wf _wf_found
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"

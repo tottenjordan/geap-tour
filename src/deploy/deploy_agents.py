@@ -14,7 +14,15 @@ Usage:
 
 Controlled by .env:
   - ENABLE_AGENT_IDENTITY=1 → sets SPIFFE identity
-  - ENABLE_AGENT_GATEWAY=1 → attaches gateway (requires early-access)
+  - ENABLE_AGENT_GATEWAY=1 → attaches the EGRESS gateway via agent_gateway_config.
+    Not early-access-gated: both gateways exist in us-central1 and the API answers
+    (agentGateways lives on networkservices.googleapis.com, NOT aiplatform — probing
+    the aiplatform host returns an HTML 404 that reads like "not enrolled", which is
+    how this was mis-recorded). Off by default because egress is DENY-BY-DEFAULT
+    through IAP: every destination needs iap.resources.egressViaIAP granted to the
+    engine's SPIFFE identity first, and in enforcement mode the deny is aggressive
+    enough to block the engine's own aiplatform/logging calls. See
+    docs/notes/geap-services-audit-2026-09.md.
 """
 
 import os
@@ -37,6 +45,7 @@ from src.config import (
     AGENT_ANALYTICS_TABLE,
     AGENT_ENGINE_ID,
     AGENT_GATEWAY_EGRESS_PATH,
+    AGENT_GATEWAY_PATH,
     AGENT_MODEL,
     AGENT_REGISTRY_LOCATION,
     BOOKING_MCP_SERVER,
@@ -194,15 +203,30 @@ ENABLE_AGENT_GATEWAY = os.environ.get("ENABLE_AGENT_GATEWAY", "0") in ("1", "tru
 
 
 def _build_gateway_config() -> dict | None:
-    """Build the agent_gateway_config dict for agent_engines.create().
+    """Build the ``agent_gateway_config`` dict for a create/update.
 
-    Requires ENABLE_AGENT_GATEWAY=1 in .env — gateway integration needs
-    early-access activation on the GCP project. Without it, deploy fails
-    with FAILED_PRECONDITION.
+    Sets BOTH modes when both paths are configured. Agent Runtime supports an
+    engine bound to an egress and an ingress gateway simultaneously, and this
+    repo had the two halves split across two places: only ``agent_to_anywhere``
+    was set here, while ingress was PATCHed separately by
+    ``scripts/setup_governance_policies.sh``. One deploy path should be able to
+    express the whole binding.
+
+    Gated on ``ENABLE_AGENT_GATEWAY`` (default off) — NOT because the feature is
+    early-access-gated (it is not; see the module docstring) but because egress is
+    deny-by-default through IAP and needs its destination grants in place first.
+
+    Returns ``None`` when the flag is off or no gateway path is configured, so a
+    default deploy is byte-identical to before.
     """
-    if not ENABLE_AGENT_GATEWAY or not AGENT_GATEWAY_EGRESS_PATH:
+    if not ENABLE_AGENT_GATEWAY:
         return None
-    return {"agent_to_anywhere_config": {"agent_gateway": AGENT_GATEWAY_EGRESS_PATH}}
+    config: dict = {}
+    if AGENT_GATEWAY_EGRESS_PATH:
+        config["agent_to_anywhere_config"] = {"agent_gateway": AGENT_GATEWAY_EGRESS_PATH}
+    if AGENT_GATEWAY_PATH:
+        config["client_to_agent_config"] = {"agent_gateway": AGENT_GATEWAY_PATH}
+    return config or None
 
 
 def _runtime_engine_id() -> str:
