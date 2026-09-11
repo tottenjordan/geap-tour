@@ -82,6 +82,9 @@ def normalize(resource: dict) -> dict[str, Any]:
         "effective_identity": spec.get("effectiveIdentity"),
         "min_instances": deployment.get("minInstances"),
         "resource_limits": deployment.get("resourceLimits"),
+        # Surfaced so engine_baseline can tell a gateway binding that was never set
+        # from one a routine `--update` silently dropped. Absent on every engine today.
+        "agent_gateway_config": deployment.get("agentGatewayConfig") or {},
         "labels": resource.get("labels") or {},
         "env": {v.get("name"): v.get("value") for v in (deployment.get("env") or [])},
         "update_time": resource.get("updateTime"),
