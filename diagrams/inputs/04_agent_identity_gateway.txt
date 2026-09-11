@@ -17,9 +17,10 @@ Arrows from the agent to each destination, solid, labeled "per-engine identity".
 
 A prominent yellow callout box: "Each engine gets its OWN identity. Recreating an engine mints a NEW identity and needs a fresh grant - update engines in place."
 
-Bottom strip, a gray dashed bordered region labeled "Agent Gateway - NOT ENABLED in this project":
-- Two faded gray boxes "Ingress Gateway (client-to-agent)" and "Egress Gateway (agent-to-anywhere)"
-- Small text: Private Preview - the agentGateways API returns 404 in this project, early access not granted
+Bottom strip, a bordered region labeled "Agent Gateway - PROVISIONED, not yet attached":
+- Two solid boxes "Ingress Gateway (client-to-agent)" and "Egress Gateway (agent-to-anywhere)", drawn in normal colour rather than faded, each with a small green check badge reading "exists"
+- A dashed arrow from the Agent Engine region to the egress box, labeled "agentGatewayConfig - NOT SET YET"
+- Small text: Both gateways exist in us-central1 and the API answers. ENABLE_AGENT_GATEWAY is off pending IAP egress setup, not blocked by access. Egress is deny-by-default: each destination needs iap.resources.egressViaIAP granted to the agent identity.
 
 Style: professional, clean architecture diagram in the style of official Google Cloud Platform documentation. GCP brand colors: blue (#4285F4), green (#34A853), yellow (#FBBC05), red (#EA4335). Clean white background. Google Cloud product icon style, clean lines, no 3D effects, no hexagons, modern flat design. Rounded rectangle = service, cylinder = database, ellipse = users, octagon = security control. Google Cloud logo watermark at bottom left. Do not put quotation marks around any label text.
 Title at top: "Agent Identity and Access Governance"

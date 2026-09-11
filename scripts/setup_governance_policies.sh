@@ -119,8 +119,10 @@ create_sgp_policy() {
         reason=$(echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin)['error'].get('details',[]); print(next((x.get('reason','') for x in d if 'reason' in x), ''))" 2>/dev/null)
         fail "${label} failed: ${reason:-$msg}"
         if [ "$reason" = "SEMANTIC_GOVERNANCE_POLICY_AGENT_NOT_CONFIGURED" ]; then
-            warn "Agent is not attached to a gateway. The agentGatewayConfig private preview enrollment is required."
-            warn "See: docs/workshop_guide.md section 2.1 Private Preview note"
+            warn "Agent is not attached to a gateway (agentGatewayConfig is unset on the engine)."
+            warn "NOT an access problem: both gateways exist and the API answers. Attach with"
+            warn "ENABLE_AGENT_GATEWAY=1 + an in-place --update, after the IAP egress grants."
+            warn "See: docs/notes/geap-services-audit-2026-09.md"
         elif echo "$reason" | grep -q "MCP_SERVER_INVALID_NAME"; then
             warn "MCP server must be registered in Agent Registry with format: projects/*/locations/*/mcpServers/*"
         fi
@@ -226,7 +228,7 @@ attach_gateway() {
             | python3 -c "import sys,json; d=json.load(sys.stdin); e=d.get('error',{}); print('done' if d.get('done') and not e else ('err:'+e.get('message','INTERNAL')) if d.get('done') else 'pending')" 2>/dev/null)
         case "$done" in
             done) ok "${label}: gateway attached"; return 0 ;;
-            err:*) warn "${label}: gateway LRO failed (${done#err:}) — private preview enrollment may be required"; return 1 ;;
+            err:*) warn "${label}: gateway LRO failed (${done#err:}) — check the gateway exists in this region and that the engine post-dates 2026-04-29"; return 1 ;;
             pending) ;;
         esac
     done
@@ -247,7 +249,7 @@ if ! $DRY_RUN; then
     fi
     if [ "$GW_ATTACHED" -eq 0 ]; then
         warn "No agents attached to gateway. SGP policies will fail with AGENT_NOT_CONFIGURED."
-        warn "This likely means the project needs agentGatewayConfig private preview enrollment."
+        warn "Expected while ENABLE_AGENT_GATEWAY=false — the gateways exist, nothing is attached yet."
     fi
 else
     info "[dry-run] Would attach ingress gateway to coordinator (${COORDINATOR_ENGINE_ID}) and router (${ROUTER_ENGINE_ID})"
@@ -337,7 +339,7 @@ cat > /tmp/iam-policy-coordinator-search.json <<POLICY
   }
 }
 POLICY
-ok "IAM policy created: Coordinator → Search MCP (read-only)"
+warn "WROTE FILE ONLY (not applied): Coordinator → Search MCP (read-only)"
 
 # Policy 2: Travel Agent → Booking MCP (non-destructive)
 cat > /tmp/iam-policy-travel-booking.json <<POLICY
@@ -359,7 +361,7 @@ cat > /tmp/iam-policy-travel-booking.json <<POLICY
   }
 }
 POLICY
-ok "IAM policy created: Travel Agent → Booking MCP (non-destructive)"
+warn "WROTE FILE ONLY (not applied): Travel Agent → Booking MCP (non-destructive)"
 
 # Policy 3: Expense Agent → Expense MCP (specific tools only)
 cat > /tmp/iam-policy-expense-tools.json <<POLICY
@@ -381,10 +383,19 @@ cat > /tmp/iam-policy-expense-tools.json <<POLICY
   }
 }
 POLICY
-ok "IAM policy created: Expense Agent → Expense MCP (specific tools only)"
+warn "WROTE FILE ONLY (not applied): Expense Agent → Expense MCP (specific tools only)"
 
-info "Policy files written to /tmp/iam-policy-*.json"
-info "Apply with: gcloud beta iap web set-iam-policy <file.json> --project=${PROJECT_ID} --mcpServer=<server> --region=${REGION}"
+warn "Layer 1 is NOT APPLIED. The three files above are written to /tmp and nothing binds them —"
+warn "this step has never granted a policy. It previously printed \"IAM policy created\", which was false."
+warn "Two things must change before it enforces (see docs/notes/geap-services-audit-2026-09.md):"
+warn "  1. the principal. These target principal://\${RE_SA}, the Reasoning Engine SERVICE AGENT."
+warn "     That is the wrong-principal mistake CLAUDE.md already documents; egress IAM is evaluated"
+warn "     against the engine's SPIFFE identity. grant_registry_read() above derives it correctly"
+warn "     as principal://\${eff} — reuse that."
+warn "  2. the apply. Run, per server:"
+warn "     gcloud beta iap web set-iam-policy <file.json> --project=${PROJECT_ID} --mcpServer=<server> --region=${REGION}"
+info "The CEL conditions themselves are sound and worth keeping — read-only, non-destructive,"
+info "and tool-name allowlists are exactly the per-tool governance this layer is meant to show."
 echo ""
 
 # ─────────────────────────────────────────────────────────────
@@ -782,8 +793,8 @@ if $ENABLE_SGP; then
     if [ "$ENGINE_STATUS" = "ACTIVE" ]; then
         if [ "${SGP_FAILURES:-0}" -gt 0 ]; then
             echo "    ✗ ${SGP_FAILURES}/6 SGP policies failed to create"
-            echo "    → Most likely cause: agentGatewayConfig private preview not enrolled"
-            echo "    → See: docs/workshop_guide.md section 2.1 for enrollment verification"
+            echo "    → Most likely cause: no engine has agentGatewayConfig set (ENABLE_AGENT_GATEWAY is off)"
+            echo "    → See: docs/notes/geap-services-audit-2026-09.md"
         else
             echo "    ✓ SGP-1: Business hours restriction"
             echo "    ✓ SGP-2: Expense amount limits (\$200 meals, \$500 entertainment)"

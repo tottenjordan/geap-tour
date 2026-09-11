@@ -98,10 +98,10 @@ uv run python -m src.eval.verify_monitors --format json
 
 | Screenshot | Feature |
 |-----------|---------|
-| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail — **reference project only**; the `agentGateways` API 404s in `hybrid-vertex` (private preview, early access not granted) |
+| ![Agent Gateway](docs/screenshots/session1_architecture_overview.png) | Agent Gateway ingress detail — **reference project only** (the capture, not the capability: Gateway *is* provisioned here, see [the audit](docs/notes/geap-services-audit-2026-09.md)) |
 | ![Cloud Run](docs/screenshots/session1_cloud_run_mcp_detail.png) | MCP server on Cloud Run |
 | ![Agent Engine](docs/screenshots/session1_agent_engine.png) | The Agent Runtime deployments console — the list is **empty** in this capture, with an "Enable APIs" banner |
-| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Gateways list showing ingress + egress — note the banner: Agent Gateway is in **Private Preview** and needs early access |
+| ![Agent Gateway](docs/screenshots/session2_agent_gateway.png) | Gateways list showing ingress + egress. The capture's Private-Preview banner is **stale** — as of 2026-09-11 the API answers in `hybrid-vertex` and both our gateways exist |
 | ![Traces](docs/screenshots/session2_agent_traces.png) | Trace session view — captured against a different agent ("Demo Finance Agent ADK v2", 0 tool calls), so it shows the *surface*, not our trajectories |
 | ![Trace Spans](docs/screenshots/session2_agent_trace_spans.png) | Trace spans — individual trace view |
 | ![Model Armor](docs/screenshots/session4_model_armor.png) | Input/output screening |
@@ -181,7 +181,7 @@ while the batch still exits 0** — read the per-item table, not the exit code.
 | ![Multi-Agent Topology](diagrams/outputs/01_multi_agent_topology.png) | Two independent **direct-tools** topologies — the coordinator and the 5-tier router each hold all three MCP toolsets; neither delegates to sub-agents |
 | ![Deployment Architecture](diagrams/outputs/02_deployment_architecture.png) | Agent Engine deployment: per-engine SPIFFE identity, the mandatory `cpu 4 / memory 16Gi`, managed Sessions and Memory Bank, MCP servers on Cloud Run |
 | ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three publishing surfaces — offline snapshot (canonical), client-side online monitor with `infra_empty_rate` split out, and router efficiency |
-| ![Agent Identity](diagrams/outputs/04_agent_identity_gateway.png) | Per-engine SPIFFE identity and the `roles/agentregistry.viewer` grant; Agent Gateway is shown greyed out because it is not enabled here |
+| ![Agent Identity](diagrams/outputs/04_agent_identity_gateway.png) | Per-engine SPIFFE identity and the `roles/agentregistry.viewer` grant. Agent Gateway is **provisioned but not yet attached** — `ENABLE_AGENT_GATEWAY=false` pending the IAP egress work, not blocked by access |
 | ![Observability Stack](diagrams/outputs/05_observability_stack.png) | Platform-emitted telemetry (always on) vs self-reported quality series (only while a publisher runs) |
 | ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | Three workflows: required cloud-free tests, the **advisory** eval gate, and the hourly scheduled publish |
 | ![Model Armor](diagrams/outputs/07_agent_armor.png) | Layered screening — the client-side guardrail always runs; Model Armor templates attach **only** on a regional Gemini-2.x backbone |
