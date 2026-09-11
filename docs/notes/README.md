@@ -8,9 +8,8 @@ file; keep this index short (< 200 lines).
 
 - [Dependency management & the internal registry gotcha](./dependency-management.md)
   — why `uv lock` here resolves from PyPI, and the inaccessible Artifact Foundry mirror.
-- [Type-checking (ty) baseline](./type-checking-baseline.md) — why a clean
-  `uv run ty check src/` still reports diagnostics (untyped Vertex/ADK surface,
-  intentional monkeypatches, optional imports) and the rule for triaging new ones.
+- [Type-checking (ty) baseline](./type-checking-baseline.md) — why a clean `ty check src/`
+  still reports diagnostics (untyped Vertex/ADK surface, monkeypatches, optional imports).
 - [Vertex Managed Pipeline for evals](./vertex-eval-pipeline.md) — running the eval
   DAG on Vertex Pipelines: setup, submit commands, and three KFP gotchas.
 - [Offline-eval → monitoring bridge](./offline-eval-monitoring-bridge.md) — how the
@@ -49,9 +48,9 @@ file; keep this index short (< 200 lines).
   it **in opposite directions**, then re-ran both bands on the models the router
   actually serves (flash beats lite 14-2; sonnet beats pro 17-1). `COMPLEXITY_LOW`
   0.44 → 0.25; the DOE's "~0.04 quality dip" was a dataset-mean **dilution artefact**.
-  That 50→82.5% jump with an unchanged classifier then exposed the metric itself: it
-  graded via the tunable cut-points, so it is re-scoped onto fixed reference bands and
-  renamed **`classifier_accuracy_pct`** — now invariant to boundary tuning.
+  That 50→82.5% jump with an unchanged classifier then exposed the metric itself: it graded
+  via the tunable cut-points, so it is re-scoped onto fixed bands and renamed
+  **`classifier_accuracy_pct`** — now invariant to boundary tuning.
 - [Router end-to-end streaming: transfer → direct-tools](./router-transfer-streaming.md)
   — `transfer_to_agent`/`sub_agents` never streamed the specialist's turn on the
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
@@ -82,6 +81,8 @@ file; keep this index short (< 200 lines).
 - [Eval reliability audit](./eval-reliability-audit.md) — what the suite cannot see: the
   safety corpus restates the 4 blocklist regexes (1/10 held-out injections blocked);
   calibration is blind at the 3.0 floor; a routing collapse *improves* `cost_savings_pct`.
+- [Agent Gateway / Identity / Registry audit](./geap-services-audit-2026-09.md) — our docs
+  call Gateway early-access-blocked; it is provisioned and answers (404 = wrong host).
 - [The deployed-engine baseline](./deployed-engine-baseline.md) — "configured correctly"
   as **executable** rules (`engine_baseline.py`) plus a verifier that diffs the live spec
   and exits non-zero (`verify_engine_config`). Catches the silent class: 4Gi containers,
@@ -89,13 +90,12 @@ file; keep this index short (< 200 lines).
 - [Porting the router's fixes to the coordinator](./coordinator-router-learnings.md)
   — a two-engine trace census showed the gap was published *attributes*, not
   instrumentation; ports the payload cap, a shared `RetryingLlm` 429 wrapper, domain
-  spans for the un-traced Memory Bank preload + silently-swallowed save, and drops
-  both AgentTools (0 calls across 10 traces).
-- [DOE harvest `--wait` path hang](./doe-harvest-wait-path.md) — a transient live-poll stall
-  could hang for the 2h timeout with no output; fixed via GCS fall-through + a heartbeat.
-- [GEAP live-demo provisioning & runbook (hybrid-vertex)](./geap-demo-provisioning.md)
-  — one-time provisioning checklist + run-of-show for the four demo money-shots
-  (observability, trace debugging, periodic-snapshot eval, governance blocking).
+  spans for the un-traced Memory Bank preload + silently-swallowed save, and drops both
+  AgentTools (0 calls across 10 traces).
+- [DOE harvest `--wait` hang](./doe-harvest-wait-path.md) — a live-poll stall could hang for the 2h timeout silently; fixed via GCS fall-through + heartbeat.
+- [GEAP live-demo provisioning & runbook](./geap-demo-provisioning.md) — one-time
+  provisioning checklist + run-of-show for the four demo money-shots (observability,
+  trace debugging, periodic-snapshot eval, governance blocking).
 - [Agent-analytics content logging to BigQuery](./agent-analytics-bigquery.md) — opt-in
   `BigQueryAgentAnalyticsPlugin` streams full prompt/response/tool content to BQ,
   independent of the OTEL surface the managed runtime strips; flags, IAM, live gate.
