@@ -410,9 +410,17 @@ ROUTER_IDENTITY="$(engine_identity "$ROUTER_ENGINE_ID" || true)"
     warn "No effectiveIdentity for router ${ROUTER_ENGINE_ID} — set identityType=AGENT_IDENTITY (Step 0) first."
 
 L1_WRITTEN=0
+L1_APPLIED=0
+L1_APPLY_FAILURES=0
+
+# The three policy files, named once. Each path is used TWICE — written below, then
+# applied — and a typo in the second copy would apply yesterday's file, or none.
+SEARCH_POLICY_FILE=/tmp/iam-policy-search-mcp.json
+BOOKING_POLICY_FILE=/tmp/iam-policy-booking-mcp.json
+EXPENSE_POLICY_FILE=/tmp/iam-policy-expense-mcp.json
 
 # One binding, both agent identities, one CEL condition. Writing the file is all
-# this does — see the note at the end of the block.
+# this does — the apply is apply_iap_policy, below.
 #
 # The two members are NOT arguments: they come from the COORDINATOR_IDENTITY /
 # ROUTER_IDENTITY globals resolved just above, because every policy this block writes
@@ -491,24 +499,181 @@ print(json.dumps({
         return 1
     fi
     L1_WRITTEN=$((L1_WRITTEN + 1))
-    warn "WROTE FILE ONLY (not applied): $(basename "${file}") — ${title}"
+    info "wrote $(basename "${file}") — ${title}"
 }
 
-# The three calls below are bare. `|| true` would suspend `set -e` for the ENTIRE
+# Copy the MCP server's CURRENT policy etag into the file we are about to apply.
+#
+# WHY A READ BEFORE A WRITE. `set-iam-policy` REPLACES a resource's whole policy.
+# An etag is IAM's optimistic-concurrency guard: supply the one you read, and the
+# server rejects the write if anything changed in between. This is a SHARED project,
+# so "replace whatever is there with what I computed a minute ago" is a real way to
+# destroy someone else's binding without either of us noticing.
+#
+# It also removes an interactive prompt. gcloud's ParsePolicyFile
+# (command_lib/iam/iam_util.py:779-786) calls console_io.PromptContinue(...,
+# cancel_on_no=True) for ANY policy file with no "etag" field, and Task 4's files
+# have none. With an etag present that branch is never taken.
+#
+# A failed GET aborts the apply. A policy that cannot be READ cannot be safely
+# REPLACED: the failure is either "no permission" or "this resource is not an IAP
+# target", and neither is a reason to blind-write over it. gcloud's own error goes
+# to stderr, i.e. straight to the operator's terminal — only stdout is captured here.
+stamp_policy_etag() {
+    local label="$1"
+    local file="$2"
+    local short="$3"
+
+    local current
+    if ! current="$(gcloud beta iap web get-iam-policy \
+            --resource-type=agent-registry \
+            --mcp-server="${short}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format=json)"; then
+        fail "${label}: get-iam-policy FAILED (gcloud's error is above this line)."
+        fail "  NOT applying — a policy that cannot be read cannot be safely replaced."
+        return 1
+    fi
+
+    local etag
+    etag="$(printf '%s' "${current}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('etag') or '')" 2>/dev/null)" || true
+
+    if [ -z "${etag}" ]; then
+        # No policy on the server yet, so there is nothing of anyone else's to clobber
+        # on THIS write — but the window between this read and that write is unguarded,
+        # and --quiet (see apply_iap_policy) means gcloud will not ask about it.
+        warn "${label}: the server returned no etag — it has no policy yet. This first"
+        warn "  apply is therefore UNGUARDED: a policy created by someone else between"
+        warn "  now and the write below would be replaced without a word."
+        return 0
+    fi
+
+    # Written via a temp file and os.replace so a crash mid-write cannot leave a
+    # truncated policy behind — the apply would then either fail to parse or, worse,
+    # parse as something smaller than intended.
+    if ! python3 - "${file}" "${etag}" <<'PY'
+import json, os, sys
+
+path, etag = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    document = json.load(handle)
+document["etag"] = etag
+tmp = path + ".tmp"
+with open(tmp, "w") as handle:
+    json.dump(document, handle, indent=2)
+    handle.write("\n")
+os.replace(tmp, path)
+PY
+    then
+        fail "${label}: could not stamp the etag into $(basename "${file}") — not applying."
+        return 1
+    fi
+    ok "${label}: etag read from the live policy and stamped into $(basename "${file}")"
+}
+
+# Apply one policy file to one MCP server. Returns 0 ONLY when a policy was actually
+# applied (or, under --dry-run, when the command was printed); every other outcome is
+# reported here, loudly, and returns non-zero.
+#
+# Returning non-zero for the benign "no file to apply" skip is deliberate, and differs
+# from grant_registry_read's convention above for a concrete reason: that function is
+# called BARE, where a non-zero status would kill the script under `set -e`. This one
+# is only ever called from an `if`, so a non-zero status costs nothing — and counting a
+# skip as an application would be exactly the false success this whole block exists to
+# stop telling.
+apply_iap_policy() {
+    local label="$1"
+    local file="$2"
+    local server="$3"
+
+    # `--mcp-server` takes the bare id, not the full resource name: gcloud parses it
+    # into the {mcpServerId} path segment of
+    # projects/<n>/locations/<region>/iap_web/agentRegistry/mcpServers/<id>
+    # (generated_clients/apis/iap/v1/resources.py, PROJECTS_LOCATIONS_IAP_WEB_WEB_TYPES_MCPSERVERS).
+    # .env stores the full projects/.../mcpServers/<id> path, so basename it.
+    local short
+    short="$(basename "${server}")"
+
+    # An EMPTY id is not a narrower target — it is a much WIDER one. gcloud's
+    # ParseIapIamResource (command_lib/iap/util.py:517-554) tests `args.mcp_server`
+    # for truthiness and, finding it empty, falls through to iap_api.AgentRegistry,
+    # whose resource is the WHOLE agent registry. An unset SEARCH_MCP_SERVER would
+    # therefore not skip a server; it would replace the registry's own policy with
+    # this one file. `basename ""` prints an empty string and exits 0, so nothing
+    # else catches it.
+    if [ -z "${short}" ]; then
+        fail "${label}: MCP server resource name is empty — refusing to apply."
+        fail "  An empty --mcp-server would retarget this policy at the whole agent registry."
+        return 1
+    fi
+
+    # --quiet is for the no-etag case only, and it suppresses a PROMPT, not a check:
+    # the etag guard is enforced server-side by IAM, so passing --quiet alongside a
+    # stamped etag weakens nothing (that path never prompts). Without it, a first-ever
+    # apply hangs an interactive run on a y/n question, which is not a thing a setup
+    # script should do to one server out of three.
+    local -a cmd=(
+        gcloud beta iap web set-iam-policy "${file}"
+        --resource-type=agent-registry
+        --mcp-server="${short}"
+        --region="${REGION}"
+        --project="${PROJECT_ID}"
+        --quiet
+    )
+
+    # run_cmd (top of this file) prints instead of executing under --dry-run, and it
+    # is used for the apply itself below. It cannot carry the whole function, though:
+    # the etag read is a live call and the "policy applied" line is a claim, so both
+    # must be skipped too — otherwise a dry run reads a policy it will not write and
+    # then reports success. Hence the explicit guard, as in write_egress_policy.
+    if $DRY_RUN; then
+        run_cmd "${cmd[@]}"
+        return 0
+    fi
+
+    # write_egress_policy deletes its target and says why when an identity is missing,
+    # so an absent file here is an already-reported condition, not a new one.
+    if [ ! -s "${file}" ]; then
+        warn "${label}: no policy file — nothing applied (see the write step above)."
+        return 1
+    fi
+
+    stamp_policy_etag "${label}" "${file}" "${short}" || return 1
+
+    if run_cmd "${cmd[@]}"; then
+        L1_APPLIED=$((L1_APPLIED + 1))
+        ok "${label}: policy applied"
+        return 0
+    fi
+    fail "${label}: apply FAILED — Layer 1 is NOT in force for this server."
+    return 1
+}
+
+# The three write calls below are bare. `|| true` would suspend `set -e` for the ENTIRE
 # function body, not merely tolerate its final status, so it would also swallow a
 # failed write — the defect this block is here to fix. The only tolerated outcomes
 # (dry run, unresolved identity) now return 0 from inside the function, so a non-zero
 # status means the file genuinely did not get written and the script should stop.
+#
+# The apply calls that follow each write are guarded by an `if` instead, mirroring
+# Step 0's attach_gateway. The three servers are INDEPENDENT grants: aborting after
+# the first failure would leave Layer 1 partly applied and partly unattempted, with
+# no output distinguishing the two — strictly worse than three reported outcomes.
+# apply_iap_policy reports each one itself; the `if` only counts the successes.
 #
 # Policy 1: search-mcp — coordinator + router, read-only tools only.
 # Reads mcp.tool.isReadOnly, which both search tools set (readOnlyHint=True in
 # src/mcp_servers/search/server.py). Today that admits everything on the server;
 # its value is forward-looking — a non-read-only tool added to search-mcp later is
 # denied until someone revisits this policy.
-write_egress_policy /tmp/iam-policy-search-mcp.json \
+write_egress_policy "${SEARCH_POLICY_FILE}" \
     "Search MCP: read-only tools only" \
     "Coordinator and router may call search-mcp tools that declare readOnlyHint" \
     "api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false) == true"
+apply_iap_policy "search-mcp" "${SEARCH_POLICY_FILE}" "${SEARCH_MCP_SERVER:-}" \
+    || L1_APPLY_FAILURES=$((L1_APPLY_FAILURES + 1))
 
 # Policy 2: booking-mcp — coordinator + router, non-destructive tools PLUS cancel_booking.
 # Reads mcp.tool.isDestructive (false for book_flight / book_hotel / get_booking_details
@@ -518,10 +683,12 @@ write_egress_policy /tmp/iam-policy-search-mcp.json \
 # booking_mcp_cancel_booking, and the coordinator's instruction covers booking
 # management. The shape is the demonstration — a blanket non-destructive rule with
 # one audited, named exception.
-write_egress_policy /tmp/iam-policy-booking-mcp.json \
+write_egress_policy "${BOOKING_POLICY_FILE}" \
     "Booking MCP: non-destructive tools, plus cancel_booking by name" \
     "Coordinator and router may call non-destructive booking-mcp tools; cancel_booking is the one named exception" \
     "api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false) == false || api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'cancel_booking'"
+apply_iap_policy "booking-mcp" "${BOOKING_POLICY_FILE}" "${BOOKING_MCP_SERVER:-}" \
+    || L1_APPLY_FAILURES=$((L1_APPLY_FAILURES + 1))
 
 # Policy 3: expense-mcp — coordinator + router, an explicit tool allowlist.
 # Reads mcp.toolName only. The three names are the tools the server actually
@@ -536,19 +703,54 @@ write_egress_policy /tmp/iam-policy-booking-mcp.json \
 # expense tools are denied — a total outage of this server, produced by a clause that
 # restricts nothing: mcp.toolName only has a value on an MCP tool call in the first
 # place. It is listed in the attribute table above as available, not as recommended.
-write_egress_policy /tmp/iam-policy-expense-mcp.json \
+write_egress_policy "${EXPENSE_POLICY_FILE}" \
     "Expense MCP: named tools only" \
     "Coordinator and router may call submit_expense, check_expense_policy and get_user_expenses" \
     "api.getAttribute('iap.googleapis.com/mcp.toolName', '') in ['submit_expense', 'check_expense_policy', 'get_user_expenses']"
+apply_iap_policy "expense-mcp" "${EXPENSE_POLICY_FILE}" "${EXPENSE_MCP_SERVER:-}" \
+    || L1_APPLY_FAILURES=$((L1_APPLY_FAILURES + 1))
 
-warn "Layer 1 is NOT APPLIED. The files above are written to /tmp and nothing binds them —"
-warn "this step has never granted a policy. It previously printed \"IAM policy created\", which was false."
-warn "What is left is the apply (see docs/notes/geap-services-audit-2026-09.md). Run, per server:"
-warn "  gcloud beta iap web set-iam-policy <file.json> --resource-type=agent-registry \\"
-warn "    --mcp-server=<mcp-server-id> --region=${REGION} --project=${PROJECT_ID}"
-info "That apply REPLACES the server's whole policy, and these files carry no \"etag\", so gcloud"
-info "prompts before overwriting and cancels if the answer is no — it needs a TTY, or --quiet."
-info "The principals are now each engine's own SPIFFE identity (principal://<effectiveIdentity>),"
+echo ""
+if $DRY_RUN; then
+    info "[dry-run] Nothing was written and nothing was applied. The three commands printed"
+    info "above are verbatim what a real run issues."
+elif [ "${L1_APPLIED}" -eq 3 ]; then
+    ok "Layer 1: 3/3 policies APPLIED."
+elif [ "${L1_APPLIED}" -gt 0 ]; then
+    fail "Layer 1: only ${L1_APPLIED}/3 policies applied, ${L1_APPLY_FAILURES} did not."
+    fail "Layer 1 is NOT in force for the servers named above — do not treat it as governing them."
+else
+    fail "Layer 1: NOTHING was applied (${L1_APPLY_FAILURES}/3 failed or were skipped)."
+    fail "No egress policy binds any MCP server as a result of this run."
+fi
+
+# WHAT "APPLIED" DOES AND DOES NOT MEAN. IAP evaluates these policies at the Agent
+# Gateway boundary, so they bind only requests that actually traverse a gateway. With
+# no engine attached, the policies are readable and inert — real bindings on a path
+# nothing takes. Which of the two branches below prints is decided by GW_ATTACHED,
+# the count Step 0 of THIS run produced, not by an engine's live state.
+#
+# That audit-only property comes from the gateway being UNATTACHED. It is NOT an
+# `iamEnforcementMode: DRY_RUN` — `gcloud iap settings` exposes no enforcement flag
+# and does not accept agent-registry as a --resource-type, so no such mode was set
+# here and the output must not imply one.
+if [ "${GW_ATTACHED:-0}" -gt 0 ]; then
+    warn "${GW_ATTACHED} engine(s) were attached to the ingress gateway by Step 0 of this run,"
+    warn "so these policies are LIVE for traffic through it: a call these conditions exclude"
+    warn "will now be denied."
+else
+    info "NOT YET ENFORCED: Step 0 of this run attached no engine to a gateway, and IAP only"
+    info "evaluates at that boundary. Enforcement is one reversible flag —"
+    info "ENABLE_AGENT_GATEWAY=1 plus an in-place --update to attach an engine."
+    # Printed on ONE line each, deliberately. A trailing backslash here is followed by
+    # the ${NC} colour reset, so `echo -e` reads the pair as an escaped backslash and
+    # emits a literal "\033[0m" instead of resetting — an unreadable, uncopyable line.
+    info "This run's counter is not the same as an engine's live state; check that directly:"
+    info "  curl -s -H \"Authorization: Bearer \$(gcloud auth print-access-token)\" https://${REGION}-aiplatform.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${COORDINATOR_ENGINE_ID} | grep -i agentGatewayConfig"
+fi
+info "Read back what is actually bound, per server:"
+info "  gcloud beta iap web get-iam-policy --resource-type=agent-registry --mcp-server=<mcp-server-id> --region=${REGION} --project=${PROJECT_ID}"
+info "The principals are each engine's own SPIFFE identity (principal://<effectiveIdentity>),"
 info "not the Reasoning Engine service agent, so the bindings name the thing egress IAM evaluates."
 info "The conditions are worth keeping as-is — read-only, non-destructive-with-one-named-exception,"
 info "and a tool-name allowlist are exactly the per-tool governance this layer is meant to show."
@@ -938,16 +1140,23 @@ else
     echo "    [dry-run] Would attach 2 agents to ingress gateway"
 fi
 echo ""
-# No ✓ marks: these are files in /tmp, not grants. The old summary ticked three
-# policies that had never been applied to anything. The count is real for the same
-# reason — "files WRITTEN" was printed unconditionally, including on a dry run and on
-# a run where an unresolved identity wrote nothing at all.
+# The ✓ is earned per-server by a successful set-iam-policy, and by nothing else. The
+# old summary ticked three policies that had never been applied to anything, and
+# printed "files WRITTEN" unconditionally — including on a dry run and on a run where
+# an unresolved identity wrote nothing at all. Both counts below come from the code
+# paths that actually did the work.
+#
+# "applied" is still not "enforced": see the note at the end of the Layer 1 block.
 if $DRY_RUN; then
-    echo "  Layer 1 — IAM Allow Policies (static egress control; [dry-run] nothing written)"
+    echo "  Layer 1 — IAM Allow Policies (static egress control; [dry-run] nothing written, nothing applied)"
 elif [ "${L1_WRITTEN:-0}" -eq 0 ]; then
     echo "  Layer 1 — IAM Allow Policies (static egress control; NO files written — see Layer 1 above)"
+elif [ "${L1_APPLIED:-0}" -eq 3 ] && [ "${GW_ATTACHED:-0}" -eq 0 ]; then
+    echo "  Layer 1 — IAM Allow Policies (static egress control; ✓ 3/3 applied — no engine attached to a gateway, so not yet enforced)"
+elif [ "${L1_APPLIED:-0}" -eq 3 ]; then
+    echo "  Layer 1 — IAM Allow Policies (static egress control; ✓ 3/3 applied and ENFORCED for gateway traffic)"
 else
-    echo "  Layer 1 — IAM Allow Policies (static egress control; ${L1_WRITTEN}/3 files WRITTEN, not applied)"
+    echo "  Layer 1 — IAM Allow Policies (static egress control; ✗ ${L1_APPLIED:-0}/3 applied, ${L1_WRITTEN}/3 files written — see Layer 1 above)"
 fi
 echo "    search-mcp  → coordinator + router: read-only tools only"
 echo "    booking-mcp → coordinator + router: non-destructive tools + cancel_booking"
