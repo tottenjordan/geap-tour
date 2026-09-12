@@ -11,6 +11,7 @@ except Exception as e:
     logging.warning("OTel setup failed: %s", e)
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 try:
     from .mock_db import check_policy as _check
@@ -23,8 +24,35 @@ except ImportError:
 
 mcp = FastMCP("expense-mcp", instructions="Submit and manage corporate expense reports.")
 
+# Declared so IAP's CEL conditions have attributes to read. Without them
+# `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` falls back to
+# its default, so the Layer 1 policy in scripts/setup_governance_policies.sh would
+# invert the moment it were bound: `isReadOnly == true` would never match (denying
+# the policy check and the history lookup) and `isDestructive == false` would
+# always match (constraining nothing). Nothing binds it today, so these hints are
+# the prerequisite that makes the policy meaningful, not evidence of enforcement.
+#
+# Redefined here rather than shared: each server is built from its own directory
+# (`--source src/mcp_servers/<name>`, Dockerfile `COPY . .`), so a
+# src/mcp_servers/_annotations.py would be outside the build context and
+# ImportError inside the container. See the fuller note in booking/server.py.
 
-@mcp.tool()
+# check_expense_policy is a pure function of POLICY_LIMITS; get_user_expenses only
+# reads the store.
+READ_ONLY_TOOL = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+# Writes under a fresh `EX-<uuid4>` key, so it adds without overwriting anything —
+# non-destructive, but explicitly NOT idempotent: nothing de-duplicates, so a
+# retried submission files a second claim for the same spend. The receipt-audit
+# skill in src/skills/definitions.py documents that hazard for the model; this is
+# the same fact stated where an authorization policy can read it.
+ADDITIVE_TOOL = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+)
+
+
+@mcp.tool(annotations=ADDITIVE_TOOL)
 def submit_expense(amount: float, category: str, description: str, user_id: str) -> dict:
     """Submit an expense report for reimbursement.
 
@@ -37,7 +65,7 @@ def submit_expense(amount: float, category: str, description: str, user_id: str)
     return _submit(amount, category, description, user_id)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def check_expense_policy(amount: float, category: str) -> dict:
     """Check if an expense amount is within corporate policy limits.
 
@@ -48,7 +76,7 @@ def check_expense_policy(amount: float, category: str) -> dict:
     return _check(amount, category)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def get_user_expenses(user_id: str, limit: int = 20) -> dict:
     """Get a user's most recent expenses, newest first.
 

@@ -1,5 +1,10 @@
 """Tests for MCP server tools — mock data, tool logic, and the registration surface."""
 
+from pathlib import Path
+
+import pytest
+
+from src.mcp_servers.booking import server as booking_server
 from src.mcp_servers.booking.mock_db import (
     MAX_BOOKINGS_RETURNED,
     bookings,
@@ -8,6 +13,7 @@ from src.mcp_servers.booking.mock_db import (
     get_booking,
     list_bookings,
 )
+from src.mcp_servers.expense import server as expense_server
 from src.mcp_servers.expense.mock_db import (
     MAX_EXPENSES_RETURNED,
     check_policy,
@@ -18,18 +24,65 @@ from src.mcp_servers.expense.mock_db import (
 from src.mcp_servers.search import server as search_server
 from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
 
+MCP_SERVERS_DIR = Path(__file__).resolve().parents[1] / "src" / "mcp_servers"
+
 # The annotation payload IAP must see, per tool. A table rather than a literal at
 # the assert site because booking and expense mix read-only, additive and
 # destructive tools, and they get the same treatment.
+#
+# Spelled out here independently of the `*_TOOL` constants the servers define: the
+# expectation has to be able to disagree with the implementation, and those
+# constants are duplicated per server module anyway (a shared module would not be
+# in any server's Docker build context — see the comment in booking/server.py), so
+# this table is also the drift guard across the three copies.
 _READ_ONLY_HINTS = {
     "readOnlyHint": True,
     "destructiveHint": False,
     "idempotentHint": True,
     "openWorldHint": False,
 }
+# Creates a record and touches no existing one, so not destructive — but each call
+# mints a fresh id (`BK-<uuid4>` / `EX-<uuid4>`) and nothing de-duplicates, so a
+# replay books a second seat or files a second expense. That is what
+# `idempotentHint: False` warns a caller, and any retry policy, about.
+_ADDITIVE_HINTS = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": False,
+}
+# Mutates an existing record irreversibly (no tool un-cancels a booking), but
+# converges: cancelling twice leaves the same booking cancelled.
+_DESTRUCTIVE_HINTS = {
+    "readOnlyHint": False,
+    "destructiveHint": True,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
 EXPECTED_SEARCH_ANNOTATIONS = {
     "search_flights": _READ_ONLY_HINTS,
     "search_hotels": _READ_ONLY_HINTS,
+}
+EXPECTED_BOOKING_ANNOTATIONS = {
+    "book_flight": _ADDITIVE_HINTS,
+    "book_hotel": _ADDITIVE_HINTS,
+    "cancel_booking": _DESTRUCTIVE_HINTS,
+    "get_booking_details": _READ_ONLY_HINTS,
+    "list_all_bookings": _READ_ONLY_HINTS,
+}
+EXPECTED_EXPENSE_ANNOTATIONS = {
+    "submit_expense": _ADDITIVE_HINTS,
+    "check_expense_policy": _READ_ONLY_HINTS,
+    "get_user_expenses": _READ_ONLY_HINTS,
+}
+
+# Keyed by server directory name so `test_every_mcp_server_is_covered` can compare
+# against what is actually on disk.
+EXPECTED_ANNOTATIONS = {
+    "search": (search_server, EXPECTED_SEARCH_ANNOTATIONS),
+    "booking": (booking_server, EXPECTED_BOOKING_ANNOTATIONS),
+    "expense": (expense_server, EXPECTED_EXPENSE_ANNOTATIONS),
 }
 
 
@@ -220,13 +273,30 @@ class TestToolAnnotations:
        client actually receives. (`to_mcp_tool()` itself is a pass-through — it
        hands the *same* `ToolAnnotations` object straight to `mcp.types.Tool` — so
        the dump, not the call, is what makes this a wire-form check.)
+
+    Property 1 is per server, so it cannot see a *fourth* server appearing
+    alongside the three; `test_every_mcp_server_is_covered` closes that.
     """
 
-    async def test_every_registered_search_tool_carries_read_only_hints(self):
-        tools = await search_server.mcp.list_tools()
-        assert {t.name for t in tools} == set(EXPECTED_SEARCH_ANNOTATIONS)
+    @pytest.mark.parametrize("server_name", sorted(EXPECTED_ANNOTATIONS))
+    async def test_every_registered_tool_serializes_its_expected_hints(self, server_name):
+        server, expected = EXPECTED_ANNOTATIONS[server_name]
+        tools = await server.mcp.list_tools()
+        assert {t.name for t in tools} == set(expected)
         for tool in tools:
             dumped = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
-            assert dumped.get("annotations") == EXPECTED_SEARCH_ANNOTATIONS[tool.name], (
+            assert dumped.get("annotations") == expected[tool.name], (
                 f"{tool.name} does not serialize the expected annotations"
             )
+
+    def test_every_mcp_server_is_covered(self):
+        """A whole new server is the one way an unannotated tool still ships.
+
+        The per-server check above only walks the registries it is handed, so a
+        `src/mcp_servers/<new>/server.py` added later is simply not looked at —
+        its tools would reach IAP with no hints and misfire the CEL exactly as
+        the three here would have. Compare against the directory listing so
+        adding a server forces adding its expectations.
+        """
+        on_disk = {path.parent.name for path in MCP_SERVERS_DIR.glob("*/server.py")}
+        assert on_disk == set(EXPECTED_ANNOTATIONS)
