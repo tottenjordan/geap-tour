@@ -75,6 +75,32 @@ run_cmd() {
     fi
 }
 
+# The one place that reads an engine's SPIFFE identity off its live spec. Prints
+# `spec.effectiveIdentity` and returns 0; prints nothing and returns 1 when the
+# field is absent (identityType is not AGENT_IDENTITY yet, or the GET failed).
+#
+# Both consumers — the Step 0b registry grant and the Layer 1 egress policies — need
+# the SAME principal, so they share one fetcher. Two copies would be two chances to
+# drift back onto the wrong one, which is the failure this file has already had once
+# (see the wrong-principal note on Layer 1). It sits here beside run_cmd, rather than
+# inside whichever step happens to call it first, because neither step owns it.
+# PROJECT_ID / REGION / ACCESS_TOKEN are resolved further down; bash binds them when
+# the function RUNS, and every call site is inside a step that runs after them.
+engine_identity() {
+    local engine_id="$1"
+    local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
+    local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
+
+    local eff
+    # `|| true` so an unreachable API or a missing token is an empty identity the
+    # caller can report, not a pipefail that kills the whole script from inside a
+    # command substitution.
+    eff=$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" "${api_base}/${engine_path}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null) || true
+    [ -n "$eff" ] || return 1
+    printf '%s' "$eff"
+}
+
 # ─────────────────────────────────────────────────────────────
 # Engine ids — resolved BEFORE any network call, and never aliased
 # ─────────────────────────────────────────────────────────────
@@ -106,7 +132,7 @@ ROUTER_ENGINE_ID="$(require_var ROUTER_ENGINE_ID)"
 PROJECT_NUMBER="$(project_number)"
 # There is deliberately no Reasoning Engine service-agent variable here any more.
 # Layer 1 used to grant to it; egress IAM is evaluated against the per-engine agent
-# identity, so that grant did nothing. _engine_identity() resolves the real one.
+# identity, so that grant did nothing. engine_identity() resolves the real one.
 ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
 
 SGP_FAILURES=0
@@ -280,51 +306,44 @@ fi
 # so the cutover to the registry path completes when the engine recycles — e.g.
 # an in-place `deploy_agents coordinator --update`.
 
-# The one place that reads an engine's SPIFFE identity off its live spec. Prints
-# `spec.effectiveIdentity` and returns 0; prints nothing and returns 1 when the
-# field is absent (identityType is not AGENT_IDENTITY yet, or the GET failed).
-#
-# Both consumers — the registry grant just below and the Layer 1 egress policies
-# further down — need the SAME principal, so they share one fetcher. Two copies
-# would be two chances to drift back onto the wrong one, which is the failure this
-# file has already had once (see the wrong-principal note on Layer 1 below).
-_engine_identity() {
-    local engine_id="$1"
-    local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
-    local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
-
-    local eff
-    # `|| true` so an unreachable API or a missing token is an empty identity the
-    # caller can report, not a pipefail that kills the whole script from inside a
-    # command substitution.
-    eff=$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" "${api_base}/${engine_path}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null) || true
-    [ -n "$eff" ] || return 1
-    printf '%s' "$eff"
-}
+# engine_identity() — defined at the top of this file, beside run_cmd.
 
 grant_registry_read() {
     local label="$1"
     local engine_id="$2"
 
     local eff
-    eff="$(_engine_identity "$engine_id")" || {
+    eff="$(engine_identity "$engine_id")" || {
+        # An intentional, ALREADY-REPORTED skip, so it returns success. It used to
+        # return 1, which under `set -e` made a bare call exit the whole script with
+        # nothing printed to say why — and the `|| true` added to stop that then
+        # swallowed real failures too (see the call sites).
         warn "${label}: no effectiveIdentity (identityType may not be AGENT_IDENTITY yet) — skipping registry grant"
-        return 1
+        return 0
     }
 
-    run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    if run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
         --member="principal://${eff}" \
         --role="roles/agentregistry.viewer" \
-        --condition=None >/dev/null && ok "${label}: agentregistry.viewer granted to agent identity"
+        --condition=None >/dev/null; then
+        ok "${label}: agentregistry.viewer granted to agent identity"
+    else
+        # Reported HERE, not at the call site: this grant is the documented fix for
+        # the router's 403 MCP-resolution fallback, and a silent failure to apply it
+        # is a silent degradation back to the direct Cloud Run URLs.
+        fail "${label}: registry grant FAILED (gcloud add-iam-policy-binding)"
+        return 1
+    fi
 }
 
 step "Step 0b: Agent Registry read for agent identity"
-# `|| true`: the function already warns and says it is skipping, but under
-# `set -e` a bare call turned that skip into an immediate exit — Layers 1-3 never
-# ran, with nothing printed to say why.
-grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID" || true
-grant_registry_read "Router" "$ROUTER_ENGINE_ID" || true
+# Called bare, deliberately. `|| true` here would suspend `set -e` for the ENTIRE
+# function body — not just the final status — so it masks every failure inside the
+# function, not only the one it was added to tolerate. Nothing needs tolerating now:
+# the no-identity skip returns 0 on its own, so a non-zero status can only mean the
+# gcloud grant itself failed, which `fail` has already named before the script stops.
+grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID"
+grant_registry_read "Router" "$ROUTER_ENGINE_ID"
 
 # ─────────────────────────────────────────────────────────────
 # Layer 1: IAM Allow Policies (egress control via IAP)
@@ -340,13 +359,22 @@ grant_registry_read "Router" "$ROUTER_ENGINE_ID" || true
 #   - Idempotent       api.getAttribute('iap.googleapis.com/mcp.tool.isIdempotent', false)
 #   - Open world       api.getAttribute('iap.googleapis.com/mcp.tool.isOpenWorld', false)
 #   - Auth type        api.getAttribute('iap.googleapis.com/request.auth.type', '')
+#                      (available, but deliberately UNUSED — see Policy 3 below)
 #
 # WHO is granted, and on WHAT. This block used to describe a topology that no longer
-# exists: Coordinator / Travel Agent / Expense Agent, one MCP server each. travel_agent
-# and expense_agent are not deployed at all, and since the 2026-08-20 direct-tools
-# rearchitecture BOTH deployed engines hold all three MCP toolsets themselves — the
-# coordinator (src/agents/coordinator_agent.py) and the router (src/router/agents.py).
-# The real matrix is therefore {coordinator, router} x {search, booking, expense}.
+# exists: Coordinator / Travel Agent / Expense Agent, one MCP server each. Since the
+# 2026-08-20 direct-tools rearchitecture, each of the two engines this script attaches
+# to the gateway (Step 0a: the coordinator, src/agents/coordinator_agent.py, and the
+# router, src/router/agents.py) holds all three MCP toolsets itself. The real matrix
+# is therefore {coordinator, router} x {search, booking, expense}.
+#
+# Gateway attachment — not deployment — is what bounds that set. .env records SEVEN
+# deployed engines: the two above plus LITE_/FLASH_/PRO_/SONNET_/OPUS_ENGINE_ID, which
+# are first-class deploy targets (src/deploy/deploy_agents.py AGENT_SETS) and hold all
+# three toolsets too (e.g. src/agents/lite_agent.py). They are out of scope here only
+# because nothing attaches them to the gateway, so they never transit IAP. And because
+# set-iam-policy REPLACES the policy of a resource, attaching one later means ADDING
+# its principal to these three files — not applying a fourth file.
 #
 # Those six pairs are written as THREE files, one per MCP server with two members,
 # because an IAM allow policy is the complete policy OF A RESOURCE: `set-iam-policy`
@@ -355,8 +383,8 @@ grant_registry_read "Router" "$ROUTER_ENGINE_ID" || true
 # last-writer-wins race by construction.
 #
 # The principal is each ENGINE's own SPIFFE identity, read off the live spec by
-# _engine_identity() above. Every binding here previously named the Reasoning
-# Engine SERVICE AGENT instead (service-<number>@gcp-sa-aiplatform-re, wrapped in
+# engine_identity() (top of this file). Every binding here previously named the
+# Reasoning Engine SERVICE AGENT instead (service-<number>@gcp-sa-aiplatform-re, wrapped in
 # `principal://`, which is SPIFFE syntax that fits neither a SPIFFE id nor a
 # service account). That is the wrong-principal mistake CLAUDE.md documents: egress
 # IAM is evaluated against the agent identity, so a role on the service agent buys
@@ -364,17 +392,47 @@ grant_registry_read "Router" "$ROUTER_ENGINE_ID" || true
 
 step "Layer 1: IAM Allow Policies"
 
-# `|| true`: an unresolved identity is reported per policy below, not by exiting.
-COORDINATOR_IDENTITY="$(_engine_identity "$COORDINATOR_ENGINE_ID" || true)"
-ROUTER_IDENTITY="$(_engine_identity "$ROUTER_ENGINE_ID" || true)"
+# These two lines issue a live GET each (engine_identity -> reasoningEngines.get),
+# under --dry-run as well. They are read-only, and the dry run needs the answer to
+# report honestly whether a policy COULD be written, so they are not suppressed —
+# but a --dry-run is therefore not an entirely offline operation.
+#
+# `|| true`: an unresolved identity is reported here, not by exiting.
+COORDINATOR_IDENTITY="$(engine_identity "$COORDINATOR_ENGINE_ID" || true)"
+ROUTER_IDENTITY="$(engine_identity "$ROUTER_ENGINE_ID" || true)"
+
+# Reported ONCE, here, naming the engine that failed. This used to be two context-free
+# lines inside write_egress_policy, i.e. printed three times and identifying neither
+# engine, when the cause is a single property of a single engine.
+[ -n "${COORDINATOR_IDENTITY}" ] || \
+    warn "No effectiveIdentity for coordinator ${COORDINATOR_ENGINE_ID} — set identityType=AGENT_IDENTITY (Step 0) first."
+[ -n "${ROUTER_IDENTITY}" ] || \
+    warn "No effectiveIdentity for router ${ROUTER_ENGINE_ID} — set identityType=AGENT_IDENTITY (Step 0) first."
+
+L1_WRITTEN=0
 
 # One binding, both agent identities, one CEL condition. Writing the file is all
 # this does — see the note at the end of the block.
+#
+# The two members are NOT arguments: they come from the COORDINATOR_IDENTITY /
+# ROUTER_IDENTITY globals resolved just above, because every policy this block writes
+# binds the same two principals and differs only in its condition. A caller cannot
+# vary them; adding a third engine (see the gateway-attachment note above) means
+# resolving one more global and extending the members list, once, here.
 write_egress_policy() {
     local file="$1"
     local title="$2"
     local description="$3"
     local expression="$4"
+
+    # Guarded FIRST, before the rm. Every side effect in this file goes through
+    # run_cmd (see its definition at the top); the two below — `rm -f` and the
+    # redirect — do not, so a --dry-run used to really DELETE and really REWRITE the
+    # files it simultaneously advertises as the apply input.
+    if $DRY_RUN; then
+        echo "    [dry-run] Would write $(basename "${file}") — ${title}"
+        return 0
+    fi
 
     # An empty principal is worse than a missing file: `principal://` with nothing
     # after it is a malformed member. A stale file left over from an earlier run is
@@ -382,34 +440,66 @@ write_egress_policy() {
     # yesterday's principals without a word — so the target is deleted, not kept.
     if [ -z "${COORDINATOR_IDENTITY}" ] || [ -z "${ROUTER_IDENTITY}" ]; then
         rm -f "${file}"
-        warn "NOT WRITTEN ($(basename "${file}")): no effectiveIdentity for coordinator and/or router."
-        warn "  Set identityType=AGENT_IDENTITY (Step 0) first — a policy with an empty principal is not written."
-        return 1
+        warn "NOT WRITTEN ($(basename "${file}")): no effectiveIdentity — see above."
+        return 0
     fi
 
-    cat > "${file}" <<POLICY
-{
-  "policy": {
-    "bindings": [
-      {
+    # A BARE IAM Policy resource: `bindings` / `version` / `etag` at the TOP level.
+    #
+    # It is deliberately not wrapped in {"policy": {...}} — that is the shape of the
+    # setIamPolicy REST request BODY, not of a policy file. `gcloud ... set-iam-policy
+    # POLICY_FILE` parses the file straight into a Policy message (iam_util.py
+    # ParsePolicyFile -> apitools PyValueToMessage), and apitools does NOT reject an
+    # unknown top-level key: it files "policy" under unrecognized fields and hands
+    # back a Policy with ZERO bindings. Applying the wrapped form would therefore not
+    # error — it would REPLACE the MCP server's policy with an empty one and report
+    # success, which is the most expensive possible way to be wrong here.
+    #
+    # "version": 3 is required by IAM for CONDITIONAL bindings, and all three policies
+    # in this block are conditional. The gcloud IAP path happens to force version 3
+    # itself (api_lib/iap/util.py _SetIamPolicy), but a raw setIamPolicy REST call
+    # rejects a conditional binding at an unset/lower version, so it is written
+    # explicitly rather than left to one apply path's fixup.
+    #
+    # Built with json.dumps rather than interpolated into a heredoc: a double quote or
+    # a backslash in any title, description or expression would otherwise emit
+    # malformed JSON that surfaces only as a gcloud parse error at apply time. Today's
+    # strings are safe; this stops that from being a property anyone has to maintain.
+    if ! python3 -c '
+import json, sys
+coordinator, router, title, description, expression = sys.argv[1:6]
+print(json.dumps({
+    "version": 3,
+    "bindings": [{
         "role": "roles/iap.egressor",
-        "members": [
-          "principal://${COORDINATOR_IDENTITY}",
-          "principal://${ROUTER_IDENTITY}"
-        ],
-        "condition": {
-          "title": "${title}",
-          "description": "${description}",
-          "expression": "${expression}"
-        }
-      }
-    ]
-  }
-}
-POLICY
+        "members": ["principal://" + coordinator, "principal://" + router],
+        "condition": {"title": title, "description": description, "expression": expression},
+    }],
+}, indent=2))
+' "${COORDINATOR_IDENTITY}" "${ROUTER_IDENTITY}" "${title}" "${description}" "${expression}" \
+        > "${file}"; then
+        fail "FAILED to write $(basename "${file}")"
+        return 1
+    fi
+    # `warn` used to be the last command in this function, so the function returned 0
+    # whatever happened: an unwritable path, a full disk or a directory at ${file}
+    # printed "WROTE FILE ONLY" anyway, and the call site's `|| true` made sure
+    # nothing else ever contradicted it. That is the same false success — the
+    # "IAM policy created" that was not — this whole block exists to stop telling.
+    if [ ! -s "${file}" ]; then
+        fail "FAILED to write $(basename "${file}") — file is empty or missing after write"
+        return 1
+    fi
+    L1_WRITTEN=$((L1_WRITTEN + 1))
     warn "WROTE FILE ONLY (not applied): $(basename "${file}") — ${title}"
 }
 
+# The three calls below are bare. `|| true` would suspend `set -e` for the ENTIRE
+# function body, not merely tolerate its final status, so it would also swallow a
+# failed write — the defect this block is here to fix. The only tolerated outcomes
+# (dry run, unresolved identity) now return 0 from inside the function, so a non-zero
+# status means the file genuinely did not get written and the script should stop.
+#
 # Policy 1: search-mcp — coordinator + router, read-only tools only.
 # Reads mcp.tool.isReadOnly, which both search tools set (readOnlyHint=True in
 # src/mcp_servers/search/server.py). Today that admits everything on the server;
@@ -418,7 +508,7 @@ POLICY
 write_egress_policy /tmp/iam-policy-search-mcp.json \
     "Search MCP: read-only tools only" \
     "Coordinator and router may call search-mcp tools that declare readOnlyHint" \
-    "api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false) == true" || true
+    "api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false) == true"
 
 # Policy 2: booking-mcp — coordinator + router, non-destructive tools PLUS cancel_booking.
 # Reads mcp.tool.isDestructive (false for book_flight / book_hotel / get_booking_details
@@ -431,7 +521,7 @@ write_egress_policy /tmp/iam-policy-search-mcp.json \
 write_egress_policy /tmp/iam-policy-booking-mcp.json \
     "Booking MCP: non-destructive tools, plus cancel_booking by name" \
     "Coordinator and router may call non-destructive booking-mcp tools; cancel_booking is the one named exception" \
-    "api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false) == false || api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'cancel_booking'" || true
+    "api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false) == false || api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'cancel_booking'"
 
 # Policy 3: expense-mcp — coordinator + router, an explicit tool allowlist.
 # Reads mcp.toolName only. The three names are the tools the server actually
@@ -439,16 +529,25 @@ write_egress_policy /tmp/iam-policy-booking-mcp.json \
 # `get_expenses`, which is the mock-DB function, not a registered tool — the
 # allowlist could never match it, so the real tool was denied and a name that does
 # not exist was allowed.
+#
+# DO NOT RE-ADD the `&& request.auth.type == 'MCP'` conjunct this expression used to
+# carry. 'MCP' is an unverified magic value for an attribute that defaults to '', so
+# if the gateway populates it as anything else the whole AND is false and all three
+# expense tools are denied — a total outage of this server, produced by a clause that
+# restricts nothing: mcp.toolName only has a value on an MCP tool call in the first
+# place. It is listed in the attribute table above as available, not as recommended.
 write_egress_policy /tmp/iam-policy-expense-mcp.json \
     "Expense MCP: named tools only" \
     "Coordinator and router may call submit_expense, check_expense_policy and get_user_expenses" \
-    "api.getAttribute('iap.googleapis.com/mcp.toolName', '') in ['submit_expense', 'check_expense_policy', 'get_user_expenses']" || true
+    "api.getAttribute('iap.googleapis.com/mcp.toolName', '') in ['submit_expense', 'check_expense_policy', 'get_user_expenses']"
 
 warn "Layer 1 is NOT APPLIED. The files above are written to /tmp and nothing binds them —"
 warn "this step has never granted a policy. It previously printed \"IAM policy created\", which was false."
 warn "What is left is the apply (see docs/notes/geap-services-audit-2026-09.md). Run, per server:"
 warn "  gcloud beta iap web set-iam-policy <file.json> --resource-type=agent-registry \\"
 warn "    --mcp-server=<mcp-server-id> --region=${REGION} --project=${PROJECT_ID}"
+info "That apply REPLACES the server's whole policy, and these files carry no \"etag\", so gcloud"
+info "prompts before overwriting and cancels if the answer is no — it needs a TTY, or --quiet."
 info "The principals are now each engine's own SPIFFE identity (principal://<effectiveIdentity>),"
 info "not the Reasoning Engine service agent, so the bindings name the thing egress IAM evaluates."
 info "The conditions are worth keeping as-is — read-only, non-destructive-with-one-named-exception,"
@@ -840,8 +939,16 @@ else
 fi
 echo ""
 # No ✓ marks: these are files in /tmp, not grants. The old summary ticked three
-# policies that had never been applied to anything.
-echo "  Layer 1 — IAM Allow Policies (static egress control; files WRITTEN, not applied)"
+# policies that had never been applied to anything. The count is real for the same
+# reason — "files WRITTEN" was printed unconditionally, including on a dry run and on
+# a run where an unresolved identity wrote nothing at all.
+if $DRY_RUN; then
+    echo "  Layer 1 — IAM Allow Policies (static egress control; [dry-run] nothing written)"
+elif [ "${L1_WRITTEN:-0}" -eq 0 ]; then
+    echo "  Layer 1 — IAM Allow Policies (static egress control; NO files written — see Layer 1 above)"
+else
+    echo "  Layer 1 — IAM Allow Policies (static egress control; ${L1_WRITTEN}/3 files WRITTEN, not applied)"
+fi
 echo "    search-mcp  → coordinator + router: read-only tools only"
 echo "    booking-mcp → coordinator + router: non-destructive tools + cancel_booking"
 echo "    expense-mcp → coordinator + router: submit_expense, check_expense_policy, get_user_expenses"
