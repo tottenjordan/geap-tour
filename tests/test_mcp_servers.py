@@ -1,4 +1,4 @@
-"""Tests for MCP server tools — validates mock data and tool logic."""
+"""Tests for MCP server tools — mock data, tool logic, and the registration surface."""
 
 from src.mcp_servers.booking.mock_db import (
     MAX_BOOKINGS_RETURNED,
@@ -15,7 +15,22 @@ from src.mcp_servers.expense.mock_db import (
     get_expenses,
     submit_expense,
 )
+from src.mcp_servers.search import server as search_server
 from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
+
+# The annotation payload IAP must see, per tool. A table rather than a literal at
+# the assert site because booking and expense mix read-only, additive and
+# destructive tools, and they get the same treatment.
+_READ_ONLY_HINTS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+EXPECTED_SEARCH_ANNOTATIONS = {
+    "search_flights": _READ_ONLY_HINTS,
+    "search_hotels": _READ_ONLY_HINTS,
+}
 
 
 class TestSearchMockDB:
@@ -186,24 +201,32 @@ class TestToolAnnotations:
     """IAP CEL conditions read these; absent hints make every condition misfire.
 
     `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` returns the
-    DEFAULT when the hint is absent, so `isReadOnly == true` never matches (denying
-    a read-only tool) and `isDestructive == false` always matches (constraining
-    nothing). The annotation is what makes the policy mean anything.
+    DEFAULT when the hint is absent, so `isReadOnly == true` would never match
+    (denying a read-only tool) and `isDestructive == false` would always match
+    (constraining nothing). The annotation is what makes the policy mean anything.
 
-    Asserted on `to_mcp_tool()` — the wire form a client (and therefore IAP) sees,
-    not just the in-process object — so a serialization change can't quietly drop
-    the hints while the registry still reports them.
+    Two properties, both about failures that are otherwise silent:
+
+    1. The tool list is read back from the registry and pinned with `==`, not
+       hardcoded at the assert site. A third search tool added later *with no
+       annotations* is invisible to the rest of the repo — `_EXPECTED_MCP_TOOLS`
+       in test_skill_definitions only forces someone to add its name — so it would
+       ship and misfire the CEL. Here it fails.
+    2. The whole serialized annotation dict is compared, not field-by-field
+       attributes. `ToolAnnotations` is `extra="allow"`, so a misspelled
+       `readonlyHint=True` is accepted and simply rides along as an extra key that
+       IAP does not read; per-field asserts on the correctly-spelled names never
+       see it, dict equality does. `model_dump(by_alias=True)` is also the JSON a
+       client actually receives. (`to_mcp_tool()` itself is a pass-through — it
+       hands the *same* `ToolAnnotations` object straight to `mcp.types.Tool` — so
+       the dump, not the call, is what makes this a wire-form check.)
     """
 
-    async def test_search_tools_are_annotated_read_only(self):
-        from src.mcp_servers.search import server
-
-        for name in ("search_flights", "search_hotels"):
-            tool = await server.mcp.get_tool(name)
-            assert tool is not None, f"{name} is not registered"
-            ann = tool.to_mcp_tool().annotations
-            assert ann is not None, f"{name} has no ToolAnnotations"
-            assert ann.readOnlyHint is True
-            assert ann.destructiveHint is False
-            assert ann.idempotentHint is True
-            assert ann.openWorldHint is False
+    async def test_every_registered_search_tool_carries_read_only_hints(self):
+        tools = await search_server.mcp.list_tools()
+        assert {t.name for t in tools} == set(EXPECTED_SEARCH_ANNOTATIONS)
+        for tool in tools:
+            dumped = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
+            assert dumped.get("annotations") == EXPECTED_SEARCH_ANNOTATIONS[tool.name], (
+                f"{tool.name} does not serialize the expected annotations"
+            )
