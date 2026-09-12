@@ -242,8 +242,9 @@ class TestLayer1IsRealAndCorrect:
     caught three of the four.
     """
 
-    SCRIPT = (pathlib.Path(__file__).resolve().parents[1]
-              / "scripts" / "setup_governance_policies.sh").read_text()
+    SCRIPT = (
+        pathlib.Path(__file__).resolve().parents[1] / "scripts" / "setup_governance_policies.sh"
+    ).read_text()
 
     def test_it_applies_and_does_not_merely_print(self):
         assert "gcloud beta iap web set-iam-policy" in self.SCRIPT

@@ -39,10 +39,12 @@ from src.skills import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVERS_DIR = REPO_ROOT / "src" / "mcp_servers"
 
-# Every tool the three MCP servers expose. Spelled out rather than counted so a
-# tool that drops out of `_real_mcp_tool_names` (someone writes
-# `@mcp.tool(name="other")`, whose exposed name is not the function's) fails here
-# instead of quietly shrinking the surface the grounding checks below grade against.
+# Every tool the three MCP servers expose, under the name a *client* calls.
+# Spelled out rather than counted so any move in that surface — a tool dropping
+# out, or one renamed by `@mcp.tool(name="other")` — fails here instead of quietly
+# changing what the grounding checks below grade against. Counted on only for
+# changes to the set: it cannot see a rename that `_real_mcp_tool_names` reports
+# under the old name, which is why that function resolves `name=` itself.
 _EXPECTED_MCP_TOOLS = {
     "search_flights",
     "search_hotels",
@@ -78,8 +80,8 @@ def _split_frontmatter(skill_md: str) -> tuple[str, str]:
     return skill_md[4:end], skill_md[end + len("\n---\n") :]
 
 
-def _real_mcp_tool_names() -> set[str]:
-    """Tool names actually exposed by the three MCP servers, read from source.
+def _tool_names_in_source(source: str) -> set[str]:
+    """Tool names a single MCP server module exposes, parsed out of its source.
 
     Parsed with `ast`, not a regex. The decorator no longer has an empty argument
     list — it carries the `annotations=` hints IAP's CEL conditions read — and the
@@ -87,17 +89,51 @@ def _real_mcp_tool_names() -> set[str]:
     dropped it from this surface. `_EXPECTED_MCP_TOOLS` caught that, but the fix
     belongs here: arguments (on one line or several, nested calls included) and
     `async def` are all decorator spellings that shouldn't change the answer.
+
+    The name recorded is the **exposed** one: `@mcp.tool(name="other")` publishes
+    the tool as `other`, and taking the function name there would report a surface
+    the server does not serve — a rename would leave this set unchanged, so
+    `_EXPECTED_MCP_TOOLS` could not fire and the grounding checks below would grade
+    against tools that no longer exist. Only a literal `name=` is honoured; a
+    computed one falls back to the function name, which is at least a name in the
+    module rather than a guess.
     """
     names: set[str] = set()
-    for server in sorted(MCP_SERVERS_DIR.glob("*/server.py")):
-        for node in ast.walk(ast.parse(server.read_text())):
-            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            # `@mcp.tool` and `@mcp.tool(...)` alike — but not some other object's
+            # `.tool`, which would inflate the surface with a non-MCP decorator.
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if not (
+                isinstance(target, ast.Attribute)
+                and target.attr == "tool"
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "mcp"
+            ):
                 continue
-            for decorator in node.decorator_list:
-                # `@mcp.tool` and `@mcp.tool(...)` alike.
-                target = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if isinstance(target, ast.Attribute) and target.attr == "tool":
-                    names.add(node.name)
+            override = None
+            if isinstance(decorator, ast.Call):
+                override = next(
+                    (
+                        kw.value.value
+                        for kw in decorator.keywords
+                        if kw.arg == "name"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ),
+                    None,
+                )
+            names.add(override or node.name)
+    return names
+
+
+def _real_mcp_tool_names() -> set[str]:
+    """Tool names actually exposed by the three MCP servers, read from source."""
+    names: set[str] = set()
+    for server in sorted(MCP_SERVERS_DIR.glob("*/server.py")):
+        names |= _tool_names_in_source(server.read_text())
     return names
 
 
@@ -249,9 +285,30 @@ def test_skill_ids_are_unique():
 
 
 def test_mcp_tool_extraction_finds_the_real_surface():
-    """Guard the guard: if this regex ever finds nothing — or quietly finds one
-    fewer — the grounding tests below weaken without failing."""
+    """Guard the guard: if this extraction ever finds nothing — or quietly finds
+    one fewer — the grounding tests below weaken without failing."""
     assert _real_mcp_tool_names() == _EXPECTED_MCP_TOOLS
+
+
+def test_mcp_tool_extraction_reports_the_exposed_name_not_the_function_name():
+    """Guard the guard, rename edition: `name=` is what the server actually serves.
+
+    The failure this closes is invisible to the `==` pin above, because the pin
+    only fires when the *set* changes: reporting `search_flights` for a tool
+    published as `flight_search` keeps the set identical while the server exposes
+    something else entirely, so every grounding check below would go on grading
+    skill bodies against a tool name no client can call.
+    """
+    source = (
+        "mcp = FastMCP('search-mcp')\n"
+        "@mcp.tool(name='flight_search', annotations=READ_ONLY)\n"
+        "def search_flights(origin: str) -> list[dict]: ...\n"
+        "@mcp.tool()\n"
+        "async def search_hotels(city: str) -> list[dict]: ...\n"
+        "@other.tool()\n"
+        "def not_an_mcp_tool() -> None: ...\n"
+    )
+    assert _tool_names_in_source(source) == {"flight_search", "search_hotels"}
 
 
 def test_mcp_response_field_extraction_finds_the_real_surface():
