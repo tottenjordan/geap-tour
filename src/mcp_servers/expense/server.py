@@ -24,13 +24,14 @@ except ImportError:
 
 mcp = FastMCP("expense-mcp", instructions="Submit and manage corporate expense reports.")
 
-# Declared so IAP's CEL conditions have attributes to read. Without them
-# `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` falls back to
-# its default, so the Layer 1 policy in scripts/setup_governance_policies.sh would
-# invert the moment it were bound: `isReadOnly == true` would never match (denying
-# the policy check and the history lookup) and `isDestructive == false` would
-# always match (constraining nothing). Nothing binds it today, so these hints are
-# the prerequisite that makes the policy meaningful, not evidence of enforcement.
+# Declared so IAP's CEL conditions have attributes to read. The expense policy in
+# scripts/setup_governance_policies.sh is currently a `mcp.toolName` allowlist and
+# reads no annotation attribute, so these hints do not change it — but an absent
+# hint is indistinguishable from `false` to `getAttribute(..., false)`, so any
+# read-only or non-destructive clause added here later would silently invert
+# (`isReadOnly == true` never matching, `isDestructive == false` always matching).
+# Annotating every tool is what keeps that from being a trap; nothing binds any
+# policy today, so this is the prerequisite, not enforcement.
 #
 # Redefined here rather than shared: each server is built from its own directory
 # (`--source src/mcp_servers/<name>`, Dockerfile `COPY . .`), so a

@@ -23,13 +23,13 @@ except ImportError:
 mcp = FastMCP("booking-mcp", instructions="Book and manage flight and hotel reservations.")
 
 # Declared so IAP's CEL conditions have attributes to read. Without them
-# `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` falls back to
-# its default, so the Layer 1 policy in scripts/setup_governance_policies.sh would
-# invert the moment it were bound: `isReadOnly == true` would never match (denying
-# the lookups) and `isDestructive == false` would always match (leaving
-# cancel_booking, the one tool the policy exists to constrain, unconstrained).
-# Nothing binds it today, so these hints are the prerequisite that makes the policy
-# meaningful, not evidence that it is enforcing.
+# `api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false)` falls back
+# to its default, so the booking policy in scripts/setup_governance_policies.sh
+# (`isDestructive == false`) would invert the moment it were bound: the hint would
+# default to false, `false == false` would match, and cancel_booking — the one tool
+# the clause exists to constrain — would go unconstrained. Nothing binds it today,
+# so these hints are the prerequisite that makes the policy meaningful, not
+# evidence that it is enforcing.
 #
 # Redefined here rather than shared with the other two servers: deploy_mcp_servers
 # builds each server from its own directory (`--source src/mcp_servers/<name>`,

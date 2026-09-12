@@ -261,8 +261,9 @@ class TestToolAnnotations:
     Two properties, both about failures that are otherwise silent:
 
     1. The tool list is read back from the registry and pinned with `==`, not
-       hardcoded at the assert site. A third search tool added later *with no
-       annotations* is invisible to the rest of the repo — `_EXPECTED_MCP_TOOLS`
+       hardcoded at the assert site. A tool added later to any of the three
+       servers *with no annotations* is invisible to the rest of the repo —
+       `_EXPECTED_MCP_TOOLS`
        in test_skill_definitions only forces someone to add its name — so it would
        ship and misfire the CEL. Here it fails.
     2. The whole serialized annotation dict is compared, not field-by-field

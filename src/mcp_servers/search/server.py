@@ -28,6 +28,9 @@ mcp = FastMCP("search-mcp", instructions="Search for flights and hotels.")
 # nothing). Nothing binds it today — that script writes the three policy files to
 # /tmp and applies none of them — so these hints are the prerequisite that makes the
 # policy meaningful, not evidence that it is enforcing.
+#
+# Redefined per server, not shared — see the note in booking/server.py.
+
 # Both search tools query the mock DB: no writes, no deletes, same answer for the
 # same args, no outside world.
 READ_ONLY_TOOL = ToolAnnotations(
