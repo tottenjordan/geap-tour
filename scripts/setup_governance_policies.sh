@@ -104,7 +104,9 @@ fi
 ROUTER_ENGINE_ID="$(require_var ROUTER_ENGINE_ID)"
 
 PROJECT_NUMBER="$(project_number)"
-RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+# There is deliberately no Reasoning Engine service-agent variable here any more.
+# Layer 1 used to grant to it; egress IAM is evaluated against the per-engine agent
+# identity, so that grant did nothing. _engine_identity() resolves the real one.
 ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
 
 SGP_FAILURES=0
@@ -278,19 +280,38 @@ fi
 # so the cutover to the registry path completes when the engine recycles — e.g.
 # an in-place `deploy_agents coordinator --update`.
 
-grant_registry_read() {
-    local label="$1"
-    local engine_id="$2"
+# The one place that reads an engine's SPIFFE identity off its live spec. Prints
+# `spec.effectiveIdentity` and returns 0; prints nothing and returns 1 when the
+# field is absent (identityType is not AGENT_IDENTITY yet, or the GET failed).
+#
+# Both consumers — the registry grant just below and the Layer 1 egress policies
+# further down — need the SAME principal, so they share one fetcher. Two copies
+# would be two chances to drift back onto the wrong one, which is the failure this
+# file has already had once (see the wrong-principal note on Layer 1 below).
+_engine_identity() {
+    local engine_id="$1"
     local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
     local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
 
     local eff
+    # `|| true` so an unreachable API or a missing token is an empty identity the
+    # caller can report, not a pipefail that kills the whole script from inside a
+    # command substitution.
     eff=$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" "${api_base}/${engine_path}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null)
-    if [ -z "$eff" ]; then
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null) || true
+    [ -n "$eff" ] || return 1
+    printf '%s' "$eff"
+}
+
+grant_registry_read() {
+    local label="$1"
+    local engine_id="$2"
+
+    local eff
+    eff="$(_engine_identity "$engine_id")" || {
         warn "${label}: no effectiveIdentity (identityType may not be AGENT_IDENTITY yet) — skipping registry grant"
         return 1
-    fi
+    }
 
     run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
         --member="principal://${eff}" \
@@ -299,8 +320,11 @@ grant_registry_read() {
 }
 
 step "Step 0b: Agent Registry read for agent identity"
-grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID"
-grant_registry_read "Router" "$ROUTER_ENGINE_ID"
+# `|| true`: the function already warns and says it is skipping, but under
+# `set -e` a bare call turned that skip into an immediate exit — Layers 1-3 never
+# ran, with nothing printed to say why.
+grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID" || true
+grant_registry_read "Router" "$ROUTER_ENGINE_ID" || true
 
 # ─────────────────────────────────────────────────────────────
 # Layer 1: IAM Allow Policies (egress control via IAP)
@@ -316,86 +340,119 @@ grant_registry_read "Router" "$ROUTER_ENGINE_ID"
 #   - Idempotent       api.getAttribute('iap.googleapis.com/mcp.tool.isIdempotent', false)
 #   - Open world       api.getAttribute('iap.googleapis.com/mcp.tool.isOpenWorld', false)
 #   - Auth type        api.getAttribute('iap.googleapis.com/request.auth.type', '')
+#
+# WHO is granted, and on WHAT. This block used to describe a topology that no longer
+# exists: Coordinator / Travel Agent / Expense Agent, one MCP server each. travel_agent
+# and expense_agent are not deployed at all, and since the 2026-08-20 direct-tools
+# rearchitecture BOTH deployed engines hold all three MCP toolsets themselves — the
+# coordinator (src/agents/coordinator_agent.py) and the router (src/router/agents.py).
+# The real matrix is therefore {coordinator, router} x {search, booking, expense}.
+#
+# Those six pairs are written as THREE files, one per MCP server with two members,
+# because an IAM allow policy is the complete policy OF A RESOURCE: `set-iam-policy`
+# on one server with a coordinator-only file would replace, not augment, a
+# router-only file applied a moment earlier. Per-server-per-agent files would be a
+# last-writer-wins race by construction.
+#
+# The principal is each ENGINE's own SPIFFE identity, read off the live spec by
+# _engine_identity() above. Every binding here previously named the Reasoning
+# Engine SERVICE AGENT instead (service-<number>@gcp-sa-aiplatform-re, wrapped in
+# `principal://`, which is SPIFFE syntax that fits neither a SPIFFE id nor a
+# service account). That is the wrong-principal mistake CLAUDE.md documents: egress
+# IAM is evaluated against the agent identity, so a role on the service agent buys
+# nothing.
 
 step "Layer 1: IAM Allow Policies"
 
-# Policy 1: Coordinator → Search MCP (read-only)
-cat > /tmp/iam-policy-coordinator-search.json <<POLICY
+# `|| true`: an unresolved identity is reported per policy below, not by exiting.
+COORDINATOR_IDENTITY="$(_engine_identity "$COORDINATOR_ENGINE_ID" || true)"
+ROUTER_IDENTITY="$(_engine_identity "$ROUTER_ENGINE_ID" || true)"
+
+# One binding, both agent identities, one CEL condition. Writing the file is all
+# this does — see the note at the end of the block.
+write_egress_policy() {
+    local file="$1"
+    local title="$2"
+    local description="$3"
+    local expression="$4"
+
+    # An empty principal is worse than a missing file: `principal://` with nothing
+    # after it is a malformed member. A stale file left over from an earlier run is
+    # worse again — the apply command printed at the end of this block would bind
+    # yesterday's principals without a word — so the target is deleted, not kept.
+    if [ -z "${COORDINATOR_IDENTITY}" ] || [ -z "${ROUTER_IDENTITY}" ]; then
+        rm -f "${file}"
+        warn "NOT WRITTEN ($(basename "${file}")): no effectiveIdentity for coordinator and/or router."
+        warn "  Set identityType=AGENT_IDENTITY (Step 0) first — a policy with an empty principal is not written."
+        return 1
+    fi
+
+    cat > "${file}" <<POLICY
 {
   "policy": {
     "bindings": [
       {
         "role": "roles/iap.egressor",
         "members": [
-          "principal://${RE_SA}"
+          "principal://${COORDINATOR_IDENTITY}",
+          "principal://${ROUTER_IDENTITY}"
         ],
         "condition": {
-          "title": "Coordinator read-only search access",
-          "description": "GEAP Coordinator can only perform read-only operations on Search MCP",
-          "expression": "api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false) == true"
+          "title": "${title}",
+          "description": "${description}",
+          "expression": "${expression}"
         }
       }
     ]
   }
 }
 POLICY
-warn "WROTE FILE ONLY (not applied): Coordinator → Search MCP (read-only)"
-
-# Policy 2: Travel Agent → Booking MCP (non-destructive)
-cat > /tmp/iam-policy-travel-booking.json <<POLICY
-{
-  "policy": {
-    "bindings": [
-      {
-        "role": "roles/iap.egressor",
-        "members": [
-          "principal://${RE_SA}"
-        ],
-        "condition": {
-          "title": "Travel agent booking access - no destructive ops",
-          "description": "Travel agent can use Booking MCP tools but cannot perform destructive operations",
-          "expression": "api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false) == false"
-        }
-      }
-    ]
-  }
+    warn "WROTE FILE ONLY (not applied): $(basename "${file}") — ${title}"
 }
-POLICY
-warn "WROTE FILE ONLY (not applied): Travel Agent → Booking MCP (non-destructive)"
 
-# Policy 3: Expense Agent → Expense MCP (specific tools only)
-cat > /tmp/iam-policy-expense-tools.json <<POLICY
-{
-  "policy": {
-    "bindings": [
-      {
-        "role": "roles/iap.egressor",
-        "members": [
-          "principal://${RE_SA}"
-        ],
-        "condition": {
-          "title": "Expense agent tool-level access",
-          "description": "Expense agent can only use submit_expense, check_policy, and get_expenses tools",
-          "expression": "api.getAttribute('iap.googleapis.com/mcp.toolName', '') in ['submit_expense', 'check_expense_policy', 'get_expenses'] && api.getAttribute('iap.googleapis.com/request.auth.type', '') == 'MCP'"
-        }
-      }
-    ]
-  }
-}
-POLICY
-warn "WROTE FILE ONLY (not applied): Expense Agent → Expense MCP (specific tools only)"
+# Policy 1: search-mcp — coordinator + router, read-only tools only.
+# Reads mcp.tool.isReadOnly, which both search tools set (readOnlyHint=True in
+# src/mcp_servers/search/server.py). Today that admits everything on the server;
+# its value is forward-looking — a non-read-only tool added to search-mcp later is
+# denied until someone revisits this policy.
+write_egress_policy /tmp/iam-policy-search-mcp.json \
+    "Search MCP: read-only tools only" \
+    "Coordinator and router may call search-mcp tools that declare readOnlyHint" \
+    "api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false) == true" || true
 
-warn "Layer 1 is NOT APPLIED. The three files above are written to /tmp and nothing binds them —"
+# Policy 2: booking-mcp — coordinator + router, non-destructive tools PLUS cancel_booking.
+# Reads mcp.tool.isDestructive (false for book_flight / book_hotel / get_booking_details
+# / list_all_bookings) and re-admits cancel_booking by name via mcp.toolName —
+# cancel_booking is the only tool in the repo with destructiveHint=True. It is
+# deliberately allowed, not denied: two ROUTER_EVAL_CASES expect
+# booking_mcp_cancel_booking, and the coordinator's instruction covers booking
+# management. The shape is the demonstration — a blanket non-destructive rule with
+# one audited, named exception.
+write_egress_policy /tmp/iam-policy-booking-mcp.json \
+    "Booking MCP: non-destructive tools, plus cancel_booking by name" \
+    "Coordinator and router may call non-destructive booking-mcp tools; cancel_booking is the one named exception" \
+    "api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false) == false || api.getAttribute('iap.googleapis.com/mcp.toolName', '') == 'cancel_booking'" || true
+
+# Policy 3: expense-mcp — coordinator + router, an explicit tool allowlist.
+# Reads mcp.toolName only. The three names are the tools the server actually
+# registers (src/mcp_servers/expense/server.py). This list previously named
+# `get_expenses`, which is the mock-DB function, not a registered tool — the
+# allowlist could never match it, so the real tool was denied and a name that does
+# not exist was allowed.
+write_egress_policy /tmp/iam-policy-expense-mcp.json \
+    "Expense MCP: named tools only" \
+    "Coordinator and router may call submit_expense, check_expense_policy and get_user_expenses" \
+    "api.getAttribute('iap.googleapis.com/mcp.toolName', '') in ['submit_expense', 'check_expense_policy', 'get_user_expenses']" || true
+
+warn "Layer 1 is NOT APPLIED. The files above are written to /tmp and nothing binds them —"
 warn "this step has never granted a policy. It previously printed \"IAM policy created\", which was false."
-warn "Two things must change before it enforces (see docs/notes/geap-services-audit-2026-09.md):"
-warn "  1. the principal. These target principal://\${RE_SA}, the Reasoning Engine SERVICE AGENT."
-warn "     That is the wrong-principal mistake CLAUDE.md already documents; egress IAM is evaluated"
-warn "     against the engine's SPIFFE identity. grant_registry_read() above derives it correctly"
-warn "     as principal://\${eff} — reuse that."
-warn "  2. the apply. Run, per server:"
-warn "     gcloud beta iap web set-iam-policy <file.json> --project=${PROJECT_ID} --mcpServer=<server> --region=${REGION}"
-info "The CEL conditions themselves are sound and worth keeping — read-only, non-destructive,"
-info "and tool-name allowlists are exactly the per-tool governance this layer is meant to show."
+warn "What is left is the apply (see docs/notes/geap-services-audit-2026-09.md). Run, per server:"
+warn "  gcloud beta iap web set-iam-policy <file.json> --resource-type=agent-registry \\"
+warn "    --mcp-server=<mcp-server-id> --region=${REGION} --project=${PROJECT_ID}"
+info "The principals are now each engine's own SPIFFE identity (principal://<effectiveIdentity>),"
+info "not the Reasoning Engine service agent, so the bindings name the thing egress IAM evaluates."
+info "The conditions are worth keeping as-is — read-only, non-destructive-with-one-named-exception,"
+info "and a tool-name allowlist are exactly the per-tool governance this layer is meant to show."
 echo ""
 
 # ─────────────────────────────────────────────────────────────
@@ -782,10 +839,12 @@ else
     echo "    [dry-run] Would attach 2 agents to ingress gateway"
 fi
 echo ""
-echo "  Layer 1 — IAM Allow Policies (static egress control)"
-echo "    ✓ Coordinator → Search MCP (read-only)"
-echo "    ✓ Travel → Booking MCP (non-destructive)"
-echo "    ✓ Expense → Expense MCP (specific tools)"
+# No ✓ marks: these are files in /tmp, not grants. The old summary ticked three
+# policies that had never been applied to anything.
+echo "  Layer 1 — IAM Allow Policies (static egress control; files WRITTEN, not applied)"
+echo "    search-mcp  → coordinator + router: read-only tools only"
+echo "    booking-mcp → coordinator + router: non-destructive tools + cancel_booking"
+echo "    expense-mcp → coordinator + router: submit_expense, check_expense_policy, get_user_expenses"
 echo ""
 if $ENABLE_SGP; then
     echo "  Layer 2 — Semantic Governance (runtime business rules)"
