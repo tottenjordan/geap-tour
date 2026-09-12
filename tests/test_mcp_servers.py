@@ -180,3 +180,30 @@ class TestExpenseMockDB:
         assert result["total_count"] == 0
         assert result["total_amount"] == 0
         assert result["truncated"] is False
+
+
+class TestToolAnnotations:
+    """IAP CEL conditions read these; absent hints make every condition misfire.
+
+    `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` returns the
+    DEFAULT when the hint is absent, so `isReadOnly == true` never matches (denying
+    a read-only tool) and `isDestructive == false` always matches (constraining
+    nothing). The annotation is what makes the policy mean anything.
+
+    Asserted on `to_mcp_tool()` — the wire form a client (and therefore IAP) sees,
+    not just the in-process object — so a serialization change can't quietly drop
+    the hints while the registry still reports them.
+    """
+
+    async def test_search_tools_are_annotated_read_only(self):
+        from src.mcp_servers.search import server
+
+        for name in ("search_flights", "search_hotels"):
+            tool = await server.mcp.get_tool(name)
+            assert tool is not None, f"{name} is not registered"
+            ann = tool.to_mcp_tool().annotations
+            assert ann is not None, f"{name} has no ToolAnnotations"
+            assert ann.readOnlyHint is True
+            assert ann.destructiveHint is False
+            assert ann.idempotentHint is True
+            assert ann.openWorldHint is False

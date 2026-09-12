@@ -20,6 +20,7 @@ that the prose says any particular thing:
   directory per call.
 """
 
+import ast
 import functools
 import re
 from pathlib import Path
@@ -39,9 +40,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVERS_DIR = REPO_ROOT / "src" / "mcp_servers"
 
 # Every tool the three MCP servers expose. Spelled out rather than counted so a
-# tool that silently drops out of `_real_mcp_tool_names`' regex (someone writes
-# `async def`, or `@mcp.tool(name=...)`) fails here instead of quietly shrinking
-# the surface the grounding checks below grade against.
+# tool that drops out of `_real_mcp_tool_names` (someone writes
+# `@mcp.tool(name="other")`, whose exposed name is not the function's) fails here
+# instead of quietly shrinking the surface the grounding checks below grade against.
 _EXPECTED_MCP_TOOLS = {
     "search_flights",
     "search_hotels",
@@ -78,10 +79,25 @@ def _split_frontmatter(skill_md: str) -> tuple[str, str]:
 
 
 def _real_mcp_tool_names() -> set[str]:
-    """Tool names actually exposed by the three MCP servers, read from source."""
+    """Tool names actually exposed by the three MCP servers, read from source.
+
+    Parsed with `ast`, not a regex. The decorator no longer has an empty argument
+    list — it carries the `annotations=` hints IAP's CEL conditions read — and the
+    old `@mcp\\.tool\\(\\)` pattern matched only the bare form, so annotating a tool
+    dropped it from this surface. `_EXPECTED_MCP_TOOLS` caught that, but the fix
+    belongs here: arguments (on one line or several, nested calls included) and
+    `async def` are all decorator spellings that shouldn't change the answer.
+    """
     names: set[str] = set()
     for server in sorted(MCP_SERVERS_DIR.glob("*/server.py")):
-        names.update(re.findall(r"@mcp\.tool\(\)\s*\ndef\s+(\w+)", server.read_text()))
+        for node in ast.walk(ast.parse(server.read_text())):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                # `@mcp.tool` and `@mcp.tool(...)` alike.
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if isinstance(target, ast.Attribute) and target.attr == "tool":
+                    names.add(node.name)
     return names
 
 
