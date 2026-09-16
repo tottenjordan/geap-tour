@@ -24,6 +24,10 @@ LOG_VIEWER_MEMBER="${LOG_VIEWER_MEMBER:-}"
 # Optional: a ReasoningEngine id to tail for the post-setup log verification.
 AGENT_ENGINE_ID="${AGENT_ENGINE_ID:-}"
 
+# Counts steps that really failed, so this script can exit non-zero instead of
+# reporting a working log pipeline it did not build.
+SINK_FAILURES=0
+
 echo "=== Setting up Logging Sink → BigQuery ==="
 echo "Project: $PROJECT_ID"
 echo "Dataset: $DATASET_NAME"
@@ -52,19 +56,41 @@ gcloud logging sinks create "$SINK_NAME" \
     --project="$PROJECT_ID" \
     --log-filter='resource.type="aiplatform.googleapis.com/ReasoningEngine"' \
     --description="Sink agent traces to BigQuery for evaluation" \
-    2>/dev/null || echo "  Sink already exists, skipping."
+    2>&1 | sed 's/^/    /' || true
+# `2>/dev/null || echo "Sink already exists, skipping."` asserted ONE diagnosis for
+# EVERY failure. A permission error, a bad dataset and a genuine already-exists all
+# printed the same reassuring line. gcloud's own message is shown instead, and the
+# real state is checked below rather than guessed.
+if gcloud logging sinks describe "$SINK_NAME" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo "  Sink ${SINK_NAME} exists."
+else
+    echo "  ✗ Sink ${SINK_NAME} does NOT exist after the create above." >&2
+    SINK_FAILURES=$((SINK_FAILURES + 1))
+fi
 
 # Grant the sink writer access to BigQuery
 WRITER_IDENTITY=$(gcloud logging sinks describe "$SINK_NAME" \
     --project="$PROJECT_ID" \
     --format="value(writerIdentity)" 2>/dev/null)
 
+# `2>/dev/null || true` discarded the error AND the fact that there had been one.
+# This grant is what lets the sink write at all: without it the sink exists, the
+# script says nothing, and every trace is dropped on the floor. A silently empty
+# dataset is a much worse outcome than a loud failure here.
 if [[ -n "$WRITER_IDENTITY" ]]; then
-    bq add-iam-policy-binding \
+    if bq add-iam-policy-binding \
         --member="$WRITER_IDENTITY" \
         --role="roles/bigquery.dataEditor" \
-        "$PROJECT_ID:$DATASET_NAME" \
-        2>/dev/null || true
+        "$PROJECT_ID:$DATASET_NAME" >/dev/null; then
+        echo "  Granted roles/bigquery.dataEditor to ${WRITER_IDENTITY}"
+    else
+        echo "  ✗ FAILED to grant roles/bigquery.dataEditor to ${WRITER_IDENTITY}." >&2
+        echo "    The sink will accept logs and BigQuery will discard them." >&2
+        SINK_FAILURES=$((SINK_FAILURES + 1))
+    fi
+else
+    echo "  ✗ Could not read the sink's writerIdentity — cannot grant BigQuery access." >&2
+    SINK_FAILURES=$((SINK_FAILURES + 1))
 fi
 
 # Grant the observability Viewer roles so operators can read the runtime's
@@ -96,7 +122,9 @@ else
 fi
 
 echo ""
-echo "✓ Logging setup complete"
+# The verdict is printed ONCE, at the end, after SINK_FAILURES is final. This line
+# used to claim "✓ Logging setup complete" here, above the verification it has not
+# done yet and regardless of the grants that may have failed above it.
 echo "  Agent traces → BigQuery: ${PROJECT_ID}.${DATASET_NAME}"
 echo ""
 echo "Verify runtime stdout logs are flowing (needs a deployed engine + recent traffic):"
@@ -113,3 +141,11 @@ else
     echo "  gcloud logging read 'resource.type=\"aiplatform.googleapis.com/ReasoningEngine\" AND logName:\"reasoning_engine_stdout\"' \\"
     echo "    --project=$PROJECT_ID --limit=5 --freshness=1h"
 fi
+
+echo ""
+if [ "${SINK_FAILURES}" -eq 0 ]; then
+    echo "✓ Logging sink setup complete"
+else
+    echo "✗ Logging sink setup INCOMPLETE — ${SINK_FAILURES} step(s) failed; see above." >&2
+fi
+[ "${SINK_FAILURES}" -eq 0 ]

@@ -88,3 +88,60 @@ require_var() {
     fi
     printf '%s' "${!name}"
 }
+
+# ─────────────────────────────────────────────────────────────
+# Honest REST creates
+# ─────────────────────────────────────────────────────────────
+#
+# `curl -s` exits 0 for any COMPLETED transfer. A 400, a 401, a 403 and a 409 are all
+# "success" as far as `$?` is concerned — only a transport failure (DNS, refused
+# connection) is non-zero. So the idiom that grew in several scripts here,
+#
+#     curl -s -X POST "$url" -d "$body" && echo "✓ created" || echo "may already exist"
+#
+# takes the `&&` branch on every outcome. It is not a reporting nit: in
+# setup_governance_policies.sh it printed "created" for two resources that had existed
+# since May 2026 and two more that did not exist at all, on every run, for months.
+#
+# Measured, not reasoned — a POST to a real endpoint with a junk bearer token:
+#     $ curl -s -X POST ".../authzExtensions?..." -H "Authorization: Bearer nope" -d '{}'
+#     $ echo $?
+#     0
+#
+# `http_send` reads the status instead. It sets HTTP_STATUS and HTTP_BODY and returns
+# non-zero on anything outside 2xx/409, leaving the caller to decide how loudly to say
+# so. 409 is reported through HTTP_STATUS rather than folded into 2xx: an idempotent
+# create finding its resource already present is a success, but it is a DIFFERENT fact
+# from having created one, and conflating the two is exactly what let a 401 hide behind
+# "may already exist".
+#
+# Correct usage was already in the repo — setup_agent_gateway.sh has always parsed
+# `-w "%{http_code}"`. This just puts it where every script can reach it.
+HTTP_STATUS=""
+HTTP_BODY=""
+
+http_send() {   # method, url, body, [bearer-token]
+    local method="$1"
+    local url="$2"
+    local body="$3"
+    local token="${4:-$(gcloud auth print-access-token 2>/dev/null)}"
+
+    local out
+    # -w puts the status on its own trailing line, so the body is everything before it.
+    if ! out="$(curl -s -w $'\n%{http_code}' -X "${method}" "${url}" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d "${body}")"; then
+        HTTP_STATUS="000"
+        HTTP_BODY="curl could not reach ${url%%\?*}"
+        return 1
+    fi
+
+    HTTP_STATUS="${out##*$'\n'}"
+    HTTP_BODY="${out%$'\n'*}"
+
+    case "${HTTP_STATUS}" in
+        2*|409) return 0 ;;
+        *)      return 1 ;;
+    esac
+}
