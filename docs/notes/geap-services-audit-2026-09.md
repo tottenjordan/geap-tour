@@ -370,8 +370,102 @@ it is extracted from its heredoc (delimiter `PRECHECK_PY`, distinct from the `PY
 elsewhere so extraction cannot latch onto the wrong block) and actually run against four
 live-policy shapes. All six guards were mutation-checked.
 
+## APPLIED — live, 2026-09-16
+
+Layer 1 is real. All three MCP servers went from `etag: ACAB` with zero bindings to a
+conditional `roles/iap.egressor` binding naming both engine identities:
+
+| server | condition |
+| --- | --- |
+| search-mcp | `…mcp.tool.isReadOnly, false) == true` |
+| booking-mcp | `…isDestructive, false) == false \|\| …mcp.toolName, '') == 'cancel_booking'` |
+| expense-mcp | `…mcp.toolName, '') in ['submit_expense', 'check_expense_policy', 'get_user_expenses']` |
+
+Members on each, read back independently of the run: the coordinator
+`…/reasoningEngines/3639024497392091136` and the router `…/6134089059699523584`, both as
+`principal://agents.global.org-595744329948.system.id.goog/…` — the SPIFFE identity egress
+IAM actually evaluates, not the Reasoning Engine service agent.
+
+Still **not enforced**, by design: `verify_engine_config` reports `gateway_attached: not
+requested` on both engines and 0 critical drift. `ENABLE_AGENT_GATEWAY` stays `false`.
+
+### It took three attempts, and the first two are the point
+
+The dry run was clean before each of them. Every failure was in code that had been
+reviewed, merged, and covered by green mutation-checked tests.
+
+**Attempt 1 — the precheck had never executed.** It refused all three servers with *"the
+live policy holds binding(s) this script did not author"* for three empty policies. The
+invocation was `printf '%s' "$current" | python3 - "$file" <<'PRECHECK_PY'`, and
+`python3 -` reads its *program* from stdin — which the heredoc was already supplying. So
+`json.load(sys.stdin)` got the empty remainder and died. The guard shipped in the
+corrected-Layer-1 work had never once run its comparison.
+
+**Attempt 2 — the exit code was captured inverted.** Written as `if ! cmd; then rc=0; else
+rc=$?; fi`. `!` negates the status, so the `else` branch runs on *success* and `$?` there
+is the negation's own `1`:
+
+| real exit | captured | meaning |
+| --- | --- | --- |
+| 0 (clean) | 1 | clean policy read as a crash |
+| 3 (foreign binding) | **0** | **foreign binding read as clean → would have applied** |
+| 1 (crash) | 0 | crash read as clean → would have applied |
+
+The middle row is the guard inverted into its opposite. It only failed safe because the
+live policies were empty, so the real code was `0` and the inversion mapped it to a
+refusal. Luck, not design — and the second time in this guard's life that luck was the
+reason nothing broke.
+
+Both failed **closed**, which is the property worth keeping: neither wrote anything, and
+live state was unchanged after each.
+
+### The testing lesson, stated plainly
+
+Each fix's tests were green, and each missed the next bug for the same structural reason:
+**the harness did not reproduce what the script actually does.**
+
+* The first tests ran the extracted Python from a *file* with data on stdin. The script
+  ran it as a heredoc. The difference *was* the defect.
+* The fix made the harness reproduce the invocation — but not the bash that interprets
+  its *result*, which is where the inversion lived. Same gap, one layer out.
+
+Now: the precheck is driven through bash as the real heredoc, and the exit-code dispatch
+is extracted as text and run with `python3` stubbed to exit 0/1/2/3, asserting the branch
+each reaches. Both mutation-checked.
+
+Two extraction helpers broke the same way while writing those tests — an anchor on
+`<<'PRECHECK_PY'` matched the *comment* quoting the old broken form, and anchoring on the
+trailing newline broke when the real line grew `|| precheck_rc=$?`. They are line-based
+now and assert exactly one non-comment match.
+
+### The demo is unchanged
+
+`multi_agent_batch_eval --agents coordinator_agent --limit 8`, against the last comparable
+run (2026-09-08, same `runtime_0` candidate):
+
+| metric | 09-08 | 09-16 | Δ |
+| --- | --- | --- | --- |
+| final_response_match_v2 | 0.273 | 0.561 | **+0.288** |
+| final_response_quality_v1 | 0.792 | 0.938 | +0.146 |
+| hallucination_v1 | 0.906 | 1.000 | +0.094 |
+| safety_v1 | 1.000 | 1.000 | 0.000 |
+| instruction_following_v1 | 0.833 | 0.699 | −0.134 |
+| tool_use_quality_v1 | 1.000 | 0.833 | −0.167 |
+
+`final_response_match_v2` prints FAIL against its 0.60 threshold, and that is
+**pre-existing**: the metric is binary per case with σ≈0.5, eight cases, and it has
+historically sat below 0.60 for this agent (0.273 last run). It more than doubled here.
+
+Honest caveat: there was no *same-day* pre-apply run, so this is a comparison across
+eight days, not a controlled A/B. Enforcement is ruled out by four independent signals
+rather than by the eval alone — gateway unattached, 0 critical drift, all 10 MCP tools
+resolving, and tool calls executing normally during the eval (5/8 items).
+
 ### Still open
 
-* The apply has **not been run against the live project**. `scripts/setup_governance_policies.sh`
-  mutates IAM on a shared project and needs an explicit go-ahead.
+* **Enforcement.** Attaching a gateway is the single reversible flip, and egress is
+  deny-by-default via IAP — it can block an engine's own aiplatform and logging calls.
+  Probe engine `4380…` first, per recommendation 3 above.
+* **Layer 3 is gated but unaudited.** `--layer3` now makes it opt-in and its creates
+  report their real HTTP status, but nothing has reviewed what it builds.
 * Layer 2 (SGP) remains out of scope.
