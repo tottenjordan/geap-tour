@@ -232,6 +232,95 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
         assert SCRIPT.index("<<'PRECHECK_PY'") < SCRIPT.index("apply_iap_policy()")
 
 
+class TestLayer3IsOptInAndReportsHonestly:
+    """Layer 3 ran on EVERY invocation, and reported success whatever happened.
+
+    A bare run is advertised by the script's own usage text as "IAM Allow policies
+    only". It also created two authz extensions and two authz policies on the ingress
+    gateway, and granted two roles to the gateway service account at PROJECT level on
+    a shared project. Two of those four resources did not exist while the script
+    claimed for months to be creating them — because `curl -s` exits 0 for any
+    completed transfer, so `curl … && ok "created" || warn "may already exist"` took
+    the `ok` branch on a 401 as readily as on a 200.
+    """
+
+    def test_layer3_is_gated(self) -> None:
+        assert "ENABLE_LAYER3=false" in SCRIPT, "the default must be off"
+        assert "--layer3) ENABLE_LAYER3=true" in SCRIPT
+        gate = SCRIPT.index("if ! $ENABLE_LAYER3; then")
+        first_post = SCRIPT.index('l3_post "IAP authz extension"')
+        assert gate < first_post, "the flag is tested after the POST it must gate"
+
+    def test_no_create_reports_success_off_a_bare_curl_exit_code(self) -> None:
+        """The exact regressed shape, in the layers that POST to REST endpoints.
+
+        `gcloud` is excluded deliberately: it *does* exit non-zero on failure, so
+        `&& ok || fail` is sound for the VPC/subnet/DNS creates in Layer 2.
+        """
+        offenders = [
+            line.strip()
+            for line in SCRIPT.splitlines()
+            if "&& ok " in line and "curl" in line and not line.strip().startswith("#")
+        ]
+        assert not offenders, offenders
+
+    def test_every_rest_create_goes_through_the_honest_helper(self) -> None:
+        """A raw `run_cmd curl -s -X POST` is how the false success gets back in.
+
+        Comment lines are skipped: `post_resource`'s docstring quotes the old shape
+        verbatim, and that quotation is the record of why the helper exists.
+        """
+        raw = [
+            line.strip()
+            for line in SCRIPT.splitlines()
+            if "run_cmd curl -s -X POST" in line and not line.strip().startswith("#")
+        ]
+        assert not raw, raw
+        for label in ("IAP authz extension", "Model Armor authz extension"):
+            assert f'l3_post "{label}"' in SCRIPT
+        for label in ("SGP authz extension", "SGP authz policy"):
+            assert f'post_resource "{label}"' in SCRIPT
+
+    def test_409_is_distinct_from_created_and_from_failure(self) -> None:
+        """An idempotent create finding its resource present is a success, but it is
+        a different fact from having created one. Collapsing the two back into "may
+        already exist" is exactly how a 401 got to look like a success."""
+        helper = SCRIPT[SCRIPT.index("post_resource() {") : SCRIPT.index("l3_post() {")]
+        assert 'POST_RESULT="created"' in helper
+        assert 'POST_RESULT="exists"' in helper
+        assert 'POST_RESULT="failed"' in helper
+        assert "409)" in helper
+
+    def test_the_summary_cannot_claim_resources_it_did_not_touch(self) -> None:
+        """It used to print all four names as a flat list — on a skipped run, on a dry
+        run, and on a run where every create returned 401."""
+        summary = SCRIPT[SCRIPT.index("GEAP Governance Policy Summary") :]
+        assert "Layer 3 — Authorization Delegation (SKIPPED" in summary
+        assert "[dry-run] nothing created" in summary
+        assert "${L3_CREATED} created" in summary
+
+    def test_the_step0_summary_tracks_the_gateway_flag(self) -> None:
+        """Both branches predated the ENABLE_AGENT_GATEWAY gate and outlived it by a
+        commit: a dry run announced "Would attach 2 agents" while the flag was off,
+        and a skipped run blamed "private preview enrollment" for a skip the flag
+        had caused — sending the reader to check an enrollment that is not the
+        reason."""
+        summary = SCRIPT[SCRIPT.index("GEAP Governance Policy Summary") :]
+        step0 = summary[summary.index("Step 0 — Gateway Attachment") :]
+        step0 = step0[: step0.index("Layer 1 —")]
+        assert "if ! $GW_REQUESTED; then" in step0
+        assert "private preview enrollment" not in step0
+
+    def test_a_dry_run_never_claims_a_grant(self) -> None:
+        """`ok "… granted"` is a claim. The first draft of grant_gateway_sa_role let a
+        dry run reach it, and the `>/dev/null` that hides the policy dump also
+        swallowed run_cmd's own "[dry-run] …" line — so a dry run printed a green
+        success and nothing else."""
+        fn = SCRIPT[SCRIPT.index("grant_gateway_sa_role() {") :]
+        fn = fn[: fn.index("\n}\n")]
+        assert fn.index("if $DRY_RUN; then") < fn.index('ok "${role} granted')
+
+
 class TestTheScriptStillParses:
     """Cheap, and the only check here that covers the 800 lines these tests do not."""
 
