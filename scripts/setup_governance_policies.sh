@@ -704,7 +704,22 @@ stamp_policy_etag() {
     local precheck_rc
     printf '%s' "${current}" > "${live_file}"
 
-    if ! python3 - "${file}" "${live_file}" <<'PRECHECK_PY'
+    # `rc=0; cmd || rc=$?` and NOT `if ! cmd; then rc=0; else rc=$?; fi`.
+    #
+    # That second form was here and it INVERTED the guard. `!` negates the status, so
+    # the `else` branch runs when the command SUCCEEDED and `$?` there is the negation's
+    # own 1 — never the command's code. Measured:
+    #
+    #     real exit 0  ->  precheck_rc=1     clean policy reported as a crash
+    #     real exit 3  ->  precheck_rc=0     FOREIGN BINDING REPORTED AS CLEAN
+    #     real exit 1  ->  precheck_rc=0     crash reported as clean
+    #
+    # The middle row is the whole guard turned into its opposite: the one case it
+    # exists to catch would have been applied, deleting someone else's binding. It
+    # only ever failed safe because all three live policies are empty, so the real
+    # code was 0 and the inversion mapped it to a refusal.
+    precheck_rc=0
+    python3 - "${file}" "${live_file}" <<'PRECHECK_PY' || precheck_rc=$?
 import json, sys
 
 with open(sys.argv[2]) as handle:
@@ -734,11 +749,6 @@ for role, member in foreign:
 # specific and completely wrong diagnosis three times in a row.
 sys.exit(3 if foreign else 0)
 PRECHECK_PY
-    then
-        precheck_rc=0
-    else
-        precheck_rc=$?
-    fi
     rm -f "${live_file}"
 
     if [ "${precheck_rc}" -eq 3 ]; then

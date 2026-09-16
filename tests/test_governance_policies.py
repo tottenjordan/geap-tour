@@ -123,33 +123,59 @@ class TestAttachingTheGatewayRequiresTheFlag:
 # ---------------------------------------------------------------------------
 
 
-def _extract_precheck() -> str:
-    """Pull the precheck out of the script by its heredoc delimiter.
+def _precheck_heredoc_line() -> int:
+    """Index of the line that really opens the precheck heredoc.
 
-    The delimiter is `PRECHECK_PY` and not the `PY` used elsewhere in the file
-    precisely so this extraction is unambiguous. A failure here means the block
-    moved or was renamed — which is exactly when these tests should stop passing
-    rather than quietly testing nothing.
+    Located line-by-line rather than by a substring anchor, because both obvious
+    anchors have already broken once each:
+
+    * `index("<<'PRECHECK_PY'")` also matches the COMMENT above the invocation, which
+      quotes the old broken form verbatim — extraction then silently returned the
+      one-argument version being described as wrong;
+    * `index("<<'PRECHECK_PY'\\n")` dodged the comment by requiring a line break, then
+      broke the moment the real line grew a trailing `|| precheck_rc=$?`.
+
+    Skipping comments and ignoring whatever follows the operator is stable against
+    both. The delimiter is `PRECHECK_PY`, distinct from the `PY` used elsewhere in
+    the file, so exactly one non-comment line can match.
     """
-    start = SCRIPT.index("<<'PRECHECK_PY'\n") + len("<<'PRECHECK_PY'\n")
-    end = SCRIPT.index("\nPRECHECK_PY\n", start)
-    return SCRIPT[start:end]
+    matches = [
+        i
+        for i, line in enumerate(SCRIPT.splitlines())
+        if "<<'PRECHECK_PY'" in line and not line.strip().startswith("#")
+    ]
+    assert len(matches) == 1, f"expected one precheck heredoc, found {len(matches)}"
+    return matches[0]
+
+
+def _extract_precheck() -> str:
+    """The Python program the heredoc supplies."""
+    lines = SCRIPT.splitlines()
+    start = _precheck_heredoc_line() + 1
+    end = lines.index("PRECHECK_PY", start)
+    return "\n".join(lines[start:end])
 
 
 def _extract_invocation() -> str:
-    """The `python3 - …` line the script really uses to run the precheck.
+    """The `python3 - …` command the script really runs, minus the heredoc operator.
 
     This is the part the first version of these tests threw away, and it was where
     the bug lived. See `TestTheApplyRefusesToDeleteSomeoneElsesBinding._run`.
-
-    Anchored on `<<'PRECHECK_PY'\n` — with the newline — exactly as `_extract_precheck`
-    is. The comment above the real invocation quotes the old broken one verbatim,
-    including the delimiter, and a bare `index("<<'PRECHECK_PY'")` finds that comment
-    first: the extracted "invocation" is then the one-argument version being described
-    as wrong, and every case fails with IndexError on `sys.argv[2]`.
     """
-    head = SCRIPT[: SCRIPT.index("<<'PRECHECK_PY'\n")]
-    return head[head.rindex("python3 -") :].strip()
+    line = SCRIPT.splitlines()[_precheck_heredoc_line()]
+    return line[: line.index("<<'PRECHECK_PY'")].strip()
+
+
+def _extract_dispatch() -> str:
+    """The bash that captures the precheck's exit code and decides what to do with it.
+
+    Extracted as TEXT and executed, because the bug this guards against lived here
+    and not in the Python: the tests drove the comparison directly, so the wrapper
+    around it was never executed by anything but a live run.
+    """
+    start = SCRIPT.index("    precheck_rc=0\n")
+    marker = SCRIPT.index("the precheck itself FAILED", start)
+    return SCRIPT[start : SCRIPT.index("\n    fi\n", marker) + len("\n    fi\n")]
 
 
 OURS = {
@@ -266,6 +292,61 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
         assert res.returncode == 3, f"expected the foreign-binding code, got {res.returncode}"
         assert "principal://someone-elses-engine" in res.stderr
 
+    DISPATCH: ClassVar[str] = _extract_dispatch()
+
+    def _dispatch(self, stub_rc: int, tmp_path: pathlib.Path) -> str:
+        """Run the real capture-and-dispatch bash with `python3` stubbed to exit N.
+
+        Returns APPLIED / REFUSED-FOREIGN / REFUSED-CRASH.
+        """
+        harness = f"""
+python3() {{ cat >/dev/null; return {stub_rc}; }}
+fail() {{ echo "FAIL: $*"; }}
+file="{tmp_path}/p.json"
+live_file="{tmp_path}/p.json.live"
+: > "$live_file"
+check() {{
+{self.DISPATCH}
+  return 0
+}}
+if check; then echo RESULT=APPLIED; fi
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        if "RESULT=APPLIED" in res.stdout:
+            return "APPLIED"
+        if "did not author" in res.stdout:
+            return "REFUSED-FOREIGN"
+        return "REFUSED-CRASH"
+
+    @pytest.mark.parametrize(
+        ("exit_code", "expected"),
+        [(0, "APPLIED"), (3, "REFUSED-FOREIGN"), (1, "REFUSED-CRASH"), (2, "REFUSED-CRASH")],
+    )
+    def test_the_exit_code_reaches_the_right_branch(
+        self, exit_code: int, expected: str, tmp_path: pathlib.Path
+    ) -> None:
+        """The wrapper was written `if ! cmd; then rc=0; else rc=$?; fi`, which
+        INVERTS the guard.
+
+        `!` negates the status, so the `else` branch runs when the command SUCCEEDED
+        and `$?` there is the negation's own 1 — never the command's code. Measured
+        against the shipped text:
+
+            real exit 0  ->  rc=1   clean policy reported as a crash
+            real exit 3  ->  rc=0   FOREIGN BINDING REPORTED AS CLEAN
+            real exit 1  ->  rc=0   crash reported as clean
+
+        The middle row is the guard turned into its opposite: the one case it exists
+        to catch would have been applied, deleting someone else's binding. It only
+        ever failed safe because all three live policies are empty, so the real code
+        was 0 and the inversion happened to map that to a refusal.
+
+        The earlier tests drove the Python comparison directly and could not see any
+        of this — the bash around it was executed only by a live run against the
+        shared project.
+        """
+        assert self._dispatch(exit_code, tmp_path) == expected
+
     def test_no_heredoc_program_also_reads_stdin(self) -> None:
         """`python3 -` takes its PROGRAM from stdin, so a heredoc-fed program has no
         stdin left to read data from.
@@ -276,9 +357,15 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
         there, so stdin stays free, which is why the etag extraction a few lines below
         the precheck can and does pipe into it.
         """
-        for delimiter in re.findall(r"python3 - .*?<<'(\w+)'", SCRIPT):
-            start = SCRIPT.index(f"<<'{delimiter}'\n") + len(f"<<'{delimiter}'\n")
-            body = SCRIPT[start : SCRIPT.index(f"\n{delimiter}\n", start)]
+        lines = SCRIPT.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith("#"):
+                continue
+            found = re.search(r"python3 - .*?<<'(\w+)'", line)
+            if not found:
+                continue
+            delimiter = found.group(1)
+            body = "\n".join(lines[i + 1 : lines.index(delimiter, i + 1)])
             assert "sys.stdin" not in body, (
                 f"the {delimiter} heredoc reads sys.stdin, but its own program came "
                 f"from there — it will see an empty stream"
