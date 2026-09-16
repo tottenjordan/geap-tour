@@ -264,9 +264,32 @@ attach_gateway() {
     return 1
 }
 
+# GATED ON ENABLE_AGENT_GATEWAY, added 2026-09-16 after a pre-execution review.
+#
+# This step used to be gated on `! $DRY_RUN` alone, so ANY real run PATCHed
+# agentGatewayConfig onto the production coordinator and router. That was inert
+# while Layer 1 only wrote files to /tmp. It stopped being inert the moment Layer 1
+# started applying: attach here, apply deny-by-default egress policies ninety
+# seconds later, and the run has silently turned on enforcement for both served
+# engines — unattended, with no confirmation.
+#
+# Four places in this repo already tell the reader enforcement is "one reversible
+# flag: ENABLE_AGENT_GATEWAY=1". This makes that true of the script as well. The
+# audit-only posture Layer 1 depends on is a real property only while nothing is
+# attached, so the flag has to gate the attach, not just the deploy path.
+ENABLE_AGENT_GATEWAY="${ENABLE_AGENT_GATEWAY:-0}"
+case "$ENABLE_AGENT_GATEWAY" in 1|true|True|TRUE) GW_REQUESTED=true ;; *) GW_REQUESTED=false ;; esac
+
 step "Step 0: Agent-to-Gateway Attachment"
 GW_ATTACHED=0
-if ! $DRY_RUN; then
+if ! $GW_REQUESTED; then
+    info "SKIPPED — ENABLE_AGENT_GATEWAY is '${ENABLE_AGENT_GATEWAY}' (not 1/true)."
+    info "  Nothing is attached, so the Layer 1 policies below are written and applied"
+    info "  but NOT enforced: IAP evaluates at the Agent Gateway boundary only."
+    info "  Set ENABLE_AGENT_GATEWAY=1 to attach and make them live."
+elif ! $DRY_RUN; then
+    warn "ENABLE_AGENT_GATEWAY=1 — attaching the gateway to the SERVED engines."
+    warn "  Layer 1's deny-by-default egress policies become ENFORCED for them."
     info "Attaching ingress gateway to coordinator agent (${COORDINATOR_ENGINE_ID})..."
     if attach_gateway "Coordinator" "$COORDINATOR_ENGINE_ID"; then
         GW_ATTACHED=$((GW_ATTACHED + 1))
@@ -276,8 +299,11 @@ if ! $DRY_RUN; then
         GW_ATTACHED=$((GW_ATTACHED + 1))
     fi
     if [ "$GW_ATTACHED" -eq 0 ]; then
-        warn "No agents attached to gateway. SGP policies will fail with AGENT_NOT_CONFIGURED."
-        warn "Expected while ENABLE_AGENT_GATEWAY=false — the gateways exist, nothing is attached yet."
+        # Reaching here means the flag asked for an attach and BOTH attempts failed —
+        # which is a real failure, not the old "expected while the flag is off" case.
+        # That case now returns in the branch above and never gets this far.
+        warn "ENABLE_AGENT_GATEWAY=1 but NEITHER engine attached — both attempts failed above."
+        warn "SGP policies will fail with AGENT_NOT_CONFIGURED, and Layer 1 stays unenforced."
     fi
 else
     info "[dry-run] Would attach ingress gateway to coordinator (${COORDINATOR_ENGINE_ID}) and router (${ROUTER_ENGINE_ID})"
@@ -533,6 +559,51 @@ stamp_policy_etag() {
             --format=json)"; then
         fail "${label}: get-iam-policy FAILED (gcloud's error is above this line)."
         fail "  NOT applying — a policy that cannot be read cannot be safely replaced."
+        return 1
+    fi
+
+    # PRECHECK: refuse to replace a binding we did not author.
+    #
+    # The etag above guards the window between THIS read and THIS write. It does not
+    # guard the thing that actually worries us on a shared project: a binding that was
+    # already there, committed by someone else, days ago. set-iam-policy replaces the
+    # whole resource policy, so such a binding is dropped — with a valid etag, no
+    # conflict, and an "applied" line. The etag makes that silent, not impossible.
+    #
+    # "Ours" is derived from the file we are about to apply, not hardcoded: every
+    # (role, member) pair it binds. Conditions are deliberately NOT part of the key —
+    # re-running after a CEL edit must update our own binding, not abort on it. A
+    # different role, or a member that is not one of the two engine identities we
+    # resolved, is someone else's grant and is not ours to delete.
+    if ! printf '%s' "${current}" | python3 - "${file}" <<'PY'
+import json, sys
+
+live = json.load(sys.stdin)
+with open(sys.argv[1]) as handle:
+    ours = json.load(handle)
+
+mine = {
+    (binding.get("role", ""), member)
+    for binding in ours.get("bindings", [])
+    for member in binding.get("members", [])
+}
+foreign = sorted(
+    {
+        (binding.get("role", ""), member)
+        for binding in live.get("bindings", [])
+        for member in binding.get("members", [])
+    }
+    - mine
+)
+for role, member in foreign:
+    print(f"{role} -> {member}", file=sys.stderr)
+sys.exit(1 if foreign else 0)
+PY
+    then
+        fail "${label}: the live policy holds binding(s) this script did not author"
+        fail "  (listed above). set-iam-policy REPLACES the whole policy, so applying"
+        fail "  would DELETE them. Refusing — Layer 1 is not applied for this server."
+        fail "  Resolve by hand: merge them into the policy file, or remove them upstream."
         return 1
     fi
 
