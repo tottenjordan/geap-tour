@@ -250,14 +250,106 @@ step "10/11" "Setting up governance policies (IAM Allow + SGP + Model Armor)"
 bash scripts/setup_governance_policies.sh 2>&1 | grep -E "(Layer|IAM|SGP|policy|Done)" || warn "Governance policy setup had warnings"
 ok "Governance policies configured"
 
-# ─── Step 11: Verify CI/CD ─────────────────────────────────────────
-step "11/11" "Verifying CI/CD configuration"
-if [[ -f .github/workflows/eval_ci.yaml ]]; then
-    ok "GitHub Actions workflow found: .github/workflows/eval_ci.yaml"
-    echo "  Triggers on: pull_request to main (src/agents/** or src/mcp_servers/**)"
+# ─── Step 10b: Recycle engines so the registry grant takes effect ──
+# NOT optional, and not reorderable. Step 8 deployed the engines; step 10 granted
+# roles/agentregistry.viewer to each engine's principal://<effectiveIdentity>. But
+# MCP toolsets resolve ONCE PER CONTAINER, at step 8 — before that grant existed —
+# so every engine is still holding the direct-Cloud-Run-URL fallback it resolved
+# then, signalled only by a WARNING in its own log.
+#
+# The grant genuinely cannot move earlier: grant_registry_read reads
+# effectiveIdentity off the DEPLOYED engine spec. So the sequence has to be
+# deploy -> grant -> recycle, and this is the recycle.
+#
+# Without it a clean end-to-end run reproduces the incident in
+# docs/notes/agent-registry-mcp-resolution.md, which was remediated by hand twice.
+#
+# A RECYCLE MUST NOT BE A RECONFIGURE. `deploy_agents --update` rebuilds
+# deploymentSpec from the LOCAL environment, and .env ships the Gemini-3 tier
+# defaults (LITE_MODEL=gemini-3.1-flash-lite, ...) while the served router runs
+# Gemini-2.5 (lite=gemini-2.5-flash-lite, ...). An unguarded recycle therefore
+# silently regresses the router's tiers — the documented `--update` trap, which
+# engine_baseline flags as CRITICAL `tier_models_pinned` drift.
+#
+# So: read each engine's own baked model env off the live spec, export it for the
+# update, and verify afterwards. The verify is the real guard — the pass-through
+# can only preserve keys we thought to list, while verify_engine_config encodes
+# every setting we have decided must not drift.
+step "10b/11" "Recycling engines to pick up the registry grant"
+
+_preserved_env() {  # engine_id -> KEY=VALUE lines for the config that must survive
+    uv run --no-sync python - "$1" <<'PY'
+import sys
+from src.deploy.verify_engine_config import _default_fetch, normalize
+
+KEEP = (
+    "COORDINATOR_MODEL", "ROUTER_MODEL", "CLASSIFIER_MODEL", "AGENT_MODEL",
+    "TRAVEL_MODEL", "EXPENSE_MODEL",
+    "LITE_MODEL", "FLASH_MODEL", "PRO_MODEL", "SONNET_MODEL", "OPUS_MODEL",
+    "COMPLEXITY_LOW", "COMPLEXITY_HIGH", "MEDIUM_SPLIT", "HIGH_SPLIT",
+    "PROMPT_VARIANT", "ENABLE_MEMORY_BANK", "ENABLE_MEMORY_PRELOAD_CACHE",
+    "ENABLE_MODEL_ARMOR_PLUGIN", "ENABLE_SKILL_REGISTRY", "ENABLE_AGENT_GATEWAY",
+)
+try:
+    env = normalize(_default_fetch(sys.argv[1])).get("env") or {}
+except Exception as exc:  # a failed read must not silently mean "preserve nothing"
+    print(f"__PRESERVE_FAILED__={exc}", file=sys.stderr)
+    sys.exit(1)
+for k in KEEP:
+    if env.get(k):
+        print(f"{k}={env[k]}")
+PY
+}
+
+for _pair in "coordinator:${AGENT_ENGINE_ID:-}" "router:${ROUTER_ENGINE_ID:-}"; do
+    _role="${_pair%%:*}"; _eid="${_pair##*:}"
+    if [ -z "$_eid" ]; then
+        warn "${_role}: no engine id in .env — skipping recycle"
+        continue
+    fi
+    if ! _env_lines=$(_preserved_env "$_eid"); then
+        warn "${_role}: could not read live config — NOT recycling (an unguarded"
+        warn "  --update would rebuild deploymentSpec from .env and can regress tiers)"
+        continue
+    fi
+    if env $_env_lines uv run python -m src.deploy.deploy_agents "$_role" --update 2>&1 | tail -3; then
+        ok "${_role}: recycled (toolsets re-resolve against Agent Registry)"
+    else
+        warn "${_role}: recycle failed — it will stay on the direct-URL fallback path"
+    fi
+done
+unset _pair _role _eid _env_lines
+
+# Two independent reads: did the recycle reconnect the registry path, and did it
+# change anything it should not have?
+if uv run python -m src.eval.verify_mcp_tools 2>&1 | tail -4 | grep -q "PASS (overall)"; then
+    ok "MCP toolsets resolve through Agent Registry"
 else
-    warn "No CI/CD workflow found"
+    warn "verify_mcp_tools did not report PASS — check for 'falling back to direct URL' in the engine log"
 fi
+if uv run python -m src.deploy.verify_engine_config >/tmp/geap-postrecycle.txt 2>&1; then
+    ok "No critical config drift after the recycle"
+else
+    fail "CRITICAL config drift after the recycle — the update changed serving config."
+    grep -E '^\s+XX ' /tmp/geap-postrecycle.txt || cat /tmp/geap-postrecycle.txt
+fi
+
+# ─── Step 11: Verify CI/CD ─────────────────────────────────────────
+# Checked `eval_ci.yaml` until 2026-09-11 — a file that has never existed under that
+# name, so this step always reported "No CI/CD workflow found" while four workflows
+# sat next to it. Enumerate what is actually there instead of naming one guess.
+step "11/11" "Verifying CI/CD configuration"
+_wf_found=0
+for _wf in tests.yaml eval_gate.yaml eval_vertex.yaml monitoring_publish.yaml; do
+    if [[ -f ".github/workflows/${_wf}" ]]; then
+        ok "GitHub Actions workflow found: .github/workflows/${_wf}"
+        _wf_found=$((_wf_found + 1))
+    else
+        warn "Missing expected workflow: .github/workflows/${_wf}"
+    fi
+done
+[ "$_wf_found" -eq 0 ] && warn "No CI/CD workflows found at all"
+unset _wf _wf_found
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"

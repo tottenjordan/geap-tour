@@ -14,7 +14,15 @@ Usage:
 
 Controlled by .env:
   - ENABLE_AGENT_IDENTITY=1 → sets SPIFFE identity
-  - ENABLE_AGENT_GATEWAY=1 → attaches gateway (requires early-access)
+  - ENABLE_AGENT_GATEWAY=1 → attaches the EGRESS gateway via agent_gateway_config.
+    Not early-access-gated: both gateways exist in us-central1 and the API answers
+    (agentGateways lives on networkservices.googleapis.com, NOT aiplatform — probing
+    the aiplatform host returns an HTML 404 that reads like "not enrolled", which is
+    how this was mis-recorded). Off by default because egress is DENY-BY-DEFAULT
+    through IAP: every destination needs iap.resources.egressViaIAP granted to the
+    engine's SPIFFE identity first, and in enforcement mode the deny is aggressive
+    enough to block the engine's own aiplatform/logging calls. See
+    docs/notes/geap-services-audit-2026-09.md.
 """
 
 import os
