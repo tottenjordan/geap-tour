@@ -575,7 +575,7 @@ stamp_policy_etag() {
     # re-running after a CEL edit must update our own binding, not abort on it. A
     # different role, or a member that is not one of the two engine identities we
     # resolved, is someone else's grant and is not ours to delete.
-    if ! printf '%s' "${current}" | python3 - "${file}" <<'PY'
+    if ! printf '%s' "${current}" | python3 - "${file}" <<'PRECHECK_PY'
 import json, sys
 
 live = json.load(sys.stdin)
@@ -598,7 +598,7 @@ foreign = sorted(
 for role, member in foreign:
     print(f"{role} -> {member}", file=sys.stderr)
 sys.exit(1 if foreign else 0)
-PY
+PRECHECK_PY
     then
         fail "${label}: the live policy holds binding(s) this script did not author"
         fail "  (listed above). set-iam-policy REPLACES the whole policy, so applying"
