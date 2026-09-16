@@ -441,7 +441,20 @@ grant_registry_read() {
         return 0
     }
 
-    if run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    # Guarded explicitly rather than leaning on run_cmd, for the same two reasons
+    # grant_gateway_sa_role is (Layer 3, added one commit ago — this is its twin and
+    # it was missed): `ok "granted"` is a CLAIM, so a dry run must not reach it, and
+    # the `>/dev/null` that hides add-iam-policy-binding's policy dump ALSO swallows
+    # run_cmd's own "[dry-run] …" line. The combination is the worst of both: a dry
+    # run printed a green "agentregistry.viewer granted to agent identity" for a
+    # grant it had not performed, and did not even echo the command it skipped.
+    # Found by the Phase 3 dry run in docs/plans/2026-09-16-live-layer-1-run.md.
+    if $DRY_RUN; then
+        echo "    [dry-run] gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=principal://${eff} --role=roles/agentregistry.viewer"
+        return 0
+    fi
+
+    if gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
         --member="principal://${eff}" \
         --role="roles/agentregistry.viewer" \
         --condition=None >/dev/null; then
