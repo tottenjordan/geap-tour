@@ -33,7 +33,6 @@ import json
 import pathlib
 import re
 import subprocess
-import sys
 from typing import ClassVar
 
 import pytest
@@ -137,6 +136,22 @@ def _extract_precheck() -> str:
     return SCRIPT[start:end]
 
 
+def _extract_invocation() -> str:
+    """The `python3 - …` line the script really uses to run the precheck.
+
+    This is the part the first version of these tests threw away, and it was where
+    the bug lived. See `TestTheApplyRefusesToDeleteSomeoneElsesBinding._run`.
+
+    Anchored on `<<'PRECHECK_PY'\n` — with the newline — exactly as `_extract_precheck`
+    is. The comment above the real invocation quotes the old broken one verbatim,
+    including the delimiter, and a bare `index("<<'PRECHECK_PY'")` finds that comment
+    first: the extracted "invocation" is then the one-argument version being described
+    as wrong, and every case fails with IndexError on `sys.argv[2]`.
+    """
+    head = SCRIPT[: SCRIPT.index("<<'PRECHECK_PY'\n")]
+    return head[head.rindex("python3 -") :].strip()
+
+
 OURS = {
     "version": 3,
     "bindings": [
@@ -159,15 +174,39 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
     """
 
     PRECHECK: ClassVar[str] = _extract_precheck()
+    INVOCATION: ClassVar[str] = _extract_invocation()
 
     def _run(self, live: dict, tmp_path: pathlib.Path) -> subprocess.CompletedProcess[str]:
+        """Drive the precheck THE WAY THE SCRIPT DOES: through bash, as a heredoc.
+
+        The first version of this helper wrote the extracted block to a file and ran
+        `python3 block.py policy.json` with the live policy piped to stdin. Every
+        case passed. The script meanwhile ran
+
+            printf '%s' "$current" | python3 - "$file" <<'PRECHECK_PY'
+
+        where `python3 -` reads the PROGRAM from stdin and the heredoc supplies it —
+        so stdin was double-booked, `json.load(sys.stdin)` got the empty remainder,
+        and the precheck died before comparing anything. It failed closed, so nothing
+        was destroyed, but it refused all three servers with a specific and entirely
+        wrong diagnosis, and the suite was green throughout.
+
+        A harness that reconstructs the invocation cannot see a bug IN the invocation.
+        So this reads the real `python3 -` line out of the script and runs the real
+        heredoc, and the only thing it supplies is the two policy files.
+        """
         policy = tmp_path / "policy.json"
         policy.write_text(json.dumps(OURS))
-        block = tmp_path / "precheck.py"
-        block.write_text(self.PRECHECK)
+        live_file = tmp_path / "policy.json.live"
+        live_file.write_text(json.dumps(live))
+
+        invocation = self.INVOCATION.replace('"${file}"', str(policy)).replace(
+            '"${live_file}"', str(live_file)
+        )
+        assert "${" not in invocation, f"unsubstituted variable in: {invocation}"
+
         return subprocess.run(
-            [sys.executable, str(block), str(policy)],
-            input=json.dumps(live),
+            ["bash", "-c", f"{invocation} <<'PRECHECK_PY'\n{self.PRECHECK}\nPRECHECK_PY\n"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -204,7 +243,7 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
             ],
         }
         res = self._run(live, tmp_path)
-        assert res.returncode == 1
+        assert res.returncode == 3, f"expected the foreign-binding code, got {res.returncode}"
         assert "roles/iap.admin -> user:someone@example.com" in res.stderr
 
     def test_an_extra_member_on_our_own_role_aborts(self, tmp_path: pathlib.Path) -> None:
@@ -224,8 +263,39 @@ class TestTheApplyRefusesToDeleteSomeoneElsesBinding:
             ],
         }
         res = self._run(live, tmp_path)
-        assert res.returncode == 1
+        assert res.returncode == 3, f"expected the foreign-binding code, got {res.returncode}"
         assert "principal://someone-elses-engine" in res.stderr
+
+    def test_no_heredoc_program_also_reads_stdin(self) -> None:
+        """`python3 -` takes its PROGRAM from stdin, so a heredoc-fed program has no
+        stdin left to read data from.
+
+        This is the bug in the class's own docstring, stated structurally so it cannot
+        come back in another block: any program supplied by `<<'…'` must take its
+        input from argv. `python3 -c` is unaffected — the program is an argument
+        there, so stdin stays free, which is why the etag extraction a few lines below
+        the precheck can and does pipe into it.
+        """
+        for delimiter in re.findall(r"python3 - .*?<<'(\w+)'", SCRIPT):
+            start = SCRIPT.index(f"<<'{delimiter}'\n") + len(f"<<'{delimiter}'\n")
+            body = SCRIPT[start : SCRIPT.index(f"\n{delimiter}\n", start)]
+            assert "sys.stdin" not in body, (
+                f"the {delimiter} heredoc reads sys.stdin, but its own program came "
+                f"from there — it will see an empty stream"
+            )
+
+    def test_a_crash_is_not_reported_as_a_foreign_binding(self) -> None:
+        """The stdin bug printed 'the live policy holds binding(s) this script did
+        not author' three times, for three empty policies, because any non-zero exit
+        took that branch — and an uncaught Python exception also exits 1.
+
+        The comparison now exits 3 when it finds something, so the caller can tell
+        'I compared and found a foreign binding' from 'I never got as far as
+        comparing'. Both still refuse to apply.
+        """
+        assert "sys.exit(3 if foreign else 0)" in SCRIPT
+        assert 'if [ "${precheck_rc}" -eq 3 ]; then' in SCRIPT
+        assert "the precheck itself FAILED" in SCRIPT
 
     def test_the_precheck_runs_before_the_write(self) -> None:
         """It reuses the GET that `stamp_policy_etag` already performs, so it costs

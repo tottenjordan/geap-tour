@@ -681,10 +681,34 @@ stamp_policy_etag() {
     # re-running after a CEL edit must update our own binding, not abort on it. A
     # different role, or a member that is not one of the two engine identities we
     # resolved, is someone else's grant and is not ours to delete.
-    if ! printf '%s' "${current}" | python3 - "${file}" <<'PRECHECK_PY'
+    # BOTH policies are passed as FILE PATHS, and neither comes in on stdin.
+    #
+    # `python3 -` reads the PROGRAM from stdin, and the heredoc below is what supplies
+    # it. The first version of this block ALSO piped the live policy in —
+    # `printf '%s' "${current}" | python3 - "${file}" <<'PRECHECK_PY'` — so stdin was
+    # double-booked: the heredoc won, the program ran, and `json.load(sys.stdin)` read
+    # the empty remainder and died with "Expecting value: line 1 column 1 (char 0)".
+    #
+    # It failed CLOSED, which is the one mercy here: the non-zero exit took the `fail`
+    # branch, so a run refused all three servers rather than applying anything. But it
+    # refused with the wrong reason printed — "the live policy holds binding(s) this
+    # script did not author" — for policies that were empty. The precheck had never
+    # once executed its comparison.
+    #
+    # The unit tests did not catch it because they wrote the extracted block to a file
+    # and ran `python3 block.py policy.json` with the live policy on stdin. That is a
+    # DIFFERENT invocation from the one the script performs, and the difference was
+    # exactly the defect. tests/test_governance_policies.py now drives the real
+    # heredoc form through bash.
+    local live_file="${file}.live"
+    local precheck_rc
+    printf '%s' "${current}" > "${live_file}"
+
+    if ! python3 - "${file}" "${live_file}" <<'PRECHECK_PY'
 import json, sys
 
-live = json.load(sys.stdin)
+with open(sys.argv[2]) as handle:
+    live = json.load(handle)
 with open(sys.argv[1]) as handle:
     ours = json.load(handle)
 
@@ -703,13 +727,30 @@ foreign = sorted(
 )
 for role, member in foreign:
     print(f"{role} -> {member}", file=sys.stderr)
-sys.exit(1 if foreign else 0)
+
+# 3, not 1. An uncaught exception also exits 1, and the caller has to be able to tell
+# "I compared the policies and found a foreign binding" from "I never got as far as
+# comparing". Conflating those is what made the stdin bug above print a confident,
+# specific and completely wrong diagnosis three times in a row.
+sys.exit(3 if foreign else 0)
 PRECHECK_PY
     then
+        precheck_rc=0
+    else
+        precheck_rc=$?
+    fi
+    rm -f "${live_file}"
+
+    if [ "${precheck_rc}" -eq 3 ]; then
         fail "${label}: the live policy holds binding(s) this script did not author"
         fail "  (listed above). set-iam-policy REPLACES the whole policy, so applying"
         fail "  would DELETE them. Refusing — Layer 1 is not applied for this server."
         fail "  Resolve by hand: merge them into the policy file, or remove them upstream."
+        return 1
+    elif [ "${precheck_rc}" -ne 0 ]; then
+        fail "${label}: the precheck itself FAILED (exit ${precheck_rc}, traceback above)."
+        fail "  This is NOT a finding about the live policy — the comparison never ran."
+        fail "  Refusing anyway: an unverified replace is the thing this guard exists to stop."
         return 1
     fi
 
