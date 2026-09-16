@@ -386,3 +386,62 @@ class TestUnreachableEnginesAreNotReportedAsHealthy:
         spec = _good_spec()
         out = v.render([v.check_engine("111", "coordinator", fetch=lambda _e: spec)])
         assert "UNREACHABLE" not in out
+
+
+class TestGatewayAttachedCheck:
+    """`gateway_attached` guards the direction that fails silently.
+
+    Agent Gateway is provisioned in this project but nothing is attached yet, so
+    the check is advisory and an unattached engine must read as intentionally-off
+    rather than as drift. Its real job is the reverse: once an engine IS attached,
+    a routine in-place `--update` can drop `agentGatewayConfig` with no error and
+    no log — the same class of silent loss that once dropped
+    ENABLE_MEMORY_PRELOAD_CACHE off the probe engine.
+    """
+
+    @staticmethod
+    def _run(spec):
+        from src.deploy.engine_baseline import SHARED_CHECKS
+
+        check = next(c for c in SHARED_CHECKS if c.name == "gateway_attached")
+        return check.predicate(spec)
+
+    def test_unattached_engine_without_the_flag_is_not_drift(self):
+        ok, observed = self._run({"env": {}, "agent_gateway_config": {}})
+        assert ok
+        assert "not requested" in observed
+
+    def test_flag_on_but_config_absent_is_flagged(self):
+        ok, observed = self._run({"env": {"ENABLE_AGENT_GATEWAY": "1"}, "agent_gateway_config": {}})
+        assert not ok
+        assert "ABSENT" in observed
+
+    def test_flag_on_with_egress_bound_passes_and_names_the_mode(self):
+        ok, observed = self._run(
+            {
+                "env": {"ENABLE_AGENT_GATEWAY": "1"},
+                "agent_gateway_config": {"agent_to_anywhere_config": {"agent_gateway": "gw"}},
+            }
+        )
+        assert ok
+        assert observed == "agent_to_anywhere_config"
+
+    def test_both_modes_are_reported(self):
+        ok, observed = self._run(
+            {
+                "env": {"ENABLE_AGENT_GATEWAY": "1"},
+                "agent_gateway_config": {
+                    "agent_to_anywhere_config": {"agent_gateway": "e"},
+                    "client_to_agent_config": {"agent_gateway": "i"},
+                },
+            }
+        )
+        assert ok
+        assert observed == "agent_to_anywhere_config, client_to_agent_config"
+
+    def test_it_reads_the_ENGINE_flag_not_the_local_environment(self, monkeypatch):
+        """The verifier often runs from a shell whose flags differ from the engine's."""
+        monkeypatch.setenv("ENABLE_AGENT_GATEWAY", "1")
+        ok, observed = self._run({"env": {}, "agent_gateway_config": {}})
+        assert ok, "a local flag must not make an unattached engine look like drift"
+        assert "not requested" in observed
