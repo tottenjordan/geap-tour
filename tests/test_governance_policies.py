@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 from typing import ClassVar
@@ -311,14 +312,70 @@ class TestLayer3IsOptInAndReportsHonestly:
         assert "if ! $GW_REQUESTED; then" in step0
         assert "private preview enrollment" not in step0
 
-    def test_a_dry_run_never_claims_a_grant(self) -> None:
-        """`ok "… granted"` is a claim. The first draft of grant_gateway_sa_role let a
-        dry run reach it, and the `>/dev/null` that hides the policy dump also
-        swallowed run_cmd's own "[dry-run] …" line — so a dry run printed a green
-        success and nothing else."""
-        fn = SCRIPT[SCRIPT.index("grant_gateway_sa_role() {") :]
+    @pytest.mark.parametrize(
+        ("function", "claim"),
+        [
+            ("grant_gateway_sa_role", 'ok "${role} granted'),
+            ("grant_registry_read", 'ok "${label}: agentregistry.viewer granted'),
+        ],
+    )
+    def test_a_dry_run_never_claims_a_grant(self, function: str, claim: str) -> None:
+        """`ok "… granted"` is a claim, so a dry run must not reach it.
+
+        Both IAM grant helpers had the same shape and both got it wrong: the
+        `>/dev/null` that hides add-iam-policy-binding's policy dump also swallows
+        `run_cmd`'s own `[dry-run] …` line, so a dry run printed a green success and
+        did not even echo the command it had skipped.
+
+        Parametrized because fixing one and missing the other is exactly what
+        happened — `grant_gateway_sa_role` was corrected while writing the Layer 3
+        gate, and `grant_registry_read`, forty lines up, kept the bug until a dry run
+        against the live project printed "agentregistry.viewer granted" twice for
+        grants it had not performed.
+        """
+        fn = SCRIPT[SCRIPT.index(f"{function}() {{") :]
         fn = fn[: fn.index("\n}\n")]
-        assert fn.index("if $DRY_RUN; then") < fn.index('ok "${role} granted')
+        assert claim in fn, "test is stale — the success line was renamed"
+        assert "if $DRY_RUN; then" in fn, f"{function} has no dry-run guard at all"
+        assert fn.index("if $DRY_RUN; then") < fn.index(claim), (
+            f"{function} can reach its success claim on a dry run"
+        )
+
+    def test_no_command_hides_its_dry_run_echo_behind_devnull(self) -> None:
+        """The structural form of the bug above, so a THIRD helper cannot reintroduce
+        it: `run_cmd <cmd> >/dev/null` discards the very line run_cmd exists to print.
+
+        Only BACKSLASH CONTINUATIONS are joined — not the whole file. Both real
+        instances spanned four lines with `run_cmd` on the first and `>/dev/null` on
+        the last, so a per-physical-line check misses them; but flattening everything
+        into one string runs past command boundaries and flagged
+        `result=$(run_cmd "$@" 2>&1)` in create_sgp_policy, which is correct code that
+        captures output in order to parse it.
+
+        `2>/dev/null` is excluded for the same reason: discarding stderr is not this
+        bug. Only the command's own stdout carries run_cmd's dry-run echo.
+        """
+        logical: list[str] = []
+        buffer = ""
+        for raw in SCRIPT.splitlines():
+            line = raw.strip()
+            if line.startswith("#"):
+                continue
+            buffer = f"{buffer} {line[:-1].strip()}" if line.endswith("\\") else f"{buffer} {line}"
+            if not line.endswith("\\"):
+                logical.append(buffer.strip())
+                buffer = ""
+
+        offenders = [
+            line[:140]
+            for line in logical
+            # `$(run_cmd …)` captures deliberately; a bare `run_cmd … >/dev/null` throws
+            # the echo away. `(?<![0-9&])` keeps `2>/dev/null` and `&>/dev/null` out.
+            if "run_cmd " in line
+            and "$(run_cmd" not in line
+            and re.search(r"(?<![0-9&])>/dev/null", line)
+        ]
+        assert not offenders, offenders
 
 
 class TestTheScriptStillParses:
