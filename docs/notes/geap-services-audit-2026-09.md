@@ -282,6 +282,96 @@ which is parked on a license.
   registry entries, so ownership is not derivable.
 * Whether `AgentConnectivityTemplate` (finding 8) applies to our `googleManaged`
   gateways or only to customer-managed VPC egress.
-* Whether the `roles/iap.egressor` grants in `setup_governance_policies.sh` have ever
-  been applied — they bind at resource scope, and the project-level policy shows no IAP
-  roles.
+* ~~Whether the `roles/iap.egressor` grants in `setup_governance_policies.sh` have ever
+  been applied.~~ **Settled: they never were.** `get-iam-policy` returned `etag: ACAB`
+  with zero bindings on all three MCP servers. The script had no `set-iam-policy` call
+  outside an `info` string. See below.
+
+---
+
+## Corrected Layer 1 (2026-09-16)
+
+Layer 1 now applies real policies. Six defects were fixed, in the order they had to be:
+the conditions could not evaluate until the tools were annotated, and the policies could
+not be applied until they named principals and tools that exist.
+
+### The tool annotations are real, and they survive to the wire
+
+This was the plan's named load-bearing unknown — if FastMCP dropped `ToolAnnotations`
+somewhere between the decorator and the client, every CEL condition below would read a
+`getAttribute(..., false)` default and the whole design would collapse to tool-name
+allowlists. **Verified live against the deployed Cloud Run servers**, all 10 tools:
+
+| tool | readOnly | destructive | idempotent |
+| --- | --- | --- | --- |
+| `search_flights`, `search_hotels` | ✅ | ❌ | ✅ |
+| `get_booking_details`, `list_all_bookings` | ✅ | ❌ | ✅ |
+| `check_expense_policy`, `get_user_expenses` | ✅ | ❌ | ✅ |
+| `book_flight`, `book_hotel` | ❌ | ❌ | ❌ (each call mints a new `booking_id`) |
+| `submit_expense` | ❌ | ❌ | ❌ (mints a new `expense_id`) |
+| `cancel_booking` | ❌ | **✅** | ✅ — the one genuinely destructive tool |
+
+`openWorldHint=False` throughout; every tool reads a mock DB. The annotation constants
+are **duplicated per server module on purpose** — a shared module would not be in the
+Cloud Run build context and would `ImportError` at startup, the same reason the repo
+carries four copies of `otel_setup.py`.
+
+`cancel_booking` is annotated destructive but is **not denied**: two `ROUTER_EVAL_CASES`
+expect `booking_mcp_cancel_booking`, and the coordinator's instruction was extended to
+cover booking management on 2026-08-21. The booking policy allows it by name alongside
+`isDestructive == false`.
+
+### Applied ≠ enforced, and the script now makes that true rather than claiming it
+
+IAP evaluates at the **Agent Gateway boundary**. No engine carries `agentGatewayConfig`,
+so no traffic traverses a gateway and the applied policies are inspectable but inert.
+
+The plan originally justified that as a standing property. It was not one: Step 0 of this
+same script attaches the gateway, and it was gated on `! $DRY_RUN` alone — so any real
+run attached both served engines and then applied deny-by-default egress policies to the
+engines it had just attached. **Step 0 is now gated on `ENABLE_AGENT_GATEWAY`** (default
+off), which makes the flag mean what four other places in this repo already say it means,
+and makes the audit-only posture real instead of asserted.
+
+There is no `iamEnforcementMode: DRY_RUN` here, despite what recommendation 3 above
+suggests: `gcloud iap settings` exposes no enforcement flag and `agent-registry` is not a
+valid `--resource-type` for it. Do not claim a DRY_RUN we did not set.
+
+### The apply refuses to delete a binding it did not author
+
+`set-iam-policy` replaces a resource's **whole** policy. The etag guards the window
+between our read and our write; it does nothing about a binding someone else committed
+days earlier, which is dropped with a valid etag, no conflict, and an `applied` line. On
+a shared project that is the expensive failure. The read we already perform now also
+diffs the live `(role, member)` pairs against the file's and aborts on any surplus.
+
+Conditions are deliberately excluded from that key, so re-running after a CEL edit
+updates our own binding instead of aborting on it — a precheck that blocks every policy
+edit gets deleted rather than fixed.
+
+### Two gcloud details that cost real time
+
+* The flag is **`--mcp-server`**, not the `--mcpServer` the script printed for months.
+* An **empty** `--mcp-server` is not a narrower target but a much wider one: gcloud's
+  `ParseIapIamResource` tests it for truthiness and, finding it empty, falls through to
+  the **whole agent registry**. An unset `SEARCH_MCP_SERVER` would have replaced the
+  registry's own policy with one server's file. `basename ""` exits 0, so nothing else
+  caught it. Now explicitly refused.
+* The policy file is a **bare** `Policy` (`bindings`/`version`/`etag` at top level), not
+  `{"policy": {...}}`. apitools does not reject the wrapped form — it files `policy`
+  under unrecognized fields and hands back a Policy with **zero bindings**, so applying
+  it would wipe the resource's policy and report success.
+
+### What is guarded
+
+`tests/test_governance_policies.py` covers all six defects. Most are text assertions,
+because nothing executes this shell in CI. The foreign-binding precheck is the exception:
+it is extracted from its heredoc (delimiter `PRECHECK_PY`, distinct from the `PY` used
+elsewhere so extraction cannot latch onto the wrong block) and actually run against four
+live-policy shapes. All six guards were mutation-checked.
+
+### Still open
+
+* The apply has **not been run against the live project**. `scripts/setup_governance_policies.sh`
+  mutates IAM on a shared project and needs an explicit go-ahead.
+* Layer 2 (SGP) remains out of scope.
