@@ -535,6 +535,72 @@ class TestLayer3IsOptInAndReportsHonestly:
         assert not offenders, offenders
 
 
+class TestPostResourceMapsTheStatusHonestly:
+    """`post_resource` delegates to `http_send` (lib/config.sh) and maps the status.
+
+    That mapping is exercised by no dry run — `post_resource` returns before reaching
+    `http_send` when DRY_RUN is set — and by no test that only reads the script as
+    text. The precheck saga established what happens to bash that is only ever
+    executed by a live run against the shared project, so this extracts the function
+    and runs it with `http_send` stubbed.
+    """
+
+    FUNCTION: ClassVar[str] = SCRIPT[
+        SCRIPT.index("post_resource() {") : SCRIPT.index("\n# Layer 3's tally.")
+    ]
+
+    def _call(self, status: str, send_rc: int) -> tuple[str, int]:
+        harness = f"""
+DRY_RUN=false
+ACCESS_TOKEN=tok
+ok()   {{ echo "OK: $*"; }}
+fail() {{ echo "FAIL: $*"; }}
+http_send() {{ HTTP_STATUS="{status}"; HTTP_BODY="body"; return {send_rc}; }}
+{self.FUNCTION}
+post_resource "label" "https://example/x" '{{}}' || true
+echo "POST_RESULT=${{POST_RESULT}}"
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        result = ""
+        for line in res.stdout.splitlines():
+            if line.startswith("POST_RESULT="):
+                result = line.split("=", 1)[1]
+        return result, res.returncode
+
+    @pytest.mark.parametrize(
+        ("status", "send_rc", "expected"),
+        [
+            ("200", 0, "created"),
+            ("201", 0, "created"),
+            ("409", 0, "exists"),
+            ("401", 1, "failed"),
+            ("403", 1, "failed"),
+            ("000", 1, "failed"),
+        ],
+    )
+    def test_status_maps_to_result(self, status: str, send_rc: int, expected: str) -> None:
+        assert self._call(status, send_rc)[0] == expected
+
+    def test_409_is_not_reported_as_created(self) -> None:
+        """The distinction the old `may already exist` collapsed."""
+        assert self._call("409", 0)[0] != "created"
+
+    def test_a_dry_run_reaches_neither_the_call_nor_a_claim(self) -> None:
+        harness = f"""
+DRY_RUN=true
+ok()   {{ echo "OK: $*"; }}
+fail() {{ echo "FAIL: $*"; }}
+http_send() {{ echo "HTTP_SEND_WAS_CALLED"; return 0; }}
+{self.FUNCTION}
+post_resource "label" "https://example/x" '{{}}' || true
+echo "POST_RESULT=${{POST_RESULT}}"
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        assert "HTTP_SEND_WAS_CALLED" not in res.stdout
+        assert "OK:" not in res.stdout, "a dry run claimed a create"
+        assert "POST_RESULT=dry-run" in res.stdout
+
+
 class TestTheScriptStillParses:
     """Cheap, and the only check here that covers the 800 lines these tests do not."""
 

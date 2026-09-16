@@ -113,43 +113,36 @@ post_resource() {
     local label="$1"
     local url="$2"
     local body="$3"
+    local method="${4:-POST}"
 
     if $DRY_RUN; then
-        echo "    [dry-run] POST ${url}"
+        echo "    [dry-run] ${method} ${url}"
         POST_RESULT="dry-run"
         return 0
     fi
 
-    # -w appends the status on its own trailing line, so the body is everything before
-    # the last newline. --data is passed via stdin-free -d as before; the payloads are
-    # built by the callers.
-    local out code
-    out="$(curl -s -w $'\n%{http_code}' -X POST "${url}" \
-        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "${body}")" || {
-        fail "${label}: curl could not reach ${url%%\?*}"
-        POST_RESULT="failed"
-        return 1
-    }
+    # Delegates to http_send (lib/config.sh), which is sourced by all 14 scripts in
+    # here. This function used to carry its own copy of the -w/%{http_code} dance;
+    # setup_model_armor.sh then needed the same thing and lib/config.sh exists
+    # precisely so the answer is not a second copy.
+    if http_send "${method}" "${url}" "${body}" "${ACCESS_TOKEN}"; then
+        case "${HTTP_STATUS}" in
+            409)
+                ok "${label}: already exists (unchanged)"
+                POST_RESULT="exists"
+                ;;
+            *)
+                ok "${label}: created"
+                POST_RESULT="created"
+                ;;
+        esac
+        return 0
+    fi
 
-    code="${out##*$'\n'}"
-    case "${code}" in
-        2*)
-            ok "${label}: created"
-            POST_RESULT="created"
-            ;;
-        409)
-            ok "${label}: already exists (unchanged)"
-            POST_RESULT="exists"
-            ;;
-        *)
-            fail "${label}: HTTP ${code} — NOT created"
-            printf '%s\n' "${out%$'\n'*}" | head -5
-            POST_RESULT="failed"
-            return 1
-            ;;
-    esac
+    fail "${label}: HTTP ${HTTP_STATUS} — NOT created"
+    printf '%s\n' "${HTTP_BODY}" | head -5
+    POST_RESULT="failed"
+    return 1
 }
 
 # Layer 3's tally. Kept beside the layer rather than inside post_resource so Layer 2
@@ -1064,11 +1057,13 @@ else
         info "Check status: gcloud beta ai semantic-governance-policy-engine describe --location=${REGION} --project=${PROJECT_ID}"
     else
         info "Provisioning SGP engine (this takes 15-20 min)..."
-        run_cmd curl -s -X PATCH \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-            -H "Content-Type: application/json" \
+        # The last `curl … && ok || fail` in this file. It claimed "provisioning
+        # started" on a 403 as readily as on a 200, and the next thing the operator
+        # reads is "takes 15-20 minutes to become ACTIVE" — so a rejected request
+        # looked exactly like a slow one, for twenty minutes.
+        post_resource "SGP engine provisioning" \
             "https://${REGION}-aiplatform.googleapis.com/v1beta1/projects/${PROJECT_NUMBER}/locations/${REGION}/semanticGovernancePolicyEngine" \
-            -d '{}' && ok "SGP engine provisioning started" || fail "SGP engine provisioning failed"
+            '{}' PATCH || SGP_FAILURES=$((SGP_FAILURES + 1))
 
         warn "SGP engine takes 15-20 minutes to become ACTIVE."
         info "Run this command to check: curl -s -H \"Authorization: Bearer \$(gcloud auth print-access-token)\" \\"
