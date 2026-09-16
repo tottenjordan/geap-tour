@@ -30,9 +30,16 @@
 #   - For SGP: gcloud beta components installed, VPC permissions
 #
 # Usage:
-#   bash scripts/setup_governance_policies.sh          # IAM policies only
-#   bash scripts/setup_governance_policies.sh --sgp    # IAM + SGP provisioning
+#   bash scripts/setup_governance_policies.sh           # IAM Allow policies only (Layer 1)
+#   bash scripts/setup_governance_policies.sh --sgp     # + SGP provisioning (Layer 2)
+#   bash scripts/setup_governance_policies.sh --layer3  # + IAP/Model Armor authz (Layer 3)
 #   bash scripts/setup_governance_policies.sh --dry-run # Show commands without executing
+#
+# Layer 3 is OPTIONAL and opt-in, like SGP. It used to run on EVERY invocation, which
+# made the "IAM policies only" line above false: a bare run also created two authz
+# extensions and two authz policies on the ingress gateway, and granted two roles to
+# the gateway service account at PROJECT level on a shared project. Nothing announced
+# that, and the layer reported success whatever happened (see post_resource).
 
 
 # Loads .env and provides PROJECT_ID / REGION / project_number / require_var.
@@ -47,10 +54,12 @@ GATEWAY_EGRESS_NAME="$(echo "${AGENT_GATEWAY_EGRESS_PATH:-}" | awk -F'/' '{print
 GATEWAY_EGRESS_NAME="${GATEWAY_EGRESS_NAME:-geap-workshop-gateway-egress}"
 
 ENABLE_SGP=false
+ENABLE_LAYER3=false
 DRY_RUN=false
 for arg in "$@"; do
     case "$arg" in
         --sgp) ENABLE_SGP=true ;;
+        --layer3) ENABLE_LAYER3=true ;;
         --dry-run) DRY_RUN=true ;;
     esac
 done
@@ -73,6 +82,89 @@ run_cmd() {
     else
         "$@"
     fi
+}
+
+# Create a resource by POST, and report what the server ACTUALLY said.
+#
+# Every create in Layer 3 used to be written as
+#
+#     run_cmd curl -s -X POST "$url" … && ok "created" || warn "may already exist"
+#
+# and `curl -s` exits 0 for any COMPLETED transfer — a 400, a 401, a 403 and a 409 all
+# included. Only a transport failure (DNS, connection refused) is non-zero. So the
+# `&& ok` branch was taken on every outcome, and the layer reported four resources
+# created on a run that created none. Measured, not reasoned: a POST to the real
+# authzExtensions endpoint with a junk bearer token returns HTTP 401 and exits 0.
+#
+# That is the same false success Layer 1 was just cured of, and it is worse here,
+# because two of these four resources did not exist while the script claimed for
+# months to be creating them.
+#
+# 409 is kept DISTINCT from 2xx rather than folded into it. An idempotent create that
+# finds its resource already present is a success, but it is a different fact from
+# having created one, and collapsing the two is precisely how "may already exist"
+# managed to cover for a 401.
+# POST_RESULT is set to created|exists|failed|dry-run on every call, so a caller that
+# keeps its own tally (Layer 3 does; Layer 2 has SGP_FAILURES) can read the outcome
+# without this function having to know which layer invoked it.
+POST_RESULT=""
+
+post_resource() {
+    local label="$1"
+    local url="$2"
+    local body="$3"
+
+    if $DRY_RUN; then
+        echo "    [dry-run] POST ${url}"
+        POST_RESULT="dry-run"
+        return 0
+    fi
+
+    # -w appends the status on its own trailing line, so the body is everything before
+    # the last newline. --data is passed via stdin-free -d as before; the payloads are
+    # built by the callers.
+    local out code
+    out="$(curl -s -w $'\n%{http_code}' -X POST "${url}" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${body}")" || {
+        fail "${label}: curl could not reach ${url%%\?*}"
+        POST_RESULT="failed"
+        return 1
+    }
+
+    code="${out##*$'\n'}"
+    case "${code}" in
+        2*)
+            ok "${label}: created"
+            POST_RESULT="created"
+            ;;
+        409)
+            ok "${label}: already exists (unchanged)"
+            POST_RESULT="exists"
+            ;;
+        *)
+            fail "${label}: HTTP ${code} — NOT created"
+            printf '%s\n' "${out%$'\n'*}" | head -5
+            POST_RESULT="failed"
+            return 1
+            ;;
+    esac
+}
+
+# Layer 3's tally. Kept beside the layer rather than inside post_resource so Layer 2
+# can use the same honest reporting without writing into Layer 3's counters.
+L3_CREATED=0
+L3_EXISTING=0
+L3_FAILURES=0
+
+l3_post() {
+    post_resource "$@" || true
+    case "${POST_RESULT}" in
+        created) L3_CREATED=$((L3_CREATED + 1)) ;;
+        exists)  L3_EXISTING=$((L3_EXISTING + 1)) ;;
+        failed)  L3_FAILURES=$((L3_FAILURES + 1)) ;;
+    esac
 }
 
 # The one place that reads an engine's SPIFFE identity off its live spec. Prints
@@ -174,6 +266,7 @@ echo "Region:   ${REGION}"
 echo "Ingress:  ${GATEWAY_NAME}"
 echo "Egress:   ${GATEWAY_EGRESS_NAME}"
 echo "SGP:      $(if $ENABLE_SGP; then echo "ENABLED (--sgp)"; else echo "SKIPPED (pass --sgp to enable)"; fi)"
+echo "Layer 3:  $(if $ENABLE_LAYER3; then echo "ENABLED (--layer3)"; else echo "SKIPPED (pass --layer3 to enable)"; fi)"
 echo "Dry run:  $(if $DRY_RUN; then echo "YES"; else echo "no"; fi)"
 echo ""
 
@@ -1033,16 +1126,17 @@ else
         if [ "$AUTHZ_EXT_EXISTS" = "yes" ]; then
             ok "Authorization extension 'geap-sgp-extension' already exists"
         else
-            run_cmd curl -s -X POST \
+            # Same false success as Layer 3 carried: `curl -s` exits 0 on a 401/403, so
+            # `&& ok "created"` fired on failures. The existence pre-check above hides
+            # it on a re-run but not on the first one, which is the run that matters.
+            post_resource "SGP authz extension" \
                 "https://networkservices.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzExtensions?authzExtensionId=geap-sgp-extension" \
-                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "{
+                "{
                     \"service\": \"${SGP_DNS_HOSTNAME}\",
                     \"authority\": \"${SGP_DNS_HOSTNAME}\",
                     \"failOpen\": false,
                     \"loadBalancingScheme\": \"LOAD_BALANCING_SCHEME_UNSPECIFIED\"
-                }" && ok "Authorization extension created" || fail "Authorization extension creation failed"
+                }" || SGP_FAILURES=$((SGP_FAILURES + 1))
         fi
 
         # Create Authorization Policy
@@ -1054,11 +1148,9 @@ else
         if [ "$AUTHZ_POL_EXISTS" = "yes" ]; then
             ok "Authorization policy 'geap-sgp-policy' already exists"
         else
-            run_cmd curl -s -X POST \
+            post_resource "SGP authz policy" \
                 "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-sgp-policy" \
-                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "{
+                "{
                     \"target\": {
                         \"loadBalancingScheme\": \"LOAD_BALANCING_SCHEME_UNSPECIFIED\",
                         \"resources\": [
@@ -1077,7 +1169,7 @@ else
                             \"resources\": [\"projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/geap-sgp-extension\"]
                         }
                     }
-                }" && ok "Authorization policy created" || fail "Authorization policy creation failed"
+                }" || SGP_FAILURES=$((SGP_FAILURES + 1))
         fi
 
         echo ""
@@ -1106,54 +1198,82 @@ echo ""
 # These are separate from the SGP authz extension created in Layer 2.
 # Max 4 authz policies per gateway (across both profiles).
 
+if ! $ENABLE_LAYER3; then
+    step "Layer 3: Authorization Delegation (SKIPPED)"
+    info "Pass --layer3 to enable IAP + Model Armor authorization delegation."
+    info ""
+    info "This layer is opt-in because a bare run is advertised as 'IAM policies only'"
+    info "and this is not a read-only step. With --layer3 it would, on ${PROJECT_ID}:"
+    info "  • create authz extension geap-iap-extension        (REQUEST_AUTHZ)"
+    info "  • create authz policy    geap-iap-policy           → ingress gateway"
+    info "  • create authz extension geap-model-armor-extension (CONTENT_AUTHZ)"
+    info "  • create authz policy    geap-model-armor-policy   → ingress gateway"
+    info "  • grant roles/modelarmor.calloutUser and roles/serviceusage.serviceUsageConsumer"
+    info "    to the gateway service account at PROJECT level"
+    info ""
+    info "Like Layer 1, none of it is enforced until an engine carries agentGatewayConfig."
+    echo ""
+else
+
 step "Layer 3: Authorization Delegation (IAP + Model Armor)"
 
 # 3a: IAP Authorization Extension (via REST — gcloud requires undocumented loadBalancingScheme)
 info "Creating IAP authorization extension..."
-run_cmd curl -s -X POST \
+l3_post "IAP authz extension" \
     "https://networkservices.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzExtensions?authzExtensionId=geap-iap-extension" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"service":"iap.googleapis.com","failOpen":true,"timeout":"1s"}' \
-    && ok "IAP authz extension created" \
-    || warn "IAP authz extension creation failed (may already exist)"
-sleep 10
+    '{"service":"iap.googleapis.com","failOpen":true,"timeout":"1s"}'
+$DRY_RUN || sleep 10
 
 # 3b: IAP Authorization Policy (REQUEST_AUTHZ on ingress gateway)
 info "Creating IAP authorization policy..."
-run_cmd curl -s -X POST \
+l3_post "IAP authz policy (REQUEST_AUTHZ → ingress gateway)" \
     "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-iap-policy" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{
+    "{
         \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_NAME}\"]},
         \"action\":\"CUSTOM\",
         \"customProvider\":{\"authzExtension\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-iap-extension\"]}},
         \"policyProfile\":\"REQUEST_AUTHZ\"
-    }" \
-    && ok "IAP authz policy created (REQUEST_AUTHZ → ingress gateway)" \
-    || warn "IAP authz policy creation failed (may already exist)"
-sleep 10
+    }"
+$DRY_RUN || sleep 10
 
 # 3c: Model Armor IAM prerequisites
+#
+# These two are PROJECT-level grants on a shared project. Unlike the curl creates
+# above, `gcloud add-iam-policy-binding` really does exit non-zero on failure, so
+# `&& ok || warn` was sound here — but `2>/dev/null` threw away the reason, and
+# "may already exist" was the wrong diagnosis anyway: the command is idempotent and
+# returns 0 when the binding is already present, so a non-zero status is always a
+# real failure. Both now say so and are counted.
 MA_SA="service-${PROJECT_NUMBER}@gcp-sa-dep.iam.gserviceaccount.com"
-info "Granting Model Armor roles to gateway service account..."
+info "Granting Model Armor roles to gateway service account (${MA_SA})..."
 
-run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-    --member="serviceAccount:${MA_SA}" \
-    --role=roles/modelarmor.calloutUser \
-    --condition=None \
-    --quiet 2>/dev/null \
-    && ok "roles/modelarmor.calloutUser granted to gateway SA" \
-    || warn "modelarmor.calloutUser grant failed (may already exist)"
+grant_gateway_sa_role() {
+    local role="$1"
 
-run_cmd gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-    --member="serviceAccount:${MA_SA}" \
-    --role=roles/serviceusage.serviceUsageConsumer \
-    --condition=None \
-    --quiet 2>/dev/null \
-    && ok "roles/serviceusage.serviceUsageConsumer granted to gateway SA" \
-    || warn "serviceUsageConsumer grant failed (may already exist)"
+    # Handled explicitly rather than leaning on run_cmd, for two reasons this function
+    # got wrong on its first draft: `ok "granted"` is a CLAIM, so a dry run must not
+    # reach it, and the `>/dev/null` that hides add-iam-policy-binding's policy dump
+    # also swallows run_cmd's own "[dry-run] …" line — leaving a dry run printing a
+    # green success and nothing else. Same shape as apply_iap_policy's guard.
+    if $DRY_RUN; then
+        echo "    [dry-run] gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${MA_SA} --role=${role}"
+        return 0
+    fi
+
+    if gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="serviceAccount:${MA_SA}" \
+        --role="${role}" \
+        --condition=None \
+        --quiet >/dev/null; then
+        ok "${role} granted to gateway SA"
+    else
+        fail "${role} grant FAILED (gcloud's error is above this line)"
+        L3_FAILURES=$((L3_FAILURES + 1))
+    fi
+}
+
+grant_gateway_sa_role roles/modelarmor.calloutUser
+grant_gateway_sa_role roles/serviceusage.serviceUsageConsumer
 
 # 3d: Model Armor Authorization Extension
 PROMPT_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/geap-workshop-prompt"
@@ -1161,29 +1281,21 @@ RESPONSE_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/geap-wor
 
 info "Creating Model Armor authorization extension..."
 MA_SETTINGS="[{\"request_template_id\":\"${PROMPT_TEMPLATE}\",\"response_template_id\":\"${RESPONSE_TEMPLATE}\"}]"
-run_cmd curl -s -X POST \
+l3_post "Model Armor authz extension" \
     "https://networkservices.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzExtensions?authzExtensionId=geap-model-armor-extension" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{\"service\":\"modelarmor.${REGION}.rep.googleapis.com\",\"metadata\":{\"model_armor_settings\":\"${MA_SETTINGS}\"},\"failOpen\":true,\"timeout\":\"1s\"}" \
-    && ok "Model Armor authz extension created" \
-    || warn "Model Armor authz extension creation failed (may already exist)"
-sleep 10
+    "{\"service\":\"modelarmor.${REGION}.rep.googleapis.com\",\"metadata\":{\"model_armor_settings\":\"${MA_SETTINGS}\"},\"failOpen\":true,\"timeout\":\"1s\"}"
+$DRY_RUN || sleep 10
 
 # 3e: Model Armor Authorization Policy (CONTENT_AUTHZ on ingress gateway)
 info "Creating Model Armor authorization policy..."
-run_cmd curl -s -X POST \
+l3_post "Model Armor authz policy (CONTENT_AUTHZ → ingress gateway)" \
     "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-model-armor-policy" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{
+    "{
         \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_NAME}\"]},
         \"action\":\"CUSTOM\",
         \"customProvider\":{\"authzExtension\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-model-armor-extension\"]}},
         \"policyProfile\":\"CONTENT_AUTHZ\"
-    }" \
-    && ok "Model Armor authz policy created (CONTENT_AUTHZ → ingress gateway)" \
-    || warn "Model Armor authz policy creation failed (may already exist)"
+    }"
 
 echo ""
 info "Verify deployed extensions and policies:"
@@ -1191,6 +1303,7 @@ info "  gcloud beta service-extensions authz-extensions list --location=${REGION
 info "  gcloud beta network-security authz-policies list --location=${REGION}"
 
 echo ""
+fi
 
 # ─────────────────────────────────────────────────────────────
 # Summary
@@ -1201,11 +1314,18 @@ echo "  GEAP Governance Policy Summary"
 echo "═══════════════════════════════════════════════════"
 echo ""
 echo "  Step 0 — Gateway Attachment"
-if ! $DRY_RUN; then
+# Both branches below predated the ENABLE_AGENT_GATEWAY gate and outlived it by one
+# commit. A dry run announced "Would attach 2 agents" while the flag was off and the
+# step would in fact have attached none, and a real skipped run blamed "private
+# preview enrollment" for a skip the flag had caused — sending the reader off to
+# check an enrollment that is not the reason. The flag is now the first thing tested.
+if ! $GW_REQUESTED; then
+    echo "    — SKIPPED (ENABLE_AGENT_GATEWAY is off; nothing attached, nothing enforced)"
+elif ! $DRY_RUN; then
     if [ "${GW_ATTACHED:-0}" -gt 0 ]; then
         echo "    ✓ ${GW_ATTACHED}/2 agents attached to ingress gateway"
     else
-        echo "    ✗ No agents attached (private preview enrollment required)"
+        echo "    ✗ ENABLE_AGENT_GATEWAY=1 but 0/2 attached — see the Step 0 errors above"
     fi
 else
     echo "    [dry-run] Would attach 2 agents to ingress gateway"
@@ -1254,12 +1374,26 @@ else
     echo "  Layer 2 — Semantic Governance (SKIPPED — pass --sgp to enable)"
 fi
 echo ""
-echo "  Layer 3 — Authorization Delegation (IAP + Model Armor)"
-echo "    IAP extension:         geap-iap-extension (REQUEST_AUTHZ)"
-echo "    IAP policy:            geap-iap-policy → ingress gateway"
-echo "    Model Armor extension: geap-model-armor-extension (CONTENT_AUTHZ)"
-echo "    Model Armor policy:    geap-model-armor-policy → ingress gateway"
-echo "    Templates:             geap-workshop-prompt / geap-workshop-response"
+# This block used to print all four resource names unconditionally, as a flat list with
+# no marker — on a skipped run, on a dry run, and on a run where every create returned
+# 401. Two of the four did not exist at all while it was claiming them. The counts below
+# come from post_resource, which reads the actual HTTP status.
+if ! $ENABLE_LAYER3; then
+    echo "  Layer 3 — Authorization Delegation (SKIPPED — pass --layer3 to enable)"
+elif $DRY_RUN; then
+    echo "  Layer 3 — Authorization Delegation ([dry-run] nothing created)"
+else
+    echo "  Layer 3 — Authorization Delegation (IAP + Model Armor)"
+    echo "    ✓ ${L3_CREATED} created, ${L3_EXISTING} already existed, ✗ ${L3_FAILURES} failed"
+    echo "    IAP extension:         geap-iap-extension (REQUEST_AUTHZ)"
+    echo "    IAP policy:            geap-iap-policy → ingress gateway"
+    echo "    Model Armor extension: geap-model-armor-extension (CONTENT_AUTHZ)"
+    echo "    Model Armor policy:    geap-model-armor-policy → ingress gateway"
+    echo "    Templates:             geap-workshop-prompt / geap-workshop-response"
+    if [ "${L3_FAILURES}" -gt 0 ]; then
+        echo "    → ${L3_FAILURES} did NOT apply. The names above are what was ATTEMPTED."
+    fi
+fi
 echo ""
 echo "  Model Armor templates — see: scripts/setup_model_armor.sh"
 echo ""
