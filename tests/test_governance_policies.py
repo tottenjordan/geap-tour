@@ -33,6 +33,7 @@ import json
 import pathlib
 import re
 import subprocess
+import sys
 from typing import ClassVar
 
 import pytest
@@ -599,6 +600,145 @@ echo "POST_RESULT=${{POST_RESULT}}"
         assert "HTTP_SEND_WAS_CALLED" not in res.stdout
         assert "OK:" not in res.stdout, "a dry run claimed a create"
         assert "POST_RESULT=dry-run" in res.stdout
+
+
+class TestExtraEgressPrincipals:
+    """`EXTRA_EGRESS_ENGINE_IDS` adds members to the three Layer 1 policies.
+
+    It exists so a TEMPORARY engine (the egress-enforcement experiment's disposable
+    one) can be bound for an afternoon without committing a 19-digit id that will be
+    deleted the same day — the mistake `setup_apphub.sh` made twice, where an unset
+    variable fell back to engine ids that had already been deleted.
+    """
+
+    BUILDER: ClassVar[str] = SCRIPT[
+        SCRIPT.index("if ! python3 -c '\nimport json, sys\ntitle, description") :
+    ].split('\' "${title}"')[0]
+
+    def _write(self, identities: list[str], tmp_path: pathlib.Path) -> dict:
+        """Run the REAL json builder out of the script with N identities."""
+        program = self.BUILDER.split("python3 -c '", 1)[1]
+        out = subprocess.run(
+            [sys.executable, "-c", program, "t", "d", "expr", *identities],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)
+
+    def test_two_identities_is_the_default_shape(self, tmp_path: pathlib.Path) -> None:
+        doc = self._write(["coord", "router"], tmp_path)
+        assert doc["bindings"][0]["members"] == [
+            "principal://coord",
+            "principal://router",
+        ]
+        assert doc["version"] == 3, "conditional bindings require version 3"
+        assert doc["bindings"][0]["condition"]["expression"] == "expr"
+
+    def test_a_third_identity_is_appended_not_replacing(self, tmp_path: pathlib.Path) -> None:
+        """The variable-length tail must ADD to the two standing members.
+
+        Binding only the extra engine would silently revoke the coordinator's and
+        router's egress — a whole-resource replace, so the loss would be immediate
+        and total.
+        """
+        doc = self._write(["coord", "router", "spike"], tmp_path)
+        assert doc["bindings"][0]["members"] == [
+            "principal://coord",
+            "principal://router",
+            "principal://spike",
+        ]
+
+    def test_order_is_stable(self, tmp_path: pathlib.Path) -> None:
+        """The apply diffs (role, member) pairs; a reordered file is not a change,
+        but a stable order keeps the diff readable for a human reviewing it."""
+        assert self._write(["a", "b", "c"], tmp_path)["bindings"][0]["members"] == [
+            "principal://a",
+            "principal://b",
+            "principal://c",
+        ]
+
+    FUNCTION: ClassVar[str] = SCRIPT[
+        SCRIPT.index("write_egress_policy() {") : SCRIPT.index(
+            "\n# Copy the MCP server's CURRENT policy etag"
+        )
+    ]
+
+    def _run_real_function(self, extras: list[str], tmp_path: pathlib.Path) -> dict:
+        """Execute the REAL write_egress_policy in bash and read the file it writes.
+
+        The earlier tests in this class drove the extracted Python builder directly
+        with identities they chose themselves — so they could not see which
+        identities the SHELL passes. A mutation that made the extras REPLACE the
+        coordinator and router instead of extending them passed all of them.
+
+        That is the precheck lesson again: the inner program was covered, the wiring
+        around it was not, and the wiring was where the damage lived. A whole-resource
+        replace binding only the spike would revoke the two served engines' egress
+        outright.
+        """
+        out = tmp_path / "policy.json"
+        extras_decl = (
+            "EXTRA_EGRESS_IDENTITIES=(" + " ".join(f'"{e}"' for e in extras) + ")"
+            if extras
+            else "EXTRA_EGRESS_IDENTITIES=()"
+        )
+        harness = f"""
+DRY_RUN=false
+COORDINATOR_IDENTITY="coord-identity"
+ROUTER_IDENTITY="router-identity"
+{extras_decl}
+L1_WRITTEN=0
+info() {{ :; }}
+warn() {{ :; }}
+fail() {{ echo "FAIL: $*" >&2; }}
+{self.FUNCTION}
+write_egress_policy "{out}" "t" "d" "expr"
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        assert out.exists(), f"no policy written. stderr={res.stderr}"
+        return json.loads(out.read_text())
+
+    def test_the_shell_passes_the_standing_members_first(self, tmp_path: pathlib.Path) -> None:
+        """With no extras, exactly the coordinator and router."""
+        doc = self._run_real_function([], tmp_path)
+        assert doc["bindings"][0]["members"] == [
+            "principal://coord-identity",
+            "principal://router-identity",
+        ]
+
+    def test_extras_extend_rather_than_replace(self, tmp_path: pathlib.Path) -> None:
+        """THE regression. set-iam-policy replaces the whole policy, so a file that
+        binds only the extra engine does not add a member — it deletes two."""
+        doc = self._run_real_function(["spike-identity"], tmp_path)
+        assert doc["bindings"][0]["members"] == [
+            "principal://coord-identity",
+            "principal://router-identity",
+            "principal://spike-identity",
+        ], "the served engines were dropped from the policy"
+
+    def test_an_unresolvable_extra_id_aborts_the_run(self) -> None:
+        """A silently dropped member is an engine that looks authorised in the
+        command you typed and is denied at the gateway an hour later."""
+        assert "EXTRA_EGRESS_ENGINE_IDS: no effectiveIdentity for" in SCRIPT
+        block = SCRIPT[SCRIPT.index("for _extra_id in") :]
+        block = block[: block.index("\ndone\n")]
+        assert "exit 1" in block, "an unresolvable extra id does not stop the run"
+
+    def test_it_reuses_the_single_identity_fetcher(self) -> None:
+        """One place turns an engine into a principal. Two would be two chances to
+        drift back onto the Reasoning Engine service agent."""
+        block = SCRIPT[SCRIPT.index("for _extra_id in") :]
+        block = block[: block.index("\ndone\n")]
+        assert "engine_identity" in block
+
+    def test_unset_means_exactly_two_members(self) -> None:
+        """A normal run must be byte-identical to before this flag existed."""
+        assert "EXTRA_EGRESS_IDENTITIES=()" in SCRIPT
+        assert '${EXTRA_EGRESS_IDENTITIES+"${EXTRA_EGRESS_IDENTITIES[@]}"}' in SCRIPT, (
+            "unset-safe expansion is required under `set -u`"
+        )
 
 
 class TestTheScriptStillParses:

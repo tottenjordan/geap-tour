@@ -534,6 +534,37 @@ ROUTER_IDENTITY="$(engine_identity "$ROUTER_ENGINE_ID" || true)"
 [ -n "${ROUTER_IDENTITY}" ] || \
     warn "No effectiveIdentity for router ${ROUTER_ENGINE_ID} — set identityType=AGENT_IDENTITY (Step 0) first."
 
+# EXTRA_EGRESS_ENGINE_IDS — additional engines to bind, resolved the same way.
+#
+# write_egress_policy's members used to be exactly two globals, and its own comment
+# said adding a third engine meant editing that list "once, here". That is right for
+# a permanent engine and wrong for a temporary one: the egress-enforcement experiment
+# needs a DISPOSABLE engine in these policies for an afternoon, and committing a
+# 19-digit id that will be deleted the same day is how the repo ends up naming dead
+# resources (setup_apphub.sh already did exactly that, twice).
+#
+# So the extra members are configuration, not source. Space- or comma-separated engine
+# IDS, not principals: they go through the same engine_identity() fetcher as the other
+# two, so there is still ONE place that knows how to turn an engine into a principal —
+# the property the wrong-principal bug cost us.
+#
+#   EXTRA_EGRESS_ENGINE_IDS="1081353742999093248" bash scripts/setup_governance_policies.sh
+#
+# Unset by default, so a normal run binds exactly the coordinator and the router.
+EXTRA_EGRESS_IDENTITIES=()
+for _extra_id in ${EXTRA_EGRESS_ENGINE_IDS//,/ }; do
+    _extra_eff="$(engine_identity "${_extra_id}" || true)"
+    if [ -z "${_extra_eff}" ]; then
+        # Fail loudly. A silently dropped member is an engine that looks authorised in
+        # the command you typed and is denied at the gateway an hour later.
+        fail "EXTRA_EGRESS_ENGINE_IDS: no effectiveIdentity for ${_extra_id} — refusing to continue."
+        fail "  Set identityType=AGENT_IDENTITY on it, or remove it from the variable."
+        exit 1
+    fi
+    EXTRA_EGRESS_IDENTITIES+=("${_extra_eff}")
+    info "Extra egress principal: engine ${_extra_id}"
+done
+
 L1_WRITTEN=0
 L1_APPLIED=0
 L1_APPLY_FAILURES=0
@@ -547,11 +578,11 @@ EXPENSE_POLICY_FILE=/tmp/iam-policy-expense-mcp.json
 # One binding, both agent identities, one CEL condition. Writing the file is all
 # this does — the apply is apply_iap_policy, below.
 #
-# The two members are NOT arguments: they come from the COORDINATOR_IDENTITY /
-# ROUTER_IDENTITY globals resolved just above, because every policy this block writes
-# binds the same two principals and differs only in its condition. A caller cannot
-# vary them; adding a third engine (see the gateway-attachment note above) means
-# resolving one more global and extending the members list, once, here.
+# The members are NOT per-call arguments: they come from the COORDINATOR_IDENTITY /
+# ROUTER_IDENTITY globals resolved just above, plus any EXTRA_EGRESS_IDENTITIES,
+# because every policy this block writes binds the same principals and differs only in
+# its condition. A caller cannot vary them per policy — that is deliberate, since three
+# servers with three different member lists is a governance story nobody can read.
 write_egress_policy() {
     local file="$1"
     local title="$2"
@@ -598,18 +629,25 @@ write_egress_policy() {
     # a backslash in any title, description or expression would otherwise emit
     # malformed JSON that surfaces only as a gcloud parse error at apply time. Today's
     # strings are safe; this stops that from being a property anyone has to maintain.
+    # Identities are passed AFTER the three strings and consumed as a variable-length
+    # tail, so EXTRA_EGRESS_ENGINE_IDS adds members without changing the calling
+    # convention. Order is stable (coordinator, router, then extras as given) because
+    # the apply diffs (role, member) pairs against the live policy and a reordered
+    # file would otherwise look like a change.
     if ! python3 -c '
 import json, sys
-coordinator, router, title, description, expression = sys.argv[1:6]
+title, description, expression = sys.argv[1:4]
+identities = sys.argv[4:]
 print(json.dumps({
     "version": 3,
     "bindings": [{
         "role": "roles/iap.egressor",
-        "members": ["principal://" + coordinator, "principal://" + router],
+        "members": ["principal://" + i for i in identities],
         "condition": {"title": title, "description": description, "expression": expression},
     }],
 }, indent=2))
-' "${COORDINATOR_IDENTITY}" "${ROUTER_IDENTITY}" "${title}" "${description}" "${expression}" \
+' "${title}" "${description}" "${expression}" \
+  "${COORDINATOR_IDENTITY}" "${ROUTER_IDENTITY}" ${EXTRA_EGRESS_IDENTITIES+"${EXTRA_EGRESS_IDENTITIES[@]}"} \
         > "${file}"; then
         fail "FAILED to write $(basename "${file}")"
         return 1
