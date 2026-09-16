@@ -11,6 +11,7 @@ except Exception as e:
     logging.warning("OTel setup failed: %s", e)
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 try:
     from .mock_db import FLIGHTS, HOTELS
@@ -19,8 +20,25 @@ except ImportError:
 
 mcp = FastMCP("search-mcp", instructions="Search for flights and hotels.")
 
+# Declared so IAP's CEL conditions have attributes to read. Without them
+# `api.getAttribute('iap.googleapis.com/mcp.tool.isReadOnly', false)` falls back to
+# its default, so the Layer 1 policy in scripts/setup_governance_policies.sh would
+# invert the moment it were bound: `isReadOnly == true` would never match (denying a
+# read-only tool) and `isDestructive == false` would always match (constraining
+# nothing). Nothing binds it today — that script writes the three policy files to
+# /tmp and applies none of them — so these hints are the prerequisite that makes the
+# policy meaningful, not evidence that it is enforcing.
+#
+# Redefined per server, not shared — see the note in booking/server.py.
 
-@mcp.tool()
+# Both search tools query the mock DB: no writes, no deletes, same answer for the
+# same args, no outside world.
+READ_ONLY_TOOL = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def search_flights(origin: str, destination: str, date: str | None = None) -> list[dict]:
     """Search available flights by origin and destination airport codes.
 
@@ -40,7 +58,7 @@ def search_flights(origin: str, destination: str, date: str | None = None) -> li
     return results
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def search_hotels(city: str, max_price: float | None = None) -> list[dict]:
     """Search available hotels by city name.
 

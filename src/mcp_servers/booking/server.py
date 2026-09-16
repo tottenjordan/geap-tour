@@ -11,6 +11,7 @@ except Exception as e:
     logging.warning("OTel setup failed: %s", e)
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 try:
     from .mock_db import cancel_booking as _cancel
@@ -21,8 +22,43 @@ except ImportError:
 
 mcp = FastMCP("booking-mcp", instructions="Book and manage flight and hotel reservations.")
 
+# Declared so IAP's CEL conditions have attributes to read. Without them
+# `api.getAttribute('iap.googleapis.com/mcp.tool.isDestructive', false)` falls back
+# to its default, so the booking policy in scripts/setup_governance_policies.sh
+# (`isDestructive == false`) would invert the moment it were bound: the hint would
+# default to false, `false == false` would match, and cancel_booking — the one tool
+# the clause exists to constrain — would go unconstrained. Nothing binds it today,
+# so these hints are the prerequisite that makes the policy meaningful, not
+# evidence that it is enforcing.
+#
+# Redefined here rather than shared with the other two servers: deploy_mcp_servers
+# builds each server from its own directory (`--source src/mcp_servers/<name>`,
+# Dockerfile `COPY . .`), so a src/mcp_servers/_annotations.py would be outside the
+# build context and ImportError inside the container — a deploy-time failure, not a
+# local one. The repo already answers this the same way (four copies of
+# otel_setup.py); tests/test_mcp_servers.py carries the drift guard.
 
-@mcp.tool()
+# The two lookups: they read the mock DB and nothing else.
+READ_ONLY_TOOL = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+# create_booking mints a fresh `BK-<uuid4>` key per call, so it only ever adds —
+# it cannot collide with, overwrite or remove an existing reservation, which is
+# what keeps it non-destructive. It is *not* idempotent: nothing de-duplicates, so
+# a retried call books a second seat rather than returning the first.
+ADDITIVE_TOOL = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+)
+# The one genuinely destructive tool on this server: it flips an existing booking
+# to `cancelled` and no tool here undoes that. Still idempotent — a second cancel
+# converges on the same cancelled booking (it only refreshes `cancelled_at`),
+# so a retry after a dropped response is safe.
+DESTRUCTIVE_TOOL = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+)
+
+
+@mcp.tool(annotations=ADDITIVE_TOOL)
 def book_flight(flight_id: str, passenger_name: str) -> dict:
     """Book a flight for a passenger.
 
@@ -33,7 +69,7 @@ def book_flight(flight_id: str, passenger_name: str) -> dict:
     return create_booking("flight", flight_id, {"passenger_name": passenger_name})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ADDITIVE_TOOL)
 def book_hotel(hotel_id: str, guest_name: str, checkin: str, checkout: str) -> dict:
     """Book a hotel for a guest.
 
@@ -54,7 +90,7 @@ def book_hotel(hotel_id: str, guest_name: str, checkin: str, checkout: str) -> d
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_TOOL)
 def cancel_booking(booking_id: str) -> dict:
     """Cancel an existing booking.
 
@@ -67,7 +103,7 @@ def cancel_booking(booking_id: str) -> dict:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def get_booking_details(booking_id: str) -> dict:
     """Get details of an existing booking.
 
@@ -80,7 +116,7 @@ def get_booking_details(booking_id: str) -> dict:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def list_all_bookings(limit: int = 20) -> dict:
     """List the most recent bookings in the system.
 
