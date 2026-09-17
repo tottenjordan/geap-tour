@@ -460,6 +460,38 @@ whatever ran first. Note the two packages keep *separate class objects*
 PARENT, which is what `run_inference` constructs. Config is not behaviour, and the
 class you patch is not always the class that fails.
 
+##### Working is not passing (measured 2026-09-17, after the fix)
+
+The fix restored the *harness*. It did not make the check pass, and those are
+different claims — worth separating before anyone reads "FIXED" as "green".
+
+A live run against the gate's own engine (`3639…`, `verify_engine_config` 0 critical,
+16Gi, `min_instances` 4, gemini-2.5-flash with templates active):
+
+    multi_turn_task_success_v1        0.33 / 0.60   FAIL
+    multi_turn_tool_use_quality_v1    0.00 / 0.60   FAIL
+    multi_turn_trajectory_quality_v1  0.00 / 0.60   FAIL
+
+Three real metrics where there were none, so the regrouping works and
+`--threshold 3.0` maps correctly (`score_threshold / 5.0` -> 0.60). The scores are
+genuine, not an artifact.
+
+**The raters are not blind.** An inference-only probe (no evaluation run created)
+dumped the regrouped turns and found an intact trajectory:
+
+    turn 0: 3 events -> ['CALL:expense_mcp_get_user_expenses', 'RESP', 'text']
+
+**What is actually anomalous is the turn count.** `--max-turns 3` produced **one
+turn**, and multi-turn raters have nothing to grade across a single turn — which is
+the obvious candidate for two metrics landing on exactly `0.00`. Unresolved whether
+that is the user simulator, the config, or the agent closing the conversation early;
+it needs its own investigation, not an assumption.
+
+Consequence for CI: the step in `eval_gate.yaml` keeps running but stays out of the
+both-failed guard. Not because the harness is broken — that was the old, incorrect
+reason — but because a permanently-failing step in an AND guard makes the guard
+equivalent to "the other one failed" while reading as two signals.
+
 #### GEPA's `0.0` scores — unresolved, and why
 
 The run is legitimate machinery-wise, but `best_score 0.0 / baseline 0.0 / lift 0.0`
