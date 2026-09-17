@@ -325,7 +325,15 @@ COORDINATOR_CHECKS: tuple[Check, ...] = (
             "would have redded engines for a gap with no deployed fix; escalating "
             "now costs nothing — both live engines are gemini-2.5-flash and pass on "
             "templates — and means the next Gemini-3 deploy cannot land unarmored "
-            "in silence."
+            "in silence. CORRECTED 2026-09-17: accepting the plugin on its FLAG was "
+            "itself the silence. The plugin screens in-process, so its caller is the "
+            "engine's AGENT_IDENTITY, which held no modelarmor role — the call failed, "
+            "block_on_screening_failure defaults True, and a fresh Gemini-3 coordinator "
+            "answered every prompt with ADK's blocked message while this check reported "
+            "it ACTIVE. It now requires the identity to hold roles/modelarmor.user. It "
+            "reads the PROJECT policy, so a folder/org-inherited grant would read as "
+            "missing — the safe direction for a control that fails closed, and where "
+            "grant_modelarmor_user writes."
         ),
         predicate=lambda s: _armor_observation(s),
     ),
@@ -343,9 +351,29 @@ def _armor_observation(spec) -> tuple[bool, str]:
     templates = server_side_armor_enabled(model)
     plugin = _env(spec, "ENABLE_MODEL_ARMOR_PLUGIN") in ("1", "true", "True")
     if templates:
+        # Vertex calls Model Armor on the engine's behalf here, as a service agent, so
+        # the engine's own identity needs nothing.
         return True, f"{model or '(unset)'} -> templates active"
     if plugin:
-        return True, f"{model or '(unset)'} -> ADK ModelArmorPlugin active"
+        # REACHABILITY, not the flag. The plugin screens from inside the engine, so the
+        # caller is the engine's AGENT_IDENTITY — and with block_on_screening_failure
+        # defaulting True, an identity that cannot call Model Armor does not mean weaker
+        # screening, it means EVERY request is answered with ADK's blocked message.
+        #
+        # This check used to return True on the flag alone. It passed, green, on a
+        # coordinator refusing 100% of its traffic (2026-09-17).
+        grantees = spec.get("_modelarmor_grantees")
+        identity = spec.get("effective_identity") or ""
+        if grantees is None:
+            return True, f"{model or '(unset)'} -> plugin active (grant not checked)"
+        if identity and f"principal://{identity}" in grantees:
+            return True, f"{model or '(unset)'} -> plugin active, identity can reach Model Armor"
+        return False, (
+            f"{model or '(unset)'} -> plugin is the ONLY server-side layer and its identity "
+            f"CANNOT reach Model Armor: no roles/modelarmor.user for principal://<this "
+            f"engine>. It fails closed, so the engine refuses EVERY request. Fix: "
+            f"grant_modelarmor_user (scripts/lib/config.sh), then recycle the engine."
+        )
     return False, f"{model or '(unset)'} -> client-side guardrail only"
 
 

@@ -160,31 +160,11 @@ l3_post() {
     esac
 }
 
-# The one place that reads an engine's SPIFFE identity off its live spec. Prints
-# `spec.effectiveIdentity` and returns 0; prints nothing and returns 1 when the
-# field is absent (identityType is not AGENT_IDENTITY yet, or the GET failed).
-#
-# Both consumers — the Step 0b registry grant and the Layer 1 egress policies — need
-# the SAME principal, so they share one fetcher. Two copies would be two chances to
-# drift back onto the wrong one, which is the failure this file has already had once
-# (see the wrong-principal note on Layer 1). It sits here beside run_cmd, rather than
-# inside whichever step happens to call it first, because neither step owns it.
-# PROJECT_ID / REGION / ACCESS_TOKEN are resolved further down; bash binds them when
-# the function RUNS, and every call site is inside a step that runs after them.
-engine_identity() {
-    local engine_id="$1"
-    local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
-    local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
-
-    local eff
-    # `|| true` so an unreachable API or a missing token is an empty identity the
-    # caller can report, not a pipefail that kills the whole script from inside a
-    # command substitution.
-    eff=$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" "${api_base}/${engine_path}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null) || true
-    [ -n "$eff" ] || return 1
-    printf '%s' "$eff"
-}
+# engine_identity() and grant_modelarmor_user() now live in lib/config.sh, sourced at the
+# top of this file. They moved there when setup_model_armor.sh needed the same principal:
+# exactly ONE place may turn an engine into a principal, because every duplicate is a
+# fresh chance to drift back onto a service agent — which this repo has now paid for
+# twice (the registry grant, and the Model Armor grant).
 
 # ─────────────────────────────────────────────────────────────
 # Engine ids — resolved BEFORE any network call, and never aliased
@@ -418,7 +398,7 @@ fi
 # so the cutover to the registry path completes when the engine recycles — e.g.
 # an in-place `deploy_agents coordinator --update`.
 
-# engine_identity() — defined at the top of this file, beside run_cmd.
+# engine_identity() / grant_modelarmor_user() — defined in lib/config.sh.
 
 grant_registry_read() {
     local label="$1"
@@ -469,6 +449,15 @@ step "Step 0b: Agent Registry read for agent identity"
 # gcloud grant itself failed, which `fail` has already named before the script stops.
 grant_registry_read "Coordinator" "$COORDINATOR_ENGINE_ID"
 grant_registry_read "Router" "$ROUTER_ENGINE_ID"
+
+# Model Armor, granted HERE rather than in setup_model_armor.sh, for an ordering reason:
+# deploy_all.sh runs that script at step 4 and does not create the engines until step 8,
+# so on a fresh install there is no identity to grant to. This step already resolves the
+# identities, and step 10b's recycle already follows it — which this grant needs for the
+# same reason the registry grant does. The plugin's Model Armor client is built inside a
+# container, so an existing container keeps failing until it is replaced.
+grant_modelarmor_user "Coordinator" "$COORDINATOR_ENGINE_ID"
+grant_modelarmor_user "Router" "$ROUTER_ENGINE_ID"
 
 # ─────────────────────────────────────────────────────────────
 # Layer 1: IAM Allow Policies (egress control via IAP)

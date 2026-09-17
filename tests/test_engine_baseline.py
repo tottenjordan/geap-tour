@@ -201,15 +201,58 @@ class TestAdvisories:
         assert f.severity == "critical"
         assert "client-side guardrail only" in f.observed
 
-    def test_the_plugin_flag_satisfies_the_critical_check(self):
-        """The escalation is only fair because a remedy ships: a Gemini-3 engine
-        carrying ENABLE_MODEL_ARMOR_PLUGIN=1 must pass."""
+    @staticmethod
+    def _plugin_spec(grantees, identity="ident-1"):
+        """A Gemini-3 engine on the plugin path, with a given IAM answer.
+
+        ``grantees=None`` means the caller did not look up the project policy.
+        """
         env = _good_env()
         env["COORDINATOR_MODEL"] = "gemini-3.5-flash"
         env["ENABLE_MODEL_ARMOR_PLUGIN"] = "1"
-        f = _find(eb.evaluate(_good_spec(env=env), "coordinator"), "server_side_armor")
+        spec = _good_spec(env=env)
+        spec["effective_identity"] = identity
+        spec["_modelarmor_grantees"] = grantees
+        return spec
+
+    def test_the_plugin_passes_when_its_identity_can_reach_model_armor(self):
+        """The escalation is only fair because a remedy ships — but the remedy is a
+        REACHABLE plugin, not a set flag."""
+        spec = self._plugin_spec({"principal://ident-1"})
+        f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
         assert f.ok
-        assert "ModelArmorPlugin active" in f.observed
+        assert "can reach Model Armor" in f.observed
+
+    def test_the_plugin_flag_alone_is_NOT_enough(self):
+        """THE regression. This check returned ok on the flag, and passed green on a
+        coordinator refusing 100% of its traffic: the plugin screens in-process, so
+        the caller is the engine's AGENT_IDENTITY, and with no roles/modelarmor.user
+        the call fails and block_on_screening_failure=True answers every prompt with
+        ADK's blocked message."""
+        spec = self._plugin_spec(set())  # looked up, and the identity is not there
+        f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
+        assert not f.ok, "a plugin that cannot call Model Armor reported as active"
+        assert f.severity == "critical"
+        assert "CANNOT reach Model Armor" in f.observed
+        assert "refuses EVERY request" in f.observed
+
+    def test_an_unchecked_grant_does_not_manufacture_a_failure(self):
+        """`None` means nobody looked (offline callers, injected fetch). Reporting a
+        critical failure from a lookup we never made would be its own false alarm."""
+        f = _find(eb.evaluate(self._plugin_spec(None), "coordinator"), "server_side_armor")
+        assert f.ok
+        assert "grant not checked" in f.observed
+
+    def test_templates_pass_regardless_of_the_agent_identity_grant(self):
+        """On Gemini-2.x, Vertex calls Model Armor as a service agent — the engine's
+        own identity needs nothing, so the grant must not be required there."""
+        env = _good_env()
+        env["COORDINATOR_MODEL"] = "gemini-2.5-flash"
+        spec = _good_spec(env=env)
+        spec["_modelarmor_grantees"] = set()
+        f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
+        assert f.ok
+        assert "templates active" in f.observed
 
     def test_a_claude_coordinator_also_loses_server_side_armor(self):
         env = _good_env()

@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
+from typing import ClassVar
 
 import pytest
 
@@ -134,3 +136,82 @@ def test_no_iam_grant_discards_its_error_and_continues() -> None:
         if "add-iam-policy-binding" in line and "|| true" in line
     ]
     assert not offenders, offenders
+
+
+LIB = (SCRIPTS / "lib" / "config.sh").read_text()
+
+
+def _extract_fn(name: str) -> str:
+    """One shell function, by name, from lib/config.sh."""
+    start = LIB.index(f"{name}() {{")
+    return LIB[start : LIB.index("\n}\n", start) + len("\n}\n")]
+
+
+class TestModelArmorGrantNamesTheRightPrincipal:
+    """`grant_modelarmor_user` must grant to the ENGINE's identity, not a service agent.
+
+    ADK's ModelArmorPlugin screens from inside the engine, so the caller is the
+    engine's AGENT_IDENTITY. `setup_model_armor.sh` granted `roles/modelarmor.user` to
+    the Reasoning Engine *service agent* instead — the same wrong-principal mistake
+    already paid for once with the Agent Registry grant. Because the plugin defaults
+    to `block_on_screening_failure=True`, the result was not weaker screening: a fresh
+    Gemini-3 coordinator answered every prompt with ADK's blocked message.
+
+    These execute the REAL function out of lib/config.sh with `gcloud` stubbed, rather
+    than asserting on its text — per CODE_STANDARDS "exercise the wiring".
+    """
+
+    FUNCTION: ClassVar[str] = _extract_fn("grant_modelarmor_user")
+
+    def _run(self, *, dry_run: str = "false", identity: str = "spiffe-abc") -> str:
+        harness = f"""
+set -euo pipefail
+PROJECT_ID=test-project
+DRY_RUN={dry_run}
+engine_identity() {{ printf '%s' "{identity}"; }}
+gcloud() {{ echo "GCLOUD: $*" >&2; }}
+{self.FUNCTION}
+grant_modelarmor_user "Coordinator" "12345" || echo "RETURNED_NONZERO"
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        return res.stdout + res.stderr
+
+    def test_it_grants_to_the_agent_identity(self) -> None:
+        out = self._run()
+        assert "--member=principal://spiffe-abc" in out, out
+        assert "roles/modelarmor.user" in out
+
+    def test_it_never_grants_to_a_service_account(self) -> None:
+        """The exact regression: `serviceAccount:service-<N>@gcp-sa-aiplatform-re…`."""
+        assert "serviceAccount:" not in self._run()
+
+    def test_a_dry_run_cannot_claim_the_grant(self) -> None:
+        """Both of this repo's other grant helpers printed a green success on a dry
+        run before being corrected. This one is guarded from the start."""
+        out = self._run(dry_run="true")
+        assert "[dry-run]" in out
+        assert "GCLOUD:" not in out, "a dry run actually invoked gcloud"
+        assert "✓" not in out, "a dry run claimed the grant succeeded"
+
+    def test_a_missing_identity_skips_without_failing_the_run(self) -> None:
+        """Expected on a fresh install before the engines exist. It must say so and
+        return 0, so a bare call under `set -e` does not kill the script."""
+        harness = f"""
+set -euo pipefail
+PROJECT_ID=test-project
+engine_identity() {{ return 1; }}
+gcloud() {{ echo "GCLOUD: $*" >&2; }}
+{self.FUNCTION}
+grant_modelarmor_user "Coordinator" "12345"
+echo "SURVIVED"
+"""
+        res = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        assert "SURVIVED" in res.stdout
+        assert "GCLOUD:" not in res.stdout
+        assert "skipping Model Armor grant" in res.stderr
+
+    def test_there_is_exactly_one_identity_fetcher(self) -> None:
+        """One place turns an engine into a principal. Two would be two chances to
+        drift back onto a service agent, which has now happened twice."""
+        defs = [f"{f.name}" for f in SHELL_SCRIPTS if "\nengine_identity() {" in f.read_text()]
+        assert defs == ["config.sh"], f"engine_identity defined in: {defs}"

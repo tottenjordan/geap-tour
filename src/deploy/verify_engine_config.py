@@ -65,6 +65,40 @@ def _default_fetch(engine_id: str) -> dict:
     return resp.json()
 
 
+def modelarmor_grantees() -> set[str]:
+    """Principals holding a Model Armor role on the project, as ``principal://…`` etc.
+
+    ADK's ModelArmorPlugin screens from INSIDE the engine, so the caller is the
+    engine's own AGENT_IDENTITY. Reading the project policy is how we answer "can the
+    identity that will make the call actually make it?" — which is the question the
+    ``server_side_armor`` rule used to skip, reporting the plugin ACTIVE on an engine
+    that refused every request because the call 403'd and the plugin fails closed.
+
+    Project-scope only: a role inherited from a folder or org would read as missing.
+    That is acceptable because ``grant_modelarmor_user`` grants at project level, so
+    the check looks exactly where the fix writes. Returns an empty set on any error —
+    the rule treats "unknown" as "not proven reachable", which is the safe direction
+    for a control that fails closed.
+    """
+    import requests
+
+    url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{GCP_PROJECT_ID}:getIamPolicy"
+    try:
+        resp = requests.post(
+            url, headers={"Authorization": f"Bearer {_default_token()}"}, json={}, timeout=60
+        )
+        resp.raise_for_status()
+        policy = resp.json()
+    except Exception:
+        return set()
+    return {
+        member
+        for binding in policy.get("bindings", [])
+        if "modelarmor" in binding.get("role", "")
+        for member in binding.get("members", [])
+    }
+
+
 def normalize(resource: dict) -> dict[str, Any]:
     """Flatten the API resource into the shape :func:`evaluate` expects.
 
@@ -91,13 +125,24 @@ def normalize(resource: dict) -> dict[str, Any]:
     }
 
 
-def check_engine(engine_id: str, role: str | None = None, *, fetch=None) -> dict[str, Any]:
-    """Fetch one engine and evaluate it. Never raises — a fetch error is a result."""
+def check_engine(
+    engine_id: str, role: str | None = None, *, fetch=None, armor_grantees=None
+) -> dict[str, Any]:
+    """Fetch one engine and evaluate it. Never raises — a fetch error is a result.
+
+    ``armor_grantees`` is the set from :func:`modelarmor_grantees`, injected rather
+    than fetched here so one project-policy read serves every engine — and so tests
+    never touch GCP. ``None`` means "not looked up"; the armor rule distinguishes that
+    from an empty set.
+    """
     fetch = fetch or _default_fetch
     try:
         spec = normalize(fetch(engine_id))
     except Exception as exc:
         return {"engine_id": engine_id, "error": str(exc)[:300], "findings": [], "ok": False}
+    # Synthetic key: not part of the engine resource, supplied by the caller. Named with
+    # a leading underscore so nothing mistakes it for something the API returned.
+    spec["_modelarmor_grantees"] = armor_grantees
     findings = evaluate(spec, role)
     return {
         "engine_id": spec["engine_id"] or engine_id,
@@ -214,7 +259,11 @@ def main(argv: list[str] | None = None, *, fetch=None) -> int:
     else:
         targets = [(eid, args.role or role) for eid, role in default_targets()]
 
-    results = [check_engine(eid, role, fetch=fetch) for eid, role in targets]
+    # One project-policy read for the whole run, not one per engine.
+    grantees = modelarmor_grantees() if fetch is None else None
+    results = [
+        check_engine(eid, role, fetch=fetch, armor_grantees=grantees) for eid, role in targets
+    ]
     print(
         json.dumps(_jsonable(results), indent=2)
         if args.json

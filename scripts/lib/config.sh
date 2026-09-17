@@ -145,3 +145,87 @@ http_send() {   # method, url, body, [bearer-token]
         *)      return 1 ;;
     esac
 }
+
+# ─────────────────────────────────────────────────────────────
+# Agent identities and the grants that must name them
+# ─────────────────────────────────────────────────────────────
+#
+# THE ONE PLACE that turns an engine into a principal. Prints `spec.effectiveIdentity`
+# and returns 0; prints nothing and returns 1 when the field is absent (identityType is
+# not AGENT_IDENTITY, or the GET failed).
+#
+# It lives here, not in one script, because the wrong-principal bug is what duplication
+# of this costs. It has already been paid twice: the registry grant went to the Reasoning
+# Engine SERVICE AGENT (fixed 2026-08-15), and setup_model_armor.sh granted
+# roles/modelarmor.user to that same service agent while the engine calls Model Armor as
+# its OWN SPIFFE identity — which fails closed and made a Gemini-3 coordinator refuse
+# 100% of requests (diagnosed 2026-09-17).
+#
+# ACCESS_TOKEN is honoured when a caller already resolved one; otherwise this fetches its
+# own, so a script that does not manage tokens can still use it.
+engine_identity() {
+    local engine_id="$1"
+    local token="${ACCESS_TOKEN:-$(gcloud auth print-access-token 2>/dev/null)}"
+    local api_base="https://${REGION}-aiplatform.googleapis.com/v1"
+    local engine_path="projects/${PROJECT_ID}/locations/${REGION}/reasoningEngines/${engine_id}"
+
+    local eff
+    # `|| true` so an unreachable API or a missing token is an empty identity the caller
+    # can report, not a pipefail that kills the whole script from a command substitution.
+    eff=$(curl -s -H "Authorization: Bearer ${token}" "${api_base}/${engine_path}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('spec',{}).get('effectiveIdentity',''))" 2>/dev/null) || true
+    [ -n "$eff" ] || return 1
+    printf '%s' "$eff"
+}
+
+# Grant roles/modelarmor.user to an ENGINE'S OWN identity.
+#
+# ADK 2.8.0's ModelArmorPlugin screens inside the engine's request path, so the caller is
+# the engine's AGENT_IDENTITY — not the Reasoning Engine service agent, and not the
+# deployer. On a Gemini-3 backbone the plugin is the ONLY server-side layer (templates
+# are regional and omitted there), and it defaults to block_on_screening_failure=True.
+# So a missing grant is not reduced screening: it is every request answered with ADK's
+# "I'm sorry, but I can't help with that request." Hence the loud failure below.
+#
+# Only modelarmor.user. calloutUser is for the Service-Extensions callout path at the
+# gateway, not for an in-process plugin, and the service-agent grants stay as they are —
+# they serve the Gemini-2.x template path.
+#
+# Returns 0 for the already-reported "no identity" skip, so a bare call under `set -e`
+# does not kill the script; returns 1 only for a real grant failure.
+grant_modelarmor_user() {
+    local label="$1"
+    local engine_id="$2"
+
+    if [ -z "${engine_id}" ]; then
+        echo "  ⚠ ${label}: no engine id — skipping Model Armor grant." >&2
+        return 0
+    fi
+
+    local eff
+    eff="$(engine_identity "${engine_id}")" || {
+        echo "  ⚠ ${label}: no effectiveIdentity for ${engine_id} — skipping Model Armor grant." >&2
+        echo "    (expected on a fresh install before the engines exist; deploy_all.sh" >&2
+        echo "     grants it at step 10, once identities are resolvable.)" >&2
+        return 0
+    }
+
+    # Guarded BEFORE the success line, because `ok …granted` is a CLAIM. Both of this
+    # repo's other grant helpers printed it on a dry run before being corrected.
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        echo "    [dry-run] gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=principal://${eff} --role=roles/modelarmor.user"
+        return 0
+    fi
+
+    if gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="principal://${eff}" \
+        --role="roles/modelarmor.user" \
+        --condition=None \
+        --quiet >/dev/null; then
+        echo "  ✓ ${label}: roles/modelarmor.user granted to the agent identity"
+        return 0
+    fi
+    echo "  ✗ ${label}: roles/modelarmor.user grant FAILED (gcloud's error is above)." >&2
+    echo "    A Gemini-3 engine without it refuses EVERY request (plugin fails closed)." >&2
+    return 1
+}

@@ -102,11 +102,23 @@ def model_armor_plugin(model: str | None = None):
     field, so it is model-family-independent and covers exactly the backbones the
     templates cannot. It reuses the same two templates the repo already provisions.
 
-    Opt-in via ``ENABLE_MODEL_ARMOR_PLUGIN`` (default OFF) so behaviour is
-    byte-identical until switched on, matching the ``ENABLE_AGENT_ANALYTICS``
-    precedent. Returns ``None`` when the flag is off, when the template path
-    already covers this backbone, or when ``google-cloud-modelarmor`` is missing —
-    the import is deferred so the disabled path never touches it.
+    ``ENABLE_MODEL_ARMOR_PLUGIN`` defaults **ON** (``src/config.py``, flipped
+    2026-09-09). This docstring said "default OFF" until 2026-09-17 and was simply
+    stale — which mattered, because it told anyone debugging a Gemini-3 coordinator
+    that the plugin could not be involved. Returns ``None`` when the flag is off,
+    when the template path already covers this backbone, or when
+    ``google-cloud-modelarmor`` is missing — the import is deferred so the disabled
+    path never touches it.
+
+    **On a Gemini-3 backbone this plugin is the ONLY server-side layer**, and it
+    screens from inside the engine — so the caller is the engine's own
+    ``AGENT_IDENTITY``, which must hold ``roles/modelarmor.user``. It does not get
+    that by default, and ADK's ``block_on_screening_failure`` defaults to ``True``,
+    so a missing grant is not degraded screening: every request comes back as
+    ``"I'm sorry, but I can't help with that request."`` A fresh coordinator did
+    exactly that until 2026-09-17. ``scripts/lib/config.sh:grant_modelarmor_user``
+    is the grant; ``engine_baseline``'s ``server_side_armor`` rule now fails when
+    the identity cannot reach Model Armor, rather than trusting the flag.
     """
     if not config.ENABLE_MODEL_ARMOR_PLUGIN:
         return None
