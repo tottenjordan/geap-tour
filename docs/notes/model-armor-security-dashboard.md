@@ -182,11 +182,48 @@ full configuration…` returns `pi_and_jailbreak: MATCH_FOUND` from Model Armor 
 `BLOCKED_PATTERNS` returns `False` — that one distinguishes *screening restored* from
 *refusals merely stopped*.
 
-### Known gap: the message is ambiguous
+### The message is ambiguous, so the signals are not (2026-09-17)
 
 ADK returns the **same** text whether screening **worked** or **failed**. Before the
-grant it meant "broken"; after it means "blocked". The only discriminator is the
-engine log line `Model Armor input screening call failed.` The client-side guardrail
-already emits a `guardrail.blocked` span event and a
-`custom.googleapis.com/agent_armor/blocked` metric; the plugin has no equivalent, and
-should get one before we lean on it.
+grant it meant "broken"; after it means "blocked". The only discriminator was the
+engine log line `Model Armor input screening call failed.`, which nothing watched —
+which is why the diagnosis took a day rather than a glance.
+
+`src/armor/observable_plugin.py:ObservableModelArmorPlugin` now splits them, mirroring
+what `guardrail_with_telemetry` already does for the client-side blocklist:
+
+| outcome | metric | span event |
+| --- | --- | --- |
+| genuine violation | `agent_armor/blocked`, `reason=model_armor_plugin` | `guardrail.blocked` |
+| screening call failed | `agent_armor/plugin_screening_failed` | `armor.plugin.screening_failed` |
+| clean prompt | *(nothing)* | *(nothing)* |
+
+A genuine block joins the **existing** blocked series rather than starting a new one,
+labelled so the two layers stay separable. A clean prompt emits nothing on purpose — a
+per-request metric on the happy path buries the rate you actually alert on.
+
+**The override point is the discriminator.** `_handle_screening_failure` is reached
+only on a failure (an exception, or a non-`SUCCESS` `invocation_result`); a real
+violation goes through `_handle_sanitization_result`'s `MATCH_FOUND` branch straight to
+`_blocked_response`. The block counter therefore tests `SUCCESS and MATCH_FOUND`
+specifically, not "super returned a response" — the looser test double-counts a failure
+as both broken *and* blocked, re-creating the conflation.
+
+The failure path also logs what to do about it: check the engine's `AGENT_IDENTITY`
+holds `roles/modelarmor.user`, and that the engine was recycled after the grant.
+
+Telemetry is guarded on both paths and cannot change a screening decision; a test
+drives the real callbacks with an exploding metrics writer to prove it.
+
+**Still no alert policy — deliberately.** Neither `agent_armor/blocked` nor the new
+failure series has one, and creating a policy for a metric that has never been written
+repeats a mistake already recorded here: `agent_router/*` had alerts before it had a
+scheduled writer, so the series never accumulated enough points for the rolling
+baseline and the alerts watched something static. Wire an alert when a Gemini-3 engine
+is actually serving. Until then the query is:
+
+```
+fetch global::custom.googleapis.com/agent_armor/plugin_screening_failed
+```
+
+Any non-zero rate means the agent is refusing traffic it never screened.

@@ -129,9 +129,12 @@ def model_armor_plugin(model: str | None = None):
         from google.adk.integrations.model_armor import (
             ModelArmorConfig as AdkModelArmorConfig,
         )
-        from google.adk.integrations.model_armor import (
-            ModelArmorPlugin,
-        )
+
+        # Our subclass, not ADK's plugin: it separates "blocked" from "screening
+        # broke", which ADK reports with the same message. Imported HERE so the
+        # deferred-import property holds — the module imports ModelArmorPlugin at top
+        # level, and the disabled path must never touch google-cloud-modelarmor.
+        from src.armor.observable_plugin import ObservableModelArmorPlugin
     except ImportError:  # pragma: no cover - requires google-cloud-modelarmor
         logger.warning(
             "ENABLE_MODEL_ARMOR_PLUGIN is set but google-cloud-modelarmor is not "
@@ -141,7 +144,7 @@ def model_armor_plugin(model: str | None = None):
         return None
 
     templates = get_model_armor_config()
-    return ModelArmorPlugin(
+    return ObservableModelArmorPlugin(
         config=AdkModelArmorConfig(
             prompt_template_name=templates.prompt_template_name,
             response_template_name=templates.response_template_name,
