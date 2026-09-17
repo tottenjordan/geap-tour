@@ -733,6 +733,50 @@ Still **not in force**: these bind to gateways, and no engine is attached to one
 
 * Resolve the callout service-account question above — the gateway card names a
   tenant-project SA, we grant our own.
-* Decide whether `failOpen: true` is the posture we want. Both extensions allow traffic
-  unscreened if the callout breaks.
+* Decide whether `failOpen: true` is the posture we want (see below). Both extensions
+  allow traffic unscreened if the callout breaks.
 
+### Making fail-open observable (2026-09-17)
+
+`failOpen: true` with `timeout: 1s` means a slow or erroring callout lets the request
+through **unevaluated** — Layer 1's per-tool conditions do not apply, or the prompt is
+never screened — and nothing in the response says so. That is only a defensible posture
+if you can see it happening. Nothing here could.
+
+Google already emits the signal; we simply never read it:
+
+| metric (`networkservices.googleapis.com/`) | what it answers |
+| --- | --- |
+| `extension/failed_open_count` | how many callouts failed **and were allowed anyway**, labelled `ignored_status` (`DEADLINE_EXCEEDED`, `CANCELLED`, …) |
+| `extension/invocation_count` | the denominator — distinguishes "no failures" from "no traffic" |
+| `extension/invocation_latencies` | headroom before the 1s timeout starts tripping fail-open |
+
+There are matching log fields too — LB request logs carry
+`service_extension_info.failed_open: true` alongside a non-OK `grpc_status`, which is
+how you tell fail-open-allowed traffic from normally-allowed traffic per request.
+
+`src/observability/gateway_callouts.py` reads the metrics:
+
+```
+uv run python -m src.observability.gateway_callouts [--hours 24] [--json]
+```
+
+**The verdict is three-valued, deliberately.** `no_data` is not `ok`:
+
+* `no_data` — no callouts at all. Expected today (nothing is attached to a gateway).
+  Reported as **UNOBSERVED, not healthy**, and exits 0 because it is the correct state
+  — exiting non-zero on the normal case is how `agent_router/*`'s alerts became noise.
+* `ok` — invocations happened and none failed open.
+* `failing` — a request went past a control that did not evaluate it. Exits non-zero
+  and names the gRPC statuses.
+
+Treating an empty series as health is the mistake `engine_baseline` made when it
+reported a Model Armor plugin ACTIVE on the strength of a flag. This is the same shape,
+so it is the property the tests defend hardest.
+
+**Honest limit: the `failing` path has never been exercised against real data.** Nothing
+is attached to a gateway, so no callout has ever run and `failed_open_count` has no
+points. Live, the tool correctly reports `no_data`. The failure path is covered by unit
+tests with a fake client and by four mutations, but it has not met a real fail-open
+event — and it will not until enforcement is possible. Do not read a future `ok` from
+this tool as validated until at least one real invocation has been observed.
