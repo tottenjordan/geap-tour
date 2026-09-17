@@ -16,35 +16,42 @@ This spike answers it by separating the two sources, which need different fixes:
 Variances add, so ``agent_sd = sqrt(total_sd**2 - judge_sd**2)``.
 
 MEASURED 2026-09-17, router engine 6134…, the same deterministic 20 cases
-(``_select_cases("router_agent", 20)``) every time:
+(``_select_cases("router_agent", 20)``) every time. Run twice, and the second pass
+changed the answer:
 
-    metric                  mean   judge sd   total sd   agent sd   floor headroom
-    instruction_following   3.40      0.086      0.335      0.324          2.7 sd
-    response_quality        3.74      0.275        n/a        n/a          2.7 sd
-    hallucination           4.31      0.049        n/a        n/a         26.6 sd
-    safety                  4.85      0.087        n/a        n/a         21.2 sd
+    metric                  judge sd (n=3)   judge sd (n=8)   change
+    instruction_following            0.086            0.179     2.1x
+    response_quality                 0.275            0.171     0.6x
+    hallucination                    0.049            0.031     0.6x
+    safety                           0.087            0.054     0.6x
 
-Three conclusions that change how these series should be read:
+Decomposition on the n=8 judge figures (totals are still only n=3 full runs):
 
-1. ``instruction_following`` is **agent-dominated** — 93% of its variance is the
-   router giving genuinely different answers run to run, not the judge wobbling.
-   Re-running it will not stabilise it; only the agent can.
-2. ``response_quality`` is **inconclusive at this sample size**, and instructively
-   so: its judge-only sd (0.275) exceeded its total sd across full runs (0.120),
-   which cannot happen in expectation because total variance contains judge
-   variance. At n=3 an sd's 95% CI spans roughly 12x, so the contradiction is the
-   sample talking, not the metric. The 3.47 -> 4.02 movement on identical input is
-   real and worth knowing; "judge-dominated" is not established. **Raise
-   ``--repeats`` before acting on it.**
-3. ``hallucination`` and ``safety`` sit 21-27 sd above their floors. They are
-   nearly inert — cheap to keep, but do not mistake them for active protection.
+    metric                  mean   judge sd   total sd   agent sd   agent %var
+    instruction_following   3.50      0.179      0.335      0.283          71%
+    response_quality        3.81      0.171      0.120    INCOHERENT         —
+    hallucination           4.57      0.031        n/a        n/a           —
+    safety                  4.63      0.054        n/a        n/a           —
 
-Detection limits that follow, for a rolling-baseline z >= 2:
+Three conclusions:
 
-    instruction_following   needs a shift >= 0.67
-    response_quality        needs a shift >= 0.55
-    hallucination           needs a shift >= 0.10
-    safety                  needs a shift >= 0.17
+1. ``instruction_following`` is **agent-dominated** — 71% of its variance is the
+   router answering differently run to run. Re-running will not stabilise it; only
+   the agent can. (The n=3 pass put this at 93%: the direction held, the magnitude
+   did not.)
+2. ``response_quality`` is **undecidable**, and which side is suspect has flipped.
+   At n=3 the judge estimate looked wrong; at n=8 the judge is solid and the TOTAL
+   is the n=3 number — and it came out *below* the judge variance it contains,
+   which cannot happen. Do not reach for :mod:`src.eval.judge_panel` on this.
+3. ``hallucination`` and ``safety`` sit 30-50 sd above their floors. Nearly inert —
+   cheap to keep, but do not mistake them for active protection.
+
+Detection limits for a rolling-baseline z >= 2: ``instruction_following`` 0.67,
+``response_quality`` >= 0.34, ``hallucination`` 0.06, ``safety`` 0.11.
+
+**The next measurement costs nothing.** What is missing is more FULL runs for the
+totals, and the daily ``router_quality`` workflow produces exactly one per day.
+Re-decompose after a week instead of paying for fresh inference.
 
 **On sample size.** ``--repeats 3`` is enough to notice that a metric moves; it is
 not enough to say by how much. A standard deviation from three observations carries
