@@ -41,6 +41,14 @@ uv run python -m src.deploy.verify_engine_config --why        # rationale for ev
 # Deploy MCP servers to Cloud Run
 uv run python -m src.deploy.deploy_mcp_servers
 
+# Serving dependency set — deploy_agents.REQUIREMENTS is the single source; the
+# src/**/requirements.txt copies the `adk deploy` path reads are GENERATED from it
+# (a test fails on drift). Any package in BOTH pyproject.toml and REQUIREMENTS must
+# carry the identical specifier: the AdkApp is cloudpickled locally and unpickled by
+# whatever the container installed, so "compatible" is not the bar.
+uv run python -m src.deploy.serving_requirements --check   # CI/test guard
+uv run python -m src.deploy.serving_requirements --write   # regenerate after editing REQUIREMENTS
+
 # Run GEPA prompt optimization
 uv run python -m src.optimize.run_optimize src/agents/coordinator
 uv run python -m src.optimize.run_optimize src/router src/optimize/router_sampler_config.json  # positional: <module> <sampler_config> [optimizer_config] — run_optimize has no argparse

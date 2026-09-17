@@ -1099,8 +1099,10 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
+    { name = "cloudpickle" },
     { name = "fastmcp" },
     { name = "google-adk", extra = ["agent-identity", "eval"] },
+    { name = "google-auth" },
     { name = "google-cloud-aiplatform", extra = ["adk", "agent-engines", "evaluation"] },
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-bigquery-storage" },
@@ -1113,6 +1115,7 @@ dependencies = [
     { name = "litellm", version = "1.85.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "litellm", version = "1.96.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "matplotlib" },
+    { name = "mcp" },
     { name = "numpy" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-instrumentation-google-genai" },
@@ -1148,8 +1151,10 @@ pipelines = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = ">=1" },
+    { name = "cloudpickle", specifier = ">=3.0,<4.0" },
     { name = "fastmcp", specifier = ">=3.4.7,<4" },
     { name = "google-adk", extras = ["agent-identity", "eval"], specifier = "==2.9.1" },
+    { name = "google-auth", specifier = ">=2.52.0" },
     { name = "google-cloud-aiplatform", extras = ["adk", "agent-engines", "evaluation"], specifier = "==2.1.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.45" },
     { name = "google-cloud-bigquery-storage", specifier = ">=2.41" },
@@ -1159,8 +1164,9 @@ requires-dist = [
     { name = "google-cloud-storage", specifier = ">=3.14" },
     { name = "google-cloud-trace", specifier = ">=1.20.0" },
     { name = "google-genai", specifier = ">=2.22,<3" },
-    { name = "litellm", specifier = ">=1.85.7" },
+    { name = "litellm", specifier = ">=1.85.7,<1.97.0" },
     { name = "matplotlib", specifier = ">=3.11.1" },
+    { name = "mcp", specifier = ">=1.29.0,<2" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.42.1" },
     { name = "opentelemetry-instrumentation-google-genai", specifier = ">=0.7b1" },
