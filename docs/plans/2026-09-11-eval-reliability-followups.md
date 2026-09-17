@@ -149,8 +149,12 @@ and picking one is the remaining work:
 * **Local-`LlmAgent` path** — supported upstream today and genuinely multi-turn, but
   it measures local code, not the deployed engine. A different claim from the one the
   gate currently makes.
-* **Our own `stream_query` loop** — drives the deployed engine with a simulator model
-  reading `conversation_plan`. Measures the real thing; more code to own.
+* **Our own `stream_query` loop** — DONE 2026-09-17: `src/eval/multi_turn_sim.py`.
+  Drives the deployed engine, one session per scenario, simulator model reading
+  `conversation_plan`. Live: 2/2 genuinely multi-turn, six tools exercised, and
+  **1.00/1.00/1.00** on the same managed `MULTI_TURN_*` rubrics that scored
+  0.33/0.00/0.00 on single-turn data. Not yet wired into the eval gate — 1.00 across
+  the board at n=2 shows the pipeline works, not that the metric discriminates.
 
 `tests/test_simulated_eval.py:TestTheSdkDiscardsTheSimulatorOnTheRuntimePath` pins the
 upstream behaviour and fails when it changes, so a future SDK fix cannot pass
