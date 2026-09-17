@@ -135,9 +135,26 @@ floor. The raters are not blind (an inference-only probe found a real trajectory
 to **one turn** despite `--max-turns 3`, and multi-turn raters have nothing to grade
 across a single turn.
 
-So the multi-turn surface exists and reports. The open question is why it only ever
-gets one turn — simulator, config, or the agent ending early. That is the follow-up,
-and it is unblocked. See `docs/notes/adk-2.7.1-dependency-refresh.md`
+**Root-caused 2026-09-17: the SDK, not the agent and not our config.**
+`agentplatform._genai._evals_common._run_agent` passes `user_simulator_config=None`
+when it is handed a `runtime` (a deployed engine) and forwards it only for a local
+in-process `LlmAgent`. `--max-turns` never leaves the client — 1, 3 and 8 all return
+one invocation and zero `user`-authored events — so the run is single-turn by
+construction and the `multi_turn_*` raters grade one turn. Two score exactly 0.00
+because of it.
+
+That closes the question but does not give us a multi-turn signal. Two real options,
+and picking one is the remaining work:
+
+* **Local-`LlmAgent` path** — supported upstream today and genuinely multi-turn, but
+  it measures local code, not the deployed engine. A different claim from the one the
+  gate currently makes.
+* **Our own `stream_query` loop** — drives the deployed engine with a simulator model
+  reading `conversation_plan`. Measures the real thing; more code to own.
+
+`tests/test_simulated_eval.py:TestTheSdkDiscardsTheSimulatorOnTheRuntimePath` pins the
+upstream behaviour and fails when it changes, so a future SDK fix cannot pass
+unnoticed while the workaround quietly outlives it. See `docs/notes/adk-2.7.1-dependency-refresh.md`
 ("Working is not passing").
 
 ---

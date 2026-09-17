@@ -179,10 +179,22 @@ jobs:
       #   multi_turn_trajectory_quality_v1  0.00 / 0.60  FAIL
       #
       # The data reaching the raters is intact — an inference-only probe showed a real
-      # trajectory (`expense_mcp_get_user_expenses` -> response -> text). The visible
-      # anomaly is that the conversation collapses to ONE turn despite --max-turns 3,
-      # and multi-turn raters have nothing to grade across a single turn. Unresolved:
-      # whether that is the user simulator, the config, or the agent ending early.
+      # trajectory (`expense_mcp_get_user_expenses` -> response -> text). The
+      # conversation collapses to ONE turn despite --max-turns 3, and multi-turn
+      # raters have nothing to grade across a single turn.
+      #
+      # ROOT-CAUSED 2026-09-17, and it is NOT the agent. The SDK discards the user
+      # simulator on the deployed-engine path: `_evals_common._run_agent` passes
+      # `user_simulator_config=None` when given a `runtime`, and forwards it only for
+      # a local in-process LlmAgent. So --max-turns never leaves the client (measured:
+      # 1, 3 and 8 all return one invocation and zero user-authored events) and the
+      # run is single-turn by construction. Two of the three raters therefore score
+      # exactly 0.00 — this step cannot pass as configured.
+      #
+      # A real upstream limitation, unlike the one this step was first quarantined
+      # for. tests/test_simulated_eval.py asserts it still holds and FAILS when a
+      # future SDK starts honouring the config — that is the signal to re-measure and
+      # fold this step back into the AND guard below.
       #
       # So it stays out of the AND guard — not because the harness is broken, but
       # because a step that always fails would make the guard equivalent to

@@ -1,7 +1,33 @@
 """Simulated evaluation — generate synthetic scenarios and run agent inference for CI/CD.
 
-Supports per-agent evaluation with conversation scenarios,
-ADK user simulator with configurable max turns, and multi-turn metrics.
+Generates conversation scenarios, runs them against a deployed engine, and scores
+them with the three ``multi_turn_*`` raters.
+
+**Against a deployed engine this is SINGLE-TURN, and `--max-turns` does nothing.**
+Not a misconfiguration on our side — ``agentplatform._genai._evals_common._run_agent``
+hard-codes the simulator away for the remote path::
+
+    if runtime:                                    # a deployed engine: our path
+        return _execute_inference_concurrently(
+            user_simulator_config=None,            # <- discarded here
+            inference_fn=_execute_agent_run_with_retry, ...)
+    elif agent:                                    # a local in-process LlmAgent
+        return _execute_inference_concurrently(
+            user_simulator_config=user_simulator_config,   # <- honoured
+            inference_fn=_execute_local_agent_run_with_retry, ...)
+
+Measured on google-cloud-aiplatform 2.1.0 (2026-09-17): ``max_turn`` 1, 3 and 8 all
+return exactly one invocation and zero ``user``-authored events, and the raw service
+response confirms the conversation simply stops after the agent's first reply — often
+mid-question ("Would you like to book one of the flights?"). So the multi-turn raters
+grade a single turn, and ``multi_turn_tool_use_quality_v1`` /
+``multi_turn_trajectory_quality_v1`` score 0.00 by construction.
+
+This is a real upstream limitation, unlike the one this file was once quarantined for
+(that claim was wrong — the defects were ours, fixed in PR #138). The only supported
+multi-turn path today runs a LOCAL ``LlmAgent``, which measures local code rather than
+the deployed engine — a different thing, and a deliberate choice nobody has made yet.
+``tests/test_simulated_eval.py`` pins the upstream behaviour so we find out if it changes.
 
 Usage:
     uv run python -m src.eval.simulated_eval --agent-id <AGENT_ENGINE_ID> --agent-name coordinator_agent
@@ -235,7 +261,19 @@ def run_simulated_eval(
     )
     print("  Generated scenarios")
 
-    print(f"[2/3] Running inference (max {max_turns} turns per scenario)...")
+    print("[2/3] Running inference...")
+    # Printed, not buried in a docstring: the number the operator passed is ignored,
+    # and a run that silently means something other than what was asked for is how
+    # 0.00 scores got read as an agent-quality problem for a week.
+    print(
+        f"  NOTE: --max-turns {max_turns} has NO EFFECT against a deployed engine. "
+        "The SDK discards user_simulator_config on the runtime path "
+        "(_evals_common._run_agent), so this is a SINGLE-TURN run and the "
+        "multi_turn_* raters grade one turn. See this module's docstring."
+    )
+    # Config still sent: it is correct, it is what a fixed SDK would honour, and
+    # tests/test_simulated_eval.py fails when upstream starts using it — which is the
+    # signal that this whole note can be deleted.
     eval_dataset_with_traces = client.evals.run_inference(
         agent=agent_resource_name,
         src=eval_dataset,
