@@ -199,6 +199,64 @@ print(targets[0].rsplit('/', 1)[-1] if targets else '')
 }
 
 
+# Import an authz EXTENSION or POLICY from YAML, and verify it actually landed.
+#
+# Replaces the raw REST POSTs, on evidence. Three separate things went wrong with those,
+# and only the first was visible before #122 made the reporting honest:
+#
+#   1. the IAP extension POST is rejected outright — 400, "iapPolicyVersion is a required
+#      key ... for IAP AuthzExtension with unspecified load balancing scheme";
+#   2. the Model Armor extension POST sends MALFORMED JSON — model_armor_settings is a
+#      JSON string interpolated inside a JSON string, so its inner quotes terminate the
+#      value early ("Expected , or } after key:value pair");
+#   3. worst, the policy POST SUCCEEDS and silently drops every field. It returns 201 and
+#      creates `{"target": {}}` — no action, no policyProfile, no customProvider. Reading
+#      the HTTP status is not enough when the status is 201 and the resource is empty.
+#
+# `gcloud ... import` gets all three right; it is how the egress extension and policy
+# were created by hand during the enforcement experiment, with their fields intact. The
+# old comment said gcloud "requires undocumented loadBalancingScheme" — that was true
+# once and is not now.
+#
+# The read-back is the point. A create that reports success and produces an empty
+# resource is the exact failure this layer has been shipping.
+l3_import() {
+    local kind="$1"      # authz-extensions | authz-policies
+    local name="$2"
+    local yaml="$3"
+    local verify_key="$4"  # a field that MUST be present on the created resource
+
+    local group
+    case "${kind}" in
+        authz-extensions) group="beta service-extensions authz-extensions" ;;
+        authz-policies)   group="beta network-security authz-policies" ;;
+    esac
+
+    if $DRY_RUN; then
+        echo "    [dry-run] gcloud ${group} import ${name} --location=${REGION}"
+        return 0
+    fi
+
+    printf '%s' "${yaml}" > "/tmp/l3-${name}.yaml"
+    if ! gcloud ${group} import "${name}" --source="/tmp/l3-${name}.yaml"             --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>"/tmp/l3-${name}.err"; then
+        fail "${name}: import FAILED"
+        head -3 "/tmp/l3-${name}.err" >&2
+        L3_FAILURES=$((L3_FAILURES + 1))
+        return 1
+    fi
+
+    if gcloud ${group} describe "${name}" --location="${REGION}" --project="${PROJECT_ID}"             --format="value(${verify_key})" 2>/dev/null | grep -q .; then
+        ok "${name}: imported (${verify_key} present)"
+        L3_CREATED=$((L3_CREATED + 1))
+        return 0
+    fi
+    fail "${name}: import reported success but ${verify_key} is EMPTY on the resource."
+    fail "  This is the 201-with-an-empty-body failure the REST path had. Inspect:"
+    fail "    gcloud ${group} describe ${name} --location=${REGION} --project=${PROJECT_ID}"
+    L3_FAILURES=$((L3_FAILURES + 1))
+    return 1
+}
+
 l3_post() {
     post_resource "$@" || true
     case "${POST_RESULT}" in
@@ -1360,60 +1418,68 @@ else
 
 step "Layer 3: Authorization Delegation (IAP + Model Armor)"
 
-# 3a: IAP Authorization Extension (via REST — gcloud requires undocumented loadBalancingScheme)
-info "Creating IAP authorization extension..."
-l3_post "IAP authz extension" \
-    "https://networkservices.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzExtensions?authzExtensionId=geap-iap-extension" \
-    '{"service":"iap.googleapis.com","failOpen":true,"timeout":"1s"}'
-$DRY_RUN || sleep 10
-
-# 3b: IAP Authorization Policy (REQUEST_AUTHZ on ingress gateway)
-# THE EGRESS GATEWAY, not the ingress one. Corrected 2026-09-17 by audit.
+# 3a: IAP Authorization Extension.
 #
-# IAP REQUEST_AUTHZ is supported ONLY on an AGENT_TO_ANYWHERE (egress) gateway —
-# "IAP is not supported during ingress". A CLIENT_TO_AGENT (ingress) gateway accepts
-# exactly one policy and it must be CONTENT_AUTHZ. So this policy has pointed at a
-# gateway that cannot evaluate it since 2026-05-13, and re-running only recreated it.
-#
-# It is the same misplacement that made Layer 1 inert: those are roles/iap.egressor
-# bindings — EGRESS — and the only IAP delegation in the project was wired to ingress,
-# so nothing was ever positioned to evaluate them.
-info "Creating IAP authorization policy..."
-l3_post "IAP authz policy (REQUEST_AUTHZ → EGRESS gateway)" \
-    "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-iap-policy" \
-    "{
-        \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_EGRESS_NAME}\"]},
-        \"action\":\"CUSTOM\",
-        \"customProvider\":{\"authzExtension\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-iap-extension\"]}},
-        \"policyProfile\":\"REQUEST_AUTHZ\"
-    }"
+# metadata.iapPolicyVersion is REQUIRED — the API rejects the extension without it
+# ("iapPolicyVersion is a required key ... with unspecified load balancing scheme").
+# The May-created extension predates that and carries metadata: null, so it is stale
+# too; l3_import's read-back is what will say so.
+info "Importing IAP authorization extension..."
+l3_import authz-extensions geap-iap-extension "name: projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/geap-iap-extension
+service: iap.googleapis.com
+timeout: 1s
+failOpen: true
+metadata:
+  iapPolicyVersion: \"V2\"
+" "metadata" || true
+$DRY_RUN || sleep 5
 
-# A 409 means "exists", NOT "is correct". These creates are POST-only: nothing here can
-# ever converge a resource whose configuration is wrong, and the live geap-iap-policy is
-# wrong right now (it targets ingress). Without this check the run reports "already
-# exists (unchanged)" and moves on, which is true and useless.
+# 3b: IAP Authorization Policy -> the EGRESS gateway. Corrected 2026-09-17 by audit.
+#
+# IAP REQUEST_AUTHZ is supported ONLY on an AGENT_TO_ANYWHERE gateway — "IAP is not
+# supported during ingress" — and a CLIENT_TO_AGENT gateway accepts only CONTENT_AUTHZ,
+# max one. This policy targeted ingress from 2026-05-13, where it could never be
+# evaluated, and every re-run recreated it there.
+#
+# It is the same misplacement that made Layer 1 inert: Layer 1 binds roles/iap.egressor
+# — EGRESS — while the project's only IAP delegation pointed at ingress.
+info "Importing IAP authorization policy (EGRESS)..."
+l3_import authz-policies geap-iap-policy "name: projects/${PROJECT_ID}/locations/${REGION}/authzPolicies/geap-iap-policy
+action: CUSTOM
+policyProfile: REQUEST_AUTHZ
+customProvider:
+  authzExtension:
+    resources:
+    - projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-iap-extension
+target:
+  resources:
+  - projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_EGRESS_NAME}
+" "target" || true
 l3_assert_policy_target "geap-iap-policy" "${GATEWAY_EGRESS_NAME}"
-$DRY_RUN || sleep 10
+$DRY_RUN || sleep 5
 
-# 3c: Model Armor IAM prerequisites
+# 3c: Model Armor IAM prerequisites.
 #
-# These two are PROJECT-level grants on a shared project. Unlike the curl creates
-# above, `gcloud add-iam-policy-binding` really does exit non-zero on failure, so
-# `&& ok || warn` was sound here — but `2>/dev/null` threw away the reason, and
-# "may already exist" was the wrong diagnosis anyway: the command is idempotent and
-# returns 0 when the binding is already present, so a non-zero status is always a
-# real failure. Both now say so and are counted.
+# These two are PROJECT-level grants on a shared project. Unlike the curl creates the
+# rest of this layer used to make, `gcloud add-iam-policy-binding` really does exit
+# non-zero on failure, so `&& ok || fail` was sound here — but `2>/dev/null` threw away
+# the reason, and "may already exist" was the wrong diagnosis anyway: the command is
+# idempotent and returns 0 when the binding is present, so non-zero is always real.
+#
+# OPEN QUESTION, recorded not guessed: the egress gateway's own card names
+# service-1058803961903@gcp-sa-dep... (a Google-managed TENANT project number) as its
+# serviceExtensionsServiceAccount, while this grants our own project's. The docs do not
+# say which makes the callout, and this repo has paid for the wrong-principal mistake
+# twice already. See docs/notes/geap-services-audit-2026-09.md.
 MA_SA="service-${PROJECT_NUMBER}@gcp-sa-dep.iam.gserviceaccount.com"
 info "Granting Model Armor roles to gateway service account (${MA_SA})..."
 
 grant_gateway_sa_role() {
     local role="$1"
 
-    # Handled explicitly rather than leaning on run_cmd, for two reasons this function
-    # got wrong on its first draft: `ok "granted"` is a CLAIM, so a dry run must not
-    # reach it, and the `>/dev/null` that hides add-iam-policy-binding's policy dump
-    # also swallows run_cmd's own "[dry-run] …" line — leaving a dry run printing a
-    # green success and nothing else. Same shape as apply_iap_policy's guard.
+    # Handled explicitly rather than via run_cmd: `ok "granted"` is a CLAIM, so a dry
+    # run must not reach it, and the `>/dev/null` that hides the policy dump also
+    # swallows run_cmd's own "[dry-run] …" line.
     if $DRY_RUN; then
         echo "    [dry-run] gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${MA_SA} --role=${role}"
         return 0
@@ -1434,27 +1500,40 @@ grant_gateway_sa_role() {
 grant_gateway_sa_role roles/modelarmor.calloutUser
 grant_gateway_sa_role roles/serviceusage.serviceUsageConsumer
 
-# 3d: Model Armor Authorization Extension
+# 3d: Model Armor Authorization Extension.
+#
+# model_armor_settings is a JSON *string* whose value is itself JSON. The REST path
+# interpolated it inside a JSON string literal, so its inner quotes terminated the value
+# and every POST was rejected as malformed — which is why this extension has never
+# existed. YAML block scalars carry the embedded quotes without escaping.
 PROMPT_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/geap-workshop-prompt"
 RESPONSE_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/geap-workshop-response"
 
-info "Creating Model Armor authorization extension..."
-MA_SETTINGS="[{\"request_template_id\":\"${PROMPT_TEMPLATE}\",\"response_template_id\":\"${RESPONSE_TEMPLATE}\"}]"
-l3_post "Model Armor authz extension" \
-    "https://networkservices.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzExtensions?authzExtensionId=geap-model-armor-extension" \
-    "{\"service\":\"modelarmor.${REGION}.rep.googleapis.com\",\"metadata\":{\"model_armor_settings\":\"${MA_SETTINGS}\"},\"failOpen\":true,\"timeout\":\"1s\"}"
-$DRY_RUN || sleep 10
+info "Importing Model Armor authorization extension..."
+l3_import authz-extensions geap-model-armor-extension "name: projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/geap-model-armor-extension
+service: modelarmor.${REGION}.rep.googleapis.com
+timeout: 1s
+failOpen: true
+metadata:
+  model_armor_settings: '[{\"request_template_id\": \"${PROMPT_TEMPLATE}\", \"response_template_id\": \"${RESPONSE_TEMPLATE}\"}]'
+" "metadata" || true
+$DRY_RUN || sleep 5
 
-# 3e: Model Armor Authorization Policy (CONTENT_AUTHZ on ingress gateway)
-info "Creating Model Armor authorization policy..."
-l3_post "Model Armor authz policy (CONTENT_AUTHZ → ingress gateway)" \
-    "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-model-armor-policy" \
-    "{
-        \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_NAME}\"]},
-        \"action\":\"CUSTOM\",
-        \"customProvider\":{\"authzExtension\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-model-armor-extension\"]}},
-        \"policyProfile\":\"CONTENT_AUTHZ\"
-    }"
+# 3e: Model Armor Authorization Policy -> INGRESS, which is correct.
+# CONTENT_AUTHZ is the only profile a Client-to-Agent gateway supports (max one).
+info "Importing Model Armor authorization policy (INGRESS)..."
+l3_import authz-policies geap-model-armor-policy "name: projects/${PROJECT_ID}/locations/${REGION}/authzPolicies/geap-model-armor-policy
+action: CUSTOM
+policyProfile: CONTENT_AUTHZ
+customProvider:
+  authzExtension:
+    resources:
+    - projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-model-armor-extension
+target:
+  resources:
+  - projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_NAME}
+" "target" || true
+l3_assert_policy_target "geap-model-armor-policy" "${GATEWAY_NAME}"
 
 echo ""
 # The posture statement Layer 1 has carried since it started applying, and Layer 3 did

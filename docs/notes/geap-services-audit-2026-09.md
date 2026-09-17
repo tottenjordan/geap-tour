@@ -679,10 +679,60 @@ itself currently fails with `code 13 INTERNAL` (see above). Layer 1 has carried 
 "applied but not enforced" statement since it started applying; Layer 3 now carries the
 equivalent.
 
+### Then we ran it, and found three more
+
+The misplaced policy was deleted and `--layer3` re-run. Every create failed except one,
+and **none of these were visible before #122 made the reporting honest** — the layer had
+been printing "✓ created" four times and producing two resources.
+
+| create | result |
+| --- | --- |
+| IAP extension | **400** — *"iapPolicyVersion is a required key ... with unspecified load balancing scheme"* |
+| IAP policy (egress) | 201 — **but empty**: `{"target": {}}`, no action, no profile, no provider |
+| Model Armor extension | **400** — *"Expected , or } after key:value pair"* |
+| Model Armor policy | **400** — its extension does not exist (consequence of the above) |
+
+1. **The IAP extension payload was simply invalid.** `metadata.iapPolicyVersion` is
+   required. The May-created extension predates the requirement and carries
+   `metadata: null`, so it was stale too.
+2. **`model_armor_settings` was malformed JSON.** It is a JSON *string* whose value is
+   itself JSON, and the REST path interpolated it inside a JSON string literal — the
+   inner quotes closed the value early. **This extension had therefore never existed**,
+   which is the real reason `geap-model-armor-policy` was never created.
+3. **A 201 is not a created resource.** The policy POST succeeded and silently dropped
+   every field. Reading the HTTP status — the fix from #122 — cannot see this. Only
+   reading the resource back can.
+
+**A hypothesis of mine was wrong, for the record.** I suggested the misplaced IAP policy
+might be occupying the ingress gateway's single policy slot and thereby blocking Model
+Armor. Ingress was empty and the Model Armor policy still failed. Defect 2 was the whole
+explanation.
+
+### The fix: import, then read back
+
+Layer 3 no longer POSTs. It uses `gcloud … import` — the path that created the egress
+extension and policy correctly by hand during the enforcement experiment — and
+`l3_import` then **describes the resource and fails if the verified field is empty**.
+The script's old comment claimed gcloud "requires undocumented loadBalancingScheme";
+that was true once and is not now.
+
+### Layer 3 is correctly provisioned, for the first time
+
+Verified by reading each resource back independently of the script:
+
+| resource | state |
+| --- | --- |
+| `geap-iap-extension` | `iap.googleapis.com`, `metadata.iapPolicyVersion: V2` |
+| `geap-iap-policy` | `CUSTOM` / `REQUEST_AUTHZ` / **egress** gateway / → iap extension |
+| `geap-model-armor-extension` | `modelarmor.us-central1.rep…`, settings intact |
+| `geap-model-armor-policy` | `CUSTOM` / `CONTENT_AUTHZ` / **ingress** gateway / → MA extension |
+
+Still **not in force**: these bind to gateways, and no engine is attached to one.
+
 ### Still open
 
-* Delete the misplaced live `geap-iap-policy` so a `--layer3` run can recreate it on
-  egress. Not done here: it is a shared gateway and a deletion is the operator's call.
-* Resolve the callout service-account question above.
-* Decide whether `failOpen: true` is the posture we want.
+* Resolve the callout service-account question above — the gateway card names a
+  tenant-project SA, we grant our own.
+* Decide whether `failOpen: true` is the posture we want. Both extensions allow traffic
+  unscreened if the callout breaks.
 
