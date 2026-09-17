@@ -718,6 +718,61 @@ write_egress_policy "{out}" "t" "d" "expr"
             "principal://spike-identity",
         ], "the served engines were dropped from the policy"
 
+    LOOP: ClassVar[str] = SCRIPT[
+        SCRIPT.index("EXTRA_EGRESS_IDENTITIES=()") : SCRIPT.index(
+            "\ndone\n", SCRIPT.index("EXTRA_EGRESS_IDENTITIES=()")
+        )
+        + len("\ndone")
+    ]
+
+    def _run_loop(self, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        """Execute the REAL resolution loop under `set -u`, as the script does."""
+        harness = f"""
+set -euo pipefail
+info() {{ echo "INFO: $*"; }}
+fail() {{ echo "FAIL: $*" >&2; }}
+engine_identity() {{ printf 'identity-for-%s' "$1"; }}
+{self.LOOP}
+echo "MEMBERS=${{#EXTRA_EGRESS_IDENTITIES[@]}}"
+"""
+        return subprocess.run(
+            ["bash", "-c", harness],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={"PATH": "/usr/bin:/bin", **env},
+        )
+
+    def test_unset_does_not_kill_the_script(self) -> None:
+        """`set -u` makes expanding an UNSET variable fatal, and unset is the DEFAULT.
+
+        Shipped broken exactly here: the flag was exercised only with the variable
+        SET — a dry run and a live apply, both green — so the single path every
+        ordinary run takes was the one path never executed. The script died at the
+        `for` line with "EXTRA_EGRESS_ENGINE_IDS: unbound variable" before writing or
+        applying anything, and no test noticed because the other tests set
+        EXTRA_EGRESS_IDENTITIES directly and skipped the loop entirely.
+        """
+        res = self._run_loop({})
+        assert res.returncode == 0, f"unset killed the script: {res.stderr}"
+        assert "unbound variable" not in res.stderr
+        assert "MEMBERS=0" in res.stdout
+
+    def test_empty_string_behaves_like_unset(self) -> None:
+        res = self._run_loop({"EXTRA_EGRESS_ENGINE_IDS": ""})
+        assert res.returncode == 0, res.stderr
+        assert "MEMBERS=0" in res.stdout
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("a", 1), ("a b", 2), ("a,b", 2), ("a, b", 2), ("a,b,c", 3)],
+    )
+    def test_space_and_comma_separated_both_work(self, value: str, expected: int) -> None:
+        """Both separators are documented in the usage comment, so both are tested."""
+        res = self._run_loop({"EXTRA_EGRESS_ENGINE_IDS": value})
+        assert res.returncode == 0, res.stderr
+        assert f"MEMBERS={expected}" in res.stdout
+
     def test_an_unresolvable_extra_id_aborts_the_run(self) -> None:
         """A silently dropped member is an engine that looks authorised in the
         command you typed and is denied at the gateway an hour later."""

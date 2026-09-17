@@ -552,7 +552,16 @@ ROUTER_IDENTITY="$(engine_identity "$ROUTER_ENGINE_ID" || true)"
 #
 # Unset by default, so a normal run binds exactly the coordinator and the router.
 EXTRA_EGRESS_IDENTITIES=()
-for _extra_id in ${EXTRA_EGRESS_ENGINE_IDS//,/ }; do
+# `${VAR-}` and not `${VAR//,/ }`. This file runs under `set -u`, where expanding an
+# UNSET variable is a fatal error — and unset is the DEFAULT, i.e. every ordinary run.
+# Shipped broken: the flag was exercised only with the variable SET (a dry run and a
+# live apply, both passing), so the one path nobody tested was the one everybody takes.
+# The whole script died at this line with "EXTRA_EGRESS_ENGINE_IDS: unbound variable"
+# before writing or applying anything.
+# Defaulted into a local FIRST, so the comma-to-space substitution below operates on a
+# variable that is always set. `${UNSET//,/ }` is itself the fatal expansion.
+_extra_raw="${EXTRA_EGRESS_ENGINE_IDS-}"
+for _extra_id in ${_extra_raw//,/ }; do
     _extra_eff="$(engine_identity "${_extra_id}" || true)"
     if [ -z "${_extra_eff}" ]; then
         # Fail loudly. A silently dropped member is an engine that looks authorised in

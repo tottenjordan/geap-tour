@@ -237,13 +237,25 @@ The flag alone is not enough, and flipping it blind is the risk worth naming: **
 is deny-by-default and can block the engine's own calls to aiplatform and logging.**
 A safe order:
 
-1. `iamEnforcementMode: DRY_RUN` on the gateway; confirm from audit logs what *would*
-   be denied.
-2. Register every destination (three MCP Cloud Run URLs) — `deploy_all.sh:151` already
-   has the command shape.
-3. Grant `roles/iap.egressor` on each destination to the engine's `principal://…`.
-4. `ENABLE_AGENT_GATEWAY=1` and in-place `--update` on the **probe engine 4380…** only,
-   diffing engine env before and after.
+> **SUPERSEDED — this was attempted on 2026-09-16 and the binding is not possible in
+> this project.** See "Enforcement: attempted, and BLOCKED" at the end of this note for
+> the evidence and for the corrections to the steps below. Three of them were wrong:
+> `iamEnforcementMode` is not a gateway field, the MCP servers are not the only
+> destinations that need registering, and the probe engine is the wrong target because
+> egress default-deny blocks an engine's own Vertex and logging calls.
+
+1. ~~`iamEnforcementMode: DRY_RUN` on the gateway~~ — **wrong resource.** It is
+   `metadata.iamEnforcementMode` on an *authorization extension*, and egress needs its
+   own extension plus a `REQUEST_AUTHZ` policy bound to the egress gateway.
+2. Register every destination — **not just the three MCP servers.** The engine's own
+   Google hostnames (Vertex inference regional/global/mTLS, logging, telemetry,
+   monitoring) must be registered too, as a `--endpoint-spec-type=no-spec` service, or
+   default-deny kills the engine.
+3. Grant `roles/iap.egressor` on each destination to the engine's `principal://…`, plus
+   an agent-to-registry binding on the agent resource itself.
+4. ~~in-place `--update` on the probe engine `4380…`~~ — **use a disposable engine.**
+   The probe is the demo engine and a failed attach does not degrade an engine, it kills
+   it.
 5. Verify, then roll to coordinator `3639…` and router `6134…`.
 
 Also worth closing: `deploy_agents` sets only `agent_to_anywhere_config` while the
@@ -463,9 +475,119 @@ resolving, and tool calls executing normally during the eval (5/8 items).
 
 ### Still open
 
-* **Enforcement.** Attaching a gateway is the single reversible flip, and egress is
-  deny-by-default via IAP — it can block an engine's own aiplatform and logging calls.
-  Probe engine `4380…` first, per recommendation 3 above.
 * **Layer 3 is gated but unaudited.** `--layer3` now makes it opt-in and its creates
   report their real HTTP status, but nothing has reviewed what it builds.
 * Layer 2 (SGP) remains out of scope.
+
+---
+
+## Enforcement: attempted, and BLOCKED (2026-09-16)
+
+**A gateway cannot be bound to a reasoning engine in this project.** Every documented
+prerequisite is satisfied and all three attach paths fail with `code 13 INTERNAL`:
+
+| attempt | result |
+| --- | --- |
+| `deploy_agents --update` with `ENABLE_AGENT_GATEWAY=1` (both modes) | `13 INTERNAL` |
+| REST PATCH, `agentToAnywhereConfig` only, `updateMask=spec.deploymentSpec.agentGatewayConfig` | `13 INTERNAL` |
+| **CREATE** with `agent_gateway_config` set at creation | `13 INTERNAL` |
+
+The third matters most. The docs say a retroactive PATCH can fail and to set the config
+**at creation time** instead; doing that fails identically, so this is not a sequencing
+mistake. The LRO returns only a link to a generic troubleshooting page, and Cloud Logging
+carries nothing beyond `UpdateReasoningEngine INTERNAL`.
+
+### Prerequisites verified present, so none of these is the cause
+
+* engine created **2026-09-16**, well after the 2026-04-29 binding cutoff;
+* `identityType=AGENT_IDENTITY`, set at creation, `effectiveIdentity` resolving;
+* auto-registered as an **agent** in the Agent Registry the gateway is bound to (the
+  egress gateway's exported YAML carries `registries:` pointing at ours);
+* the **agent-to-registry** `roles/iap.egressor` binding on the agent resource;
+* destinations registered and granted — six Google hostnames plus the three MCP servers;
+* **0 of 35** engines project-wide bind any egress gateway, so the "all agents in a
+  project and region must bind the same egress gateway" constraint is not in play;
+* no org-policy constraint on agent gateways at project level;
+* an `authzExtension` (`iap.googleapis.com`) **and** a `REQUEST_AUTHZ` `authzPolicy`
+  bound to the egress gateway, both verified wired to each other.
+
+The remaining explanation is environmental — private-preview enrollment for gateway
+*binding* — which is exactly what `setup_governance_policies.sh`'s own Step 0 comment
+guessed long before this attempt.
+
+**This refines the headline above rather than contradicting it.** Agent Gateway *is*
+provisioned and the API *does* answer. But **provisioned ≠ bindable**: the control plane
+responds, the resources exist, and `reasoningEngines` still refuses the attach. Any
+future claim that "the gateway is ready to turn on" should mean *bindable*, and the only
+way to know is to try.
+
+### How dry-run actually works, for whoever gets enrollment
+
+Recommendation 3 above proposes `iamEnforcementMode: DRY_RUN` **on the gateway**. That is
+the wrong resource — no such field exists on `agentGateways` (confirmed by exporting the
+full YAML). It lives on an **authorization extension**, and egress needs its own
+extension *and* policy; ours target the ingress gateway, so Layer 1's egress policies
+have never been evaluated by anything.
+
+```yaml
+# authzExtension — applied with: gcloud beta service-extensions authz-extensions import
+name: projects/PROJECT/locations/REGION/authzExtensions/geap-iap-egress-extension
+service: iap.googleapis.com
+timeout: 1s
+failOpen: false          # the ingress extension uses true, which is why a broken
+                         # check is indistinguishable from a passing one
+metadata:
+  iapPolicyVersion: "V2"
+  iamEnforcementMode: "DRY_RUN"   # remove, or set ENFORCE, to go live
+---
+# authzPolicy — gcloud beta network-security authz-policies import
+name: projects/PROJECT/locations/REGION/authzPolicies/geap-iap-egress-policy
+action: CUSTOM
+policyProfile: REQUEST_AUTHZ
+customProvider:
+  authzExtension:
+    resources: [projects/NUMBER/locations/REGION/authzExtensions/geap-iap-egress-extension]
+target:
+  resources: [projects/NUMBER/locations/REGION/agentGateways/GATEWAY-egress]
+```
+
+Both imported cleanly without the undocumented `loadBalancingScheme` the Layer 3 REST
+path works around. Denials read back with:
+
+```
+resource.type="networkservices.googleapis.com/Gateway" AND httpRequest.status=403
+```
+
+### Destinations: services, not endpoints
+
+`gcloud agent-registry endpoints` has only `describe` and `list` — **no `create`**.
+Endpoints are derived from a **service** registered with `--endpoint-spec-type=no-spec`
+and one `--interfaces=protocolBinding=jsonrpc,url=https://HOST` per hostname. The
+gateway matches hostnames exactly, so regional, global and mTLS variants each need
+registering. All six collapsed into **one** endpoint resource, so a single
+`roles/iap.egressor` grant covers them. IAP addresses the three destination classes with
+distinct flags: `--mcp-server`, `--endpoint`, `--agent`.
+
+### Two defects this exercise exposed in our own code
+
+* **`EXTRA_EGRESS_ENGINE_IDS` shipped broken for the default case.** `${VAR//,/ }` on an
+  unset variable is fatal under `set -u`, and unset is what every ordinary run uses. It
+  was exercised only with the variable *set* — a dry run and a live apply, both green —
+  so the one path everybody takes was the one path never executed. Fixed by defaulting
+  into a local first; the loop is now executed by tests with the variable unset, empty,
+  space-separated and comma-separated.
+* **The foreign-binding precheck cannot remove a member.** Its rule is "abort if the live
+  policy holds a `(role, member)` pair the file does not", which is right for someone
+  else's binding and wrong for a deliberate removal. Tearing the spike back out was
+  refused three times and had to be applied directly with a fresh etag. Adding members is
+  safe; removing one needs an explicit acknowledgement the script does not yet have.
+
+### Teardown — the project is back as it was
+
+Disposable engine deleted (35 → 34 engines, none carrying `agentGatewayConfig`); its
+member removed from all three Layer 1 policies, which hold exactly the coordinator and
+router again; its endpoint, agent-resource and project-level grants cleared; the egress
+`authzPolicy`, `authzExtension` and the `geap-google-api-egress` destination service all
+deleted. `authz-extensions list` and `authz-policies list` show only the two originals,
+`endpoints list` is empty again, and the served engines report 0 critical with all 10 MCP
+tools resolving.
