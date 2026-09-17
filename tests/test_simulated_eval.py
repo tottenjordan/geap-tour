@@ -76,6 +76,81 @@ class TestExtraFieldsArePreservedNotDropped:
             et.ConversationTurn.model_rebuild(force=True)
 
 
+class TestTheParentModelAcceptsTheRelaxedChild:
+    """The patch must relax EVERY config before it rebuilds ANY schema.
+
+    A pydantic-v2 parent compiles its children's schemas into its own. The patch did
+    `set config; rebuild` in one loop over `dir()` — which is alphabetical — so
+    `AgentData` was rebuilt BEFORE `ConversationTurn` was relaxed, freezing the old
+    `forbid` child into the parent. Rebuilding the child afterwards does not propagate
+    upward.
+
+    `run_inference` then died with `49 validation errors for AgentData` on
+    `turns.N.author`, `turns.N.invocation_id`, … and `simulated_eval` returned zero
+    metrics for a week.
+
+    **Why the existing tests missed it, which is the point.** One asserts
+    `model_config['extra'] == 'allow'` — and both classes reported exactly that. The
+    other validates a `ConversationTurn` directly — and the child was genuinely fixed.
+    The parent was never exercised, and the parent is what `run_inference` constructs.
+
+        AgentData.model_config['extra']        -> 'allow'
+        ConversationTurn.model_config['extra'] -> 'allow'
+        AgentData.model_validate({'turns': [<Event-shaped turn>]}) -> ValidationError
+
+    Config is not behaviour.
+    """
+
+    def test_agent_data_accepts_a_turn_carrying_event_fields(self):
+        """THE regression. Reverting to a single set-and-rebuild loop turns this red
+        while every config assertion above stays green."""
+        import pydantic
+        from agentplatform._genai.types import evals as et
+
+        from src.eval.simulated_eval import _patch_evals_extra_fields
+
+        _patch_evals_extra_fields()
+        try:
+            data = et.AgentData.model_validate(
+                {
+                    "turns": [
+                        {
+                            "author": "coordinator_agent",
+                            "content": {"parts": [{"text": "Booked FL001."}]},
+                            "invocation_id": "e-123",
+                            "id": "evt-1",
+                            "timestamp": 1789644498.2,
+                        }
+                    ]
+                }
+            )
+        except pydantic.ValidationError as exc:
+            raise AssertionError(
+                "AgentData rejected an Event-shaped turn even though its own config "
+                f"reads '{et.AgentData.model_config.get('extra')}'. The parent froze a "
+                f"stale child schema — relax all configs BEFORE rebuilding. {exc}"
+            ) from exc
+
+        assert data.turns, "the turn survived parsing but the list is empty"
+
+    def test_the_patch_relaxes_before_it_rebuilds(self):
+        """Structural guard on the ordering itself, so the two-phase shape survives a
+        refactor that keeps the tests passing by accident."""
+        import inspect
+
+        from src.eval import simulated_eval
+
+        src = inspect.getsource(simulated_eval._patch_evals_extra_fields)
+        relax = src.index('cls.model_config["extra"] = "allow"')
+        rebuild = src.index("model_rebuild(force=True)")
+        assert relax < rebuild, "a rebuild happens before the relax pass completes"
+        # and they must be in SEPARATE passes over the same collection, not one loop
+        assert src.count("for cls in targets:") == 2, (
+            "the relax and rebuild passes were merged back into one loop — a parent "
+            "then compiles a child that has not been relaxed yet"
+        )
+
+
 class TestAnEmptyRunIsNotAPass:
     """Zero metrics used to report `all_passed: true`.
 
