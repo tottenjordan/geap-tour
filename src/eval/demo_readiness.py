@@ -17,6 +17,10 @@ existing verifiers (does NOT reimplement them):
   ``docs/notes/online-quality-monitor.md``. *critical*
 * **memory_store** — the Memory Bank has persisted persona facts
   (:func:`src.eval.verify_memory.fetch_memories`). *critical*
+* **gateway_callouts** — the Agent Gateway's authorization callouts are not failing
+  open (:func:`src.observability.gateway_callouts.read_callout_health`). *advisory* —
+  and note ``no_data`` reports as ok with the verdict in the detail, because nothing is
+  attached to a gateway yet and a permanently red row is an alarm nobody reads.
 * **monitors** — the three monitoring surfaces report ``status: ok``
   (:func:`src.eval.verify_monitors.verify_monitor_results`). *advisory* — an
   intentional demo regression point (e.g. the faithfulness RED publish) or a
@@ -69,6 +73,35 @@ def check_monitors(
     data = verify_fn(output_format="json", hours=hours) or {}
     status = data.get("status", "unknown")
     return status == "ok", f"status={status}"
+
+
+def check_gateway_callouts(
+    *, read_fn: Callable[..., dict] | None = None, hours: int = 24
+) -> tuple[bool, str]:
+    """Is the Agent Gateway skipping its own security checks?
+
+    Both authz extensions are ``failOpen: true`` with a 1s timeout, so a slow or
+    erroring callout lets the request through UNEVALUATED — Layer 1's per-tool
+    conditions do not apply, or the prompt is never screened — and nothing in the
+    response says so. ``gateway_callouts`` reads Google's own
+    ``extension/failed_open_count`` for exactly that.
+
+    **`no_data` is reported as ok, and the detail says why.** Nothing is attached to a
+    gateway today, so the series is permanently empty; a red row on every run is the
+    `agent_router/*` mistake — an alarm that is always wrong gets ignored, and then the
+    real one is too. The row stays green and the DETAIL carries the verdict verbatim,
+    so "unobserved" can never be mistaken for "verified".
+
+    Advisory, like ``monitors``: a fail-open is a governance problem worth seeing, not
+    a reason to block a demo that is otherwise working.
+    """
+    if read_fn is None:
+        from src.observability.gateway_callouts import read_callout_health as read_fn
+    result = read_fn(hours) or {}
+    verdict = result.get("verdict", "unknown")
+    detail = f"{verdict} — {result.get('detail', '')}".strip(" —")
+    # Only an OBSERVED fail-open is a red row.
+    return verdict != "failing", detail
 
 
 def check_memory(
@@ -191,6 +224,11 @@ def build_default_checks(*, engine_id: str, user_id: str, deep: bool = False) ->
             "run": lambda: check_memory(engine_id=engine_id, user_id=user_id),
         },
         {"name": "monitors", "critical": False, "run": lambda: check_monitors()},
+        {
+            "name": "gateway_callouts",
+            "critical": False,
+            "run": lambda: check_gateway_callouts(),
+        },
     ]
     if deep:
         checks.append(
