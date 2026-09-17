@@ -591,3 +591,192 @@ router again; its endpoint, agent-resource and project-level grants cleared; the
 deleted. `authz-extensions list` and `authz-policies list` show only the two originals,
 `endpoints list` is empty again, and the served engines report 0 critical with all 10 MCP
 tools resolving.
+
+---
+
+## Layer 3 audit (2026-09-17)
+
+Layer 3 was gated behind `--layer3` in #122 without anyone reading what it builds. This
+is that read. It creates four resources and makes two project-level IAM grants; **one of
+the four has been pointed at a gateway that cannot evaluate it since 2026-05-13.**
+
+### The IAP policy is on the wrong gateway
+
+`geap-iap-policy` is `policyProfile: REQUEST_AUTHZ`, delegating to
+`iap.googleapis.com`, targeting the **ingress** gateway. Per Google's docs:
+
+* IAP `REQUEST_AUTHZ` is supported **only on AGENT_TO_ANYWHERE (egress)** gateways —
+  *"IAP is not supported during ingress."*
+* A **CLIENT_TO_AGENT (ingress)** gateway supports **only `CONTENT_AUTHZ`**, maximum
+  **one** policy.
+* An egress gateway allows at most **four** policies, any profile.
+
+So the policy cannot do anything where it is, and never could.
+
+**This is the same misplacement that made Layer 1 inert.** Layer 1 binds
+`roles/iap.egressor` — egress — while the project's only IAP delegation pointed at
+ingress, so nothing was ever positioned to evaluate those bindings. The enforcement
+experiment had to create an egress extension and policy from scratch precisely because
+Layer 3's were on the wrong gateway. Corrected: the script now targets
+`GATEWAY_EGRESS_NAME`.
+
+### A 409 is not a passing grade
+
+Every Layer 3 create is a POST. When the resource exists the API returns 409 and (since
+#122) the run honestly reports *"already exists (unchanged)"* — true, and useless: the
+script can never converge a resource whose configuration is wrong. That is how the
+ingress mistake survived four months of re-runs.
+
+`l3_assert_policy_target` now reads the live policy back and fails if it does not point
+where intended, printing the `authz-policies delete` command. It does **not** delete:
+retargeting a policy on a shared gateway is an operator's decision.
+
+**The live `geap-iap-policy` still targets ingress** and must be deleted before a
+`--layer3` run can recreate it correctly.
+
+### What was already right
+
+The Model Armor half. `CONTENT_AUTHZ` on the **ingress** gateway is exactly what the
+docs prescribe — it is the only profile ingress supports — and the extension's
+`service: modelarmor.REGION.rep.googleapis.com` plus its `model_armor_settings` metadata
+(a JSON-array *string* of `request_template_id` / `response_template_id`) match the
+documented shape field for field.
+
+### Both extensions are failOpen=true
+
+If the callout breaks, traffic is **allowed unscreened**. That is availability over
+safety, and it is not what Google documents for IAP (their example uses
+`failOpen: false`). It is also the property that made the in-process Model Armor plugin
+failure so hard to see. Left as-is and now **stated in the script's output**, because
+changing a security posture is a decision, not a cleanup.
+
+### Open question: which service account makes the callout
+
+The script grants `roles/modelarmor.calloutUser` and
+`roles/serviceusage.serviceUsageConsumer` to
+`service-<OUR_PROJECT_NUMBER>@gcp-sa-dep.iam.gserviceaccount.com`.
+
+But the **egress gateway's own card** names a different principal:
+
+```
+serviceExtensionsServiceAccount: service-1058803961903@gcp-sa-dep.iam.gserviceaccount.com
+```
+
+— a Google-managed tenant project number, not ours. The ingress gateway exposes no card
+at all, so there is nothing to compare it against. The docs do not say which account
+needs the role.
+
+Given this repo has now paid for the wrong-principal mistake **twice** (the Agent
+Registry grant, and the Model Armor grant to the RE service agent), this is flagged
+rather than guessed. Resolve it by reading a real callout's denial before trusting
+Layer 3's Model Armor path.
+
+### Nothing here is in force
+
+These policies bind to **gateways**, and a gateway evaluates nothing until an engine
+carries `agentGatewayConfig`. **0 of 35** engines in this project do, and the attach
+itself currently fails with `code 13 INTERNAL` (see above). Layer 1 has carried an
+"applied but not enforced" statement since it started applying; Layer 3 now carries the
+equivalent.
+
+### Then we ran it, and found three more
+
+The misplaced policy was deleted and `--layer3` re-run. Every create failed except one,
+and **none of these were visible before #122 made the reporting honest** — the layer had
+been printing "✓ created" four times and producing two resources.
+
+| create | result |
+| --- | --- |
+| IAP extension | **400** — *"iapPolicyVersion is a required key ... with unspecified load balancing scheme"* |
+| IAP policy (egress) | 201 — **but empty**: `{"target": {}}`, no action, no profile, no provider |
+| Model Armor extension | **400** — *"Expected , or } after key:value pair"* |
+| Model Armor policy | **400** — its extension does not exist (consequence of the above) |
+
+1. **The IAP extension payload was simply invalid.** `metadata.iapPolicyVersion` is
+   required. The May-created extension predates the requirement and carries
+   `metadata: null`, so it was stale too.
+2. **`model_armor_settings` was malformed JSON.** It is a JSON *string* whose value is
+   itself JSON, and the REST path interpolated it inside a JSON string literal — the
+   inner quotes closed the value early. **This extension had therefore never existed**,
+   which is the real reason `geap-model-armor-policy` was never created.
+3. **A 201 is not a created resource.** The policy POST succeeded and silently dropped
+   every field. Reading the HTTP status — the fix from #122 — cannot see this. Only
+   reading the resource back can.
+
+**A hypothesis of mine was wrong, for the record.** I suggested the misplaced IAP policy
+might be occupying the ingress gateway's single policy slot and thereby blocking Model
+Armor. Ingress was empty and the Model Armor policy still failed. Defect 2 was the whole
+explanation.
+
+### The fix: import, then read back
+
+Layer 3 no longer POSTs. It uses `gcloud … import` — the path that created the egress
+extension and policy correctly by hand during the enforcement experiment — and
+`l3_import` then **describes the resource and fails if the verified field is empty**.
+The script's old comment claimed gcloud "requires undocumented loadBalancingScheme";
+that was true once and is not now.
+
+### Layer 3 is correctly provisioned, for the first time
+
+Verified by reading each resource back independently of the script:
+
+| resource | state |
+| --- | --- |
+| `geap-iap-extension` | `iap.googleapis.com`, `metadata.iapPolicyVersion: V2` |
+| `geap-iap-policy` | `CUSTOM` / `REQUEST_AUTHZ` / **egress** gateway / → iap extension |
+| `geap-model-armor-extension` | `modelarmor.us-central1.rep…`, settings intact |
+| `geap-model-armor-policy` | `CUSTOM` / `CONTENT_AUTHZ` / **ingress** gateway / → MA extension |
+
+Still **not in force**: these bind to gateways, and no engine is attached to one.
+
+### Still open
+
+* Resolve the callout service-account question above — the gateway card names a
+  tenant-project SA, we grant our own.
+* Decide whether `failOpen: true` is the posture we want (see below). Both extensions
+  allow traffic unscreened if the callout breaks.
+
+### Making fail-open observable (2026-09-17)
+
+`failOpen: true` with `timeout: 1s` means a slow or erroring callout lets the request
+through **unevaluated** — Layer 1's per-tool conditions do not apply, or the prompt is
+never screened — and nothing in the response says so. That is only a defensible posture
+if you can see it happening. Nothing here could.
+
+Google already emits the signal; we simply never read it:
+
+| metric (`networkservices.googleapis.com/`) | what it answers |
+| --- | --- |
+| `extension/failed_open_count` | how many callouts failed **and were allowed anyway**, labelled `ignored_status` (`DEADLINE_EXCEEDED`, `CANCELLED`, …) |
+| `extension/invocation_count` | the denominator — distinguishes "no failures" from "no traffic" |
+| `extension/invocation_latencies` | headroom before the 1s timeout starts tripping fail-open |
+
+There are matching log fields too — LB request logs carry
+`service_extension_info.failed_open: true` alongside a non-OK `grpc_status`, which is
+how you tell fail-open-allowed traffic from normally-allowed traffic per request.
+
+`src/observability/gateway_callouts.py` reads the metrics:
+
+```
+uv run python -m src.observability.gateway_callouts [--hours 24] [--json]
+```
+
+**The verdict is three-valued, deliberately.** `no_data` is not `ok`:
+
+* `no_data` — no callouts at all. Expected today (nothing is attached to a gateway).
+  Reported as **UNOBSERVED, not healthy**, and exits 0 because it is the correct state
+  — exiting non-zero on the normal case is how `agent_router/*`'s alerts became noise.
+* `ok` — invocations happened and none failed open.
+* `failing` — a request went past a control that did not evaluate it. Exits non-zero
+  and names the gRPC statuses.
+
+Treating an empty series as health is the mistake `engine_baseline` made when it
+reported a Model Armor plugin ACTIVE on the strength of a flag. This is the same shape,
+so it is the property the tests defend hardest.
+
+**Honest limit: the `failing` path has never been exercised against real data.** Nothing
+is attached to a gateway, so no callout has ever run and `failed_open_count` has no
+points. Live, the tool correctly reports `no_data`. The failure path is covered by unit
+tests with a fake client and by four mutations, but it has not met a real fail-open
+event — and it will not until enforcement is possible. Do not read a future `ok` from
+this tool as validated until at least one real invocation has been observed.

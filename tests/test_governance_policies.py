@@ -407,8 +407,8 @@ class TestLayer3IsOptInAndReportsHonestly:
         assert "ENABLE_LAYER3=false" in SCRIPT, "the default must be off"
         assert "--layer3) ENABLE_LAYER3=true" in SCRIPT
         gate = SCRIPT.index("if ! $ENABLE_LAYER3; then")
-        first_post = SCRIPT.index('l3_post "IAP authz extension"')
-        assert gate < first_post, "the flag is tested after the POST it must gate"
+        first_create = SCRIPT.index("l3_import authz-extensions geap-iap-extension")
+        assert gate < first_create, "the flag is tested after the create it must gate"
 
     def test_no_create_reports_success_off_a_bare_curl_exit_code(self) -> None:
         """The exact regressed shape, in the layers that POST to REST endpoints.
@@ -435,8 +435,8 @@ class TestLayer3IsOptInAndReportsHonestly:
             if "run_cmd curl -s -X POST" in line and not line.strip().startswith("#")
         ]
         assert not raw, raw
-        for label in ("IAP authz extension", "Model Armor authz extension"):
-            assert f'l3_post "{label}"' in SCRIPT
+        # Layer 3 no longer POSTs at all — see TestLayer3ImportsAndReadsBack. Layer 2's
+        # two authz creates still do, and still go through the status-reading helper.
         for label in ("SGP authz extension", "SGP authz policy"):
             assert f'post_resource "{label}"' in SCRIPT
 
@@ -794,6 +794,132 @@ echo "MEMBERS=${{#EXTRA_EGRESS_IDENTITIES[@]}}"
         assert '${EXTRA_EGRESS_IDENTITIES+"${EXTRA_EGRESS_IDENTITIES[@]}"}' in SCRIPT, (
             "unset-safe expansion is required under `set -u`"
         )
+
+
+class TestLayer3TargetsGatewaysThatCanEvaluateIt:
+    """IAP is EGRESS-only; ingress accepts exactly one CONTENT_AUTHZ policy.
+
+    `geap-iap-policy` was created against the INGRESS gateway on 2026-05-13 with
+    `policyProfile: REQUEST_AUTHZ`, where IAP cannot be evaluated — Google's docs say
+    "IAP is not supported during ingress", and a Client-to-Agent gateway supports only
+    CONTENT_AUTHZ, maximum one.
+
+    It is the same misplacement that made Layer 1 inert: Layer 1 binds
+    `roles/iap.egressor` — EGRESS — while the project's only IAP delegation pointed at
+    ingress, so nothing was ever positioned to evaluate those policies.
+    """
+
+    LAYER3: ClassVar[str] = SCRIPT[SCRIPT.index('step "Layer 3: Authorization Delegation (IAP') :]
+
+    def _import_block(self, resource: str) -> str:
+        """The YAML one `l3_import` call sends, isolated from its neighbours."""
+        start = self.LAYER3.index(f"l3_import authz-policies {resource}")
+        return self.LAYER3[start : self.LAYER3.index('" "target"', start)]
+
+    def test_the_iap_policy_targets_the_egress_gateway(self) -> None:
+        iap = self._import_block("geap-iap-policy")
+        assert "REQUEST_AUTHZ" in iap
+        assert "${GATEWAY_EGRESS_NAME}" in iap, "the IAP policy no longer targets egress"
+        assert "${GATEWAY_NAME}\n" not in iap, (
+            "the IAP policy targets the INGRESS gateway, which cannot evaluate IAP"
+        )
+
+    def test_model_armor_stays_on_ingress(self) -> None:
+        """Not everything here was wrong. CONTENT_AUTHZ is the ONLY profile an ingress
+        gateway supports, so the Model Armor half was correctly placed all along."""
+        ma = self._import_block("geap-model-armor-policy")
+        assert "CONTENT_AUTHZ" in ma
+        assert "${GATEWAY_NAME}" in ma, "Model Armor moved off the ingress gateway"
+        assert "${GATEWAY_EGRESS_NAME}" not in ma
+
+    def test_an_existing_policy_is_verified_not_assumed(self) -> None:
+        """A 409 means "exists", not "is correct". These creates are POST-only, so a
+        wrong target survives every run while the log says "already exists
+        (unchanged)" — which is how the ingress mistake lasted four months."""
+        assert "l3_assert_policy_target" in SCRIPT
+        assert "targets ${live}, but must target" in SCRIPT
+        assert "A POST cannot fix this" in SCRIPT
+
+    def test_the_drift_check_does_not_delete_anything(self) -> None:
+        """Retargeting a policy on a shared gateway is an operator's decision. The
+        check reports and counts; it prints the delete command rather than running it."""
+        fn = SCRIPT[SCRIPT.index("l3_assert_policy_target() {") :]
+        fn = fn[: fn.index("\n}\n")]
+        assert "authz-policies delete" in fn, "the remedy is not shown"
+        assert (
+            "run_cmd gcloud" not in fn
+            and "$(gcloud beta network-security authz-policies delete" not in fn
+        )
+
+    def test_layer3_states_that_nothing_is_in_force(self) -> None:
+        """Layer 1 has said "applied but NOT enforced" since it started applying.
+        Layer 3's resources are equally inert — they bind to gateways, and no engine
+        in this project is attached to one."""
+        assert "NOT YET IN FORCE" in SCRIPT
+        assert "failOpen=true" in SCRIPT, "the fail-open posture is not disclosed"
+
+
+class TestLayer3ImportsAndReadsBack:
+    """The REST POSTs were wrong in three separate ways. Running it proved all three.
+
+    Only the honest reporting from #122 made them visible; before that the layer said
+    "✓ created" four times and produced two resources, one of them misplaced.
+
+    1. IAP extension  -> 400, "iapPolicyVersion is a required key ... with unspecified
+       load balancing scheme". So the payload was simply invalid.
+    2. Model Armor extension -> 400, "Expected , or } after key:value pair".
+       `model_armor_settings` is a JSON *string* whose value is itself JSON; the REST
+       path interpolated it inside a JSON string literal, so its inner quotes closed the
+       value early. This extension had therefore NEVER existed.
+    3. The policy POST **succeeded** — 201 — and silently dropped every field, creating
+       `{"target": {}}` with no action, profile or provider. Reading the HTTP status is
+       not enough when the status is 201 and the resource is empty.
+
+    `gcloud ... import` gets all three right, and l3_import reads the resource back.
+    """
+
+    def test_layer3_no_longer_posts(self) -> None:
+        layer3 = SCRIPT[SCRIPT.index('step "Layer 3: Authorization Delegation (IAP') :]
+        layer3 = layer3[: layer3.index("GEAP Governance Policy Summary")]
+        assert "l3_post" not in layer3, "Layer 3 is POSTing again"
+        assert layer3.count("l3_import") >= 4, "the four resources are not all imported"
+
+    def test_the_iap_extension_sends_the_required_metadata(self) -> None:
+        """Defect 1. Without iapPolicyVersion the API rejects the extension outright."""
+        block = SCRIPT[SCRIPT.index("l3_import authz-extensions geap-iap-extension") :]
+        assert "iapPolicyVersion" in block[:600]
+
+    def test_model_armor_settings_is_not_interpolated_into_a_json_string(self) -> None:
+        """Defect 2, the one that kept this extension from ever existing.
+
+        The YAML single-quoted scalar carries the embedded double quotes; a JSON string
+        literal does not. The tell is that the value is NOT wrapped in an escaped
+        `\"` pair the way the old REST payload wrapped it.
+        """
+        block = SCRIPT[SCRIPT.index("l3_import authz-extensions geap-model-armor-extension") :]
+        block = block[: block.index('" "metadata"')]
+        assert "model_armor_settings: '[{" in block, "the settings are not a YAML scalar"
+        assert '\\"model_armor_settings\\"' not in block, "back to a JSON-in-JSON string"
+
+    def test_every_import_is_verified_by_reading_a_field_back(self) -> None:
+        """Defect 3. A 201 that creates an empty resource is still a false success —
+        the status cannot see it, only a read-back can."""
+        fn = SCRIPT[SCRIPT.index("l3_import() {") :]
+        fn = fn[: fn.index("\nl3_post() {")]
+        assert "describe" in fn, "l3_import never reads the resource back"
+        assert "is EMPTY on the resource" in fn
+        # every call site must pass a field to verify
+        for call in ("geap-iap-extension", "geap-model-armor-extension"):
+            assert f"l3_import authz-extensions {call}" in SCRIPT
+        assert SCRIPT.count('" "target"') >= 2, "policies are not verified on `target`"
+        assert SCRIPT.count('" "metadata"') >= 2, "extensions are not verified on `metadata`"
+
+    def test_the_open_question_about_the_callout_sa_is_recorded(self) -> None:
+        """The gateway's card names a Google-managed TENANT project's SA, not ours. The
+        docs do not say which makes the callout, and this repo has paid for the
+        wrong-principal mistake twice — so it is flagged, not guessed."""
+        assert "1058803961903" in SCRIPT
+        assert "wrong-principal" in SCRIPT
 
 
 class TestTheScriptStillParses:
