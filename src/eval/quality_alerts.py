@@ -350,39 +350,48 @@ ROUTER_MONITORED_METRICS = [
 #
 # NOISE, MEASURED 2026-09-17 (src/eval/spike_metric_noise.py). A floor is a claim
 # about how far a metric wanders, and these were originally set from observed
-# LEVELS, which does not say that. Same 20 cases, same engine:
+# LEVELS, which does not say that.
 #
-#   metric                  mean   judge sd   total sd   agent sd   headroom
-#   instruction_following   3.40      0.086      0.335      0.324     2.7 sd
-#   response_quality        3.74      0.275        n/a        n/a     2.7 sd
-#   hallucination           4.31      0.049        n/a        n/a    26.6 sd
-#   safety                  4.85      0.087        n/a        n/a    21.2 sd
+# Measured TWICE, and the second pass changed the answer — which is itself the
+# most useful thing here. Judge-only variance, from re-scoring ONE frozen
+# inference capture:
 #
-# Three things follow, and they are not interchangeable:
+#   metric                  judge sd (n=3)   judge sd (n=8)   change
+#   instruction_following            0.086            0.179     2.1x
+#   response_quality                 0.275            0.171     0.6x
+#   hallucination                    0.049            0.031     0.6x
+#   safety                           0.087            0.054     0.6x
 #
-#   * instruction_following is AGENT-dominated — 93% of its spread is the router
-#     answering differently run to run, not the judge. Re-running will not settle
-#     it. This also retroactively justifies the 2.5 floor: at 3.0 the gap would be
-#     1.2 sd and the alert would flap.
-#   * response_quality is INCONCLUSIVE, and the way it fails is the point. Its
-#     judge-only sd (0.275) came out LARGER than its total sd across full runs
-#     (0.120, from 3.84/3.71/3.95) — impossible in expectation, since total
-#     variance contains judge variance. So at least one estimate is badly off, and
-#     an sd from n=3 is the obvious culprit: its 95% CI spans roughly 12x. The
-#     autorater did move 3.47 -> 4.02 on byte-identical input, which is worth
-#     knowing, but "judge-dominated" is NOT established. Re-measure with more
-#     repeats before reaching for src/eval/judge_panel.py.
-#   * hallucination and safety sit 21-27 sd above their floors. Nearly inert —
-#     cheap to keep, but they are not active protection, and a green tick from them
-#     carries almost no information.
+# An sd from three observations has a 95% interval ~12x as wide as itself, so n=3
+# was a smoke test that read as a result. USE n>=8.
+#
+# Decomposition on the n=8 judge figures (variances add, so
+# agent_sd = sqrt(total^2 - judge^2)); totals are still only n=3 full runs:
+#
+#   metric                  mean   judge sd   total sd   agent sd   agent %var
+#   instruction_following   3.50      0.179      0.335      0.283          71%
+#   response_quality        3.81      0.171      0.120    INCOHERENT         —
+#   hallucination           4.57      0.031        n/a        n/a           —
+#   safety                  4.63      0.054        n/a        n/a           —
+#
+# What this supports:
+#
+#   * instruction_following is AGENT-dominated — 71% of its variance is the router
+#     answering differently run to run. (The n=3 pass said 93%; the direction held,
+#     the magnitude did not.) No judge change settles it. It also justifies the 2.5
+#     floor: at 3.0 the headroom is 1.5 sd and the alert flaps.
+#   * response_quality remains UNDECIDABLE, but the weak side has flipped. The judge
+#     figure is now solid at n=8; the TOTAL is the n=3 estimate, and it came out
+#     below the judge variance it contains. Do not wire a judge panel on this.
+#   * hallucination and safety sit 30-50 sd above their floors. Nearly inert —
+#     cheap to keep, but their green carries almost no information.
 #
 # Smallest regression a rolling-baseline z>=2 can call: instruction_following 0.67,
-# response_quality 0.55, hallucination 0.10, safety 0.17 — all DIRECTIONAL at n=3.
+# response_quality >=0.34, hallucination 0.06, safety 0.11.
 #
-# What survives the small sample: the MEANS. hallucination 4.31 and safety 4.85
-# against a 3.0 floor is a gap no plausible sd estimate closes, so "nearly inert"
-# holds. The sds, and everything derived from them, do not survive it. Re-measure
-# with more repeats before moving any threshold.
+# NEXT MEASUREMENT COSTS NOTHING: the totals need more FULL runs, and the daily
+# router_quality workflow produces exactly one per day. Re-decompose after a week
+# rather than paying for fresh inference.
 ROUTER_QUALITY_MONITORED_METRICS = [
     ("response_quality", 3.0),
     ("hallucination", 3.0),

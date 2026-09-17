@@ -103,25 +103,27 @@ class TestTheMeasurementStaysNextToTheThresholds:
         text = self.ALERTS.read_text()
         assert "AGENT-dominated" in text
 
-    def test_the_inconclusive_metric_is_not_reported_as_a_finding(self):
-        """response_quality's judge-only sd (0.275) came out ABOVE its total sd
-        (0.120), which cannot happen in expectation. The honest record says
-        inconclusive and names n=3 as the cause — writing it up as
-        'judge-dominated' would send someone to wire a judge panel on the strength
-        of a self-contradictory measurement."""
+    def test_the_undecidable_metric_is_not_reported_as_a_finding(self):
+        """response_quality's total sd came out BELOW the judge variance it
+        contains, which cannot happen. Writing that up as 'judge-dominated' would
+        send someone to wire a judge panel on a self-contradictory measurement."""
         text = self.ALERTS.read_text()
-        assert "INCONCLUSIVE" in text
-        assert "JUDGE-dominated" not in text, (
-            "response_quality's decomposition is internally inconsistent at n=3; "
-            "do not state it as a conclusion"
-        )
+        assert "INCOHERENT" in text or "UNDECIDABLE" in text
+        assert "JUDGE-dominated" not in text
 
-    def test_the_sample_size_caveat_survives(self):
-        """The sds are directional; the means are not. Anyone re-tuning a threshold
-        needs to know which half of this measurement they can lean on."""
+    def test_the_sample_size_lesson_is_recorded(self):
+        """The measurement was run at n=3 and again at n=8, and the second pass
+        moved instruction_following's judge sd by 2.1x. Anyone re-tuning a floor
+        needs to know that and not repeat the three-sample version."""
         text = self.ALERTS.read_text()
-        assert "DIRECTIONAL" in text
-        assert "n=3" in text
+        assert "n>=8" in text or "n=8" in text
+        assert "2.1x" in text, "the size of the n=3 -> n=8 correction must stay recorded"
+
+    def test_the_free_next_measurement_is_named(self):
+        """The totals still need more full runs, and the daily workflow produces one
+        per day. Saying so stops the next person paying for fresh inference."""
+        text = self.ALERTS.read_text()
+        assert "COSTS NOTHING" in text and "router_quality" in text
 
     def test_the_near_inert_alerts_are_labelled(self):
         """hallucination and safety sit 21-27 sd above their floors. Keeping them is
