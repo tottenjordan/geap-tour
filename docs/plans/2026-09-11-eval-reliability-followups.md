@@ -180,7 +180,10 @@ unnoticed while the workaround quietly outlives it. See `docs/notes/adk-2.7.1-de
   `agent_router_quality/*` gives the router the answer-quality series it never had.
   Floors set from measurement — `instruction_following` reads 2.72/3.20/3.79 across
   three runs, so its floor is 2.5, not the 3.0 that would flap. Read back by
-  `verify_monitors` as a fourth surface. Superseded text follows for history:
+  `verify_monitors` as a fourth surface. **Cadence added 2026-09-17**: the quality
+  half now has a daily writer (`.github/workflows/router_quality.yaml`), without
+  which its four policies watched a series stuck at n=1 forever — the same
+  alert-with-no-writer state as `agent_eval/tool_faithfulness` (#84). Superseded text follows for history:
 * ~~**Router outcome metric.**~~ Still open, re-confirmed 2026-09-17:
   `quality_alerts.ROUTER_MONITORED_METRICS` holds only `classifier_accuracy_pct`,
   `cost_savings_pct` and `classifier_latency_ms`. Publish an outcome metric, or state

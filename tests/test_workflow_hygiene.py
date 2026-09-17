@@ -17,6 +17,7 @@ These are cheap structural assertions, sized from real run data rather than tast
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 import yaml
@@ -33,6 +34,17 @@ def _load(path: pathlib.Path) -> dict:
 
 def _jobs(path: pathlib.Path):
     return _load(path).get("jobs", {}).items()
+
+
+def _triggers(path: pathlib.Path) -> dict:
+    """The `on:` block — under the key `True`, not `"on"`.
+
+    YAML 1.1 parses a bare `on` as the boolean true, so `workflow["on"]` raises
+    KeyError on every GitHub workflow ever written. Solved once here rather than
+    rediscovered per test (test_monitoring_publish.py carries its own copy).
+    """
+    data = _load(path)
+    return data.get(True) or data.get("on") or {}
 
 
 @pytest.mark.parametrize("path", _WORKFLOWS, ids=_IDS)
@@ -122,3 +134,66 @@ class TestTheTestWorkflowSpecifically:
         assert "pull_request" in cancel, (
             "cancel-in-progress must be conditional on the event, not unconditional"
         )
+
+
+class TestTheRouterQualityWorkflow:
+    """agent_router_quality/* shipped with four alert policies and no writer.
+
+    `src/eval/baseline.py:MIN_BASELINE` is 5, so a series stuck at n=1 has policies
+    watching something that can never move — the same state `agent_eval/tool_faithfulness`
+    sat in for days (#84), and then its online twin. The four parametrized guards above
+    cover this file automatically (they glob the directory); these are the properties
+    specific to what it publishes.
+    """
+
+    PATH = pathlib.Path(__file__).resolve().parents[1] / ".github/workflows/router_quality.yaml"
+
+    def test_it_exists(self):
+        assert self.PATH.is_file(), "agent_router_quality/* has alerts but no scheduled writer"
+
+    def test_it_runs_daily_not_hourly(self):
+        """Hourly is the wrong cadence, not merely an expensive one: this makes real
+        engine inference and judge calls, unlike the classifier-only efficiency
+        publisher that shares the hourly workflow."""
+        cron = _triggers(self.PATH)["schedule"][0]["cron"]
+        minute, hour = cron.split()[0], cron.split()[1]
+        assert hour != "*", f"{cron!r} runs hourly — this publisher costs engine calls"
+        assert minute not in ("0", "30"), f"{cron!r} sits in GitHub's most contended slot"
+
+    def test_the_sample_clears_the_low_confidence_floor(self):
+        """`stats.MIN_SAMPLES` is 8. A smaller run publishes a point the harness itself
+        flags `low_confidence`, which is a poor thing to build a baseline out of."""
+        from src.eval.stats import MIN_SAMPLES
+
+        run = "\n".join(s.get("run", "") for s in _load(self.PATH)["jobs"]["publish"]["steps"])
+        match = re.search(r"--limit (\d+)", run)
+        assert match, "the publish step must bound its sample with --limit"
+        assert int(match.group(1)) >= MIN_SAMPLES
+
+    def test_it_targets_the_router_engine(self):
+        """Publishing the COORDINATOR's scores into agent_router_quality/* would be
+        silent and completely wrong — and the repo has already shipped an engine-id
+        mixup once (the 2026-08-21 AGENT_ENGINE_ID drift)."""
+        text = self.PATH.read_text()
+        assert "ROUTER_ENGINE_ID" in text
+        assert "vars.AGENT_ENGINE_ID" not in text
+
+    def test_the_publish_step_is_not_advisory(self):
+        """The CLI already exits 1 when nothing was published; `continue-on-error`
+        would throw that away and a permanently broken daily publish would read green —
+        the precise failure this workflow exists to end."""
+        steps = _load(self.PATH)["jobs"]["publish"]["steps"]
+        publish = [s for s in steps if "publish_router_quality" in s.get("run", "")]
+        assert publish, "no publish step found"
+        assert all(not s.get("continue-on-error") for s in publish)
+
+    def test_the_engine_is_verified_before_it_is_scored(self):
+        """A second copy of an engine id drifts (AGENT_ENGINE_ID did). Checking the
+        role first turns a wrong id into a loud failure instead of another engine's
+        scores landing in this series."""
+        steps = _load(self.PATH)["jobs"]["publish"]["steps"]
+        runs = [s.get("run", "") for s in steps]
+        verify = next(i for i, r in enumerate(runs) if "verify_engine_config" in r)
+        publish = next(i for i, r in enumerate(runs) if "publish_router_quality" in r)
+        assert verify < publish
+        assert "--role router" in runs[verify]
