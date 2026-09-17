@@ -174,7 +174,14 @@ unnoticed while the workaround quietly outlives it. See `docs/notes/adk-2.7.1-de
 * **20 unlabelled gold cases.** `uv run python -m src.eval.annotate --annotator a2`.
   Cheap, and calibration is currently blind where it counts. Re-confirmed 2026-09-17:
   `--status` reports `a2: 0/52 scored`.
-* **Router outcome metric.** Still open, re-confirmed 2026-09-17:
+* **Router outcome metric — DONE 2026-09-17.** Both halves shipped and verified live.
+  `agent_router/{lite_tier_pct,tiers_used}` make a routing collapse visible (it
+  previously *raised* `cost_savings_pct` and fired nothing), and
+  `agent_router_quality/*` gives the router the answer-quality series it never had.
+  Floors set from measurement — `instruction_following` reads 2.72/3.20/3.79 across
+  three runs, so its floor is 2.5, not the 3.0 that would flap. Read back by
+  `verify_monitors` as a fourth surface. Superseded text follows for history:
+* ~~**Router outcome metric.**~~ Still open, re-confirmed 2026-09-17:
   `quality_alerts.ROUTER_MONITORED_METRICS` holds only `classifier_accuracy_pct`,
   `cost_savings_pct` and `classifier_latency_ms`. Publish an outcome metric, or state
   on the dashboard that the router series measure classifier and cost only — a

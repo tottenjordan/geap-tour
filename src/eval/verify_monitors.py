@@ -41,6 +41,7 @@ from src.eval.quality_alerts import (
     ONLINE_INFRA_METRICS,
     ONLINE_MONITORED_METRICS,
     ROUTER_MONITORED_METRICS,
+    ROUTER_QUALITY_MONITORED_METRICS,
 )
 
 DEFAULT_THRESHOLD = 3.0
@@ -89,6 +90,15 @@ SURFACES = {
     "router_efficiency": Surface(
         prefix="custom.googleapis.com/agent_router/",
         metrics=list(ROUTER_MONITORED_METRICS),
+    ),
+    # The router's 1-5 rubric scores. A separate surface, not folded into
+    # router_efficiency, because that one is percents and milliseconds — and a
+    # series nothing reads back is write-only: it would accumulate points nobody
+    # ever checks, which is how agent_router/* ended up alerting on something
+    # effectively static.
+    "router_quality": Surface(
+        prefix="custom.googleapis.com/agent_router_quality/",
+        metrics=[(name, threshold, "LT") for name, threshold in ROUTER_QUALITY_MONITORED_METRICS],
     ),
 }
 

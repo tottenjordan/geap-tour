@@ -43,6 +43,7 @@ from src.eval.quality_alerts import (
     ALL_MONITORED_METRICS,
     ONLINE_MONITORED_METRICS,
     ROUTER_MONITORED_METRICS,
+    ROUTER_QUALITY_MONITORED_METRICS,
 )
 
 if TYPE_CHECKING:
@@ -79,6 +80,13 @@ QUALITY_METRIC_TYPES = [
 ROUTER_METRIC_TYPES = [
     f"{METRIC_PREFIX}agent_router/{name}"
     for name, _threshold, _comparison in ROUTER_MONITORED_METRICS
+]
+
+# Router *quality* metric types (``agent_router_quality/*``), 1-5 rubric scores.
+# Separate from ROUTER_METRIC_TYPES above, which are native-unit economics.
+ROUTER_QUALITY_METRIC_TYPES = [
+    f"{METRIC_PREFIX}agent_router_quality/{name}"
+    for name, _threshold in ROUTER_QUALITY_MONITORED_METRICS
 ]
 
 # Online coordinator-quality metric types (``agent_online_eval/*``), continuous
@@ -228,6 +236,23 @@ def write_quality_scores(
     labels = _default_labels(extra_labels)
     for name, value in scores.items():
         writer.write_gauge(f"agent_eval/{name}", value, labels)
+
+
+def write_router_quality_scores(
+    scores: Mapping[str, float],
+    writer: MetricsWriter | None = None,
+    extra_labels: Mapping[str, str] | None = None,
+) -> None:
+    """Emit ``agent_router_quality/<name>`` gauges — the router's 1-5 rubric scores.
+
+    A distinct family from ``agent_router/*`` because the axes differ: those are
+    percents and milliseconds, these are 1-5 rubric scores sharing the coordinator's
+    3.0 floor. Same reason ``agent_online_eval/*`` is separate from ``agent_eval/*``.
+    """
+    writer = writer or MetricsWriter()
+    labels = _default_labels(extra_labels)
+    for name, value in scores.items():
+        writer.write_gauge(f"agent_router_quality/{name}", value, labels)
 
 
 def write_online_quality_scores(
