@@ -242,7 +242,7 @@ no eval case". **The instruction was fixed; the evalset was not.**
 
 **Multi-turn behaviour is effectively untested.** Of 13 evalsets, every case is
 single-turn except one 2-turn coordinator case. The only genuine multi-turn surface,
-`simulated_eval`, is quarantined (returns zero metrics on aiplatform 2.1.0). So
+`simulated_eval`, was quarantined (returned zero metrics on aiplatform 2.1.0; root-caused and FIXED 2026-09-17 — a parent/child schema-rebuild ordering bug in our own patch, see adk-2.7.1-dependency-refresh.md). So
 context retention, repeated tool calls and cross-turn contradiction have no coverage
 from either direction.
 

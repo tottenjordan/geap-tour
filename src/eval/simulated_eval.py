@@ -45,6 +45,7 @@ def _patch_evals_extra_fields():
 
     Upstream: https://github.com/googleapis/python-aiplatform/issues/6785
     """
+    import contextlib
     import importlib
 
     import pydantic
@@ -61,17 +62,55 @@ def _patch_evals_extra_fields():
         except ImportError:  # pragma: no cover - one copy may not ship forever
             continue
 
-    for evals_types in modules:
-        for name in dir(evals_types):
-            cls = getattr(evals_types, name, None)
-            if (
-                isinstance(cls, type)
-                and issubclass(cls, pydantic.BaseModel)
-                and cls.model_config.get("extra") == "forbid"
-            ):
-                cls.model_config["extra"] = "allow"
-                cls.__pydantic_complete__ = False
-                cls.model_rebuild(force=True)
+    # TWO PHASES, and the order is the whole point.
+    #
+    # Doing `set config; rebuild` in ONE loop is what kept this broken for a week.
+    # `dir()` is alphabetical, so `AgentData` is rebuilt before `ConversationTurn` is
+    # relaxed — and a pydantic-v2 parent COMPILES ITS CHILDREN'S SCHEMAS INTO ITS OWN.
+    # AgentData therefore froze the old `forbid` ConversationTurn, and rebuilding the
+    # child afterwards does not propagate upward.
+    #
+    # The symptom is brutal to diagnose because both classes then REPORT the fix:
+    #
+    #     AgentData.model_config['extra']        -> 'allow'
+    #     ConversationTurn.model_config['extra'] -> 'allow'
+    #     AgentData.model_validate({'turns': [<turn with Event fields>]})
+    #         -> ValidationError: 49 validation errors for AgentData
+    #
+    # which is why an earlier pass concluded the relaxation "verifiably applies to
+    # every class" and went looking for the bug inside the SDK. Config is not
+    # behaviour. Relax everything first, then rebuild everything, so each parent
+    # re-walks children that are already relaxed.
+    # Collect EVERY model, not only the ones currently mis-set, and rebuild them all.
+    #
+    # Selecting on the current value made this fragile twice over:
+    #
+    #  * `_sdk_patches._flip_extra_to_ignore` sets the same kind of classes to
+    #    'ignore' for the batch-eval path — and 'ignore' is the setting that DROPS the
+    #    conversation. A patch that only looked for 'forbid' became a no-op after it,
+    #    so in a process running both (run_all_evals does) simulated_eval silently went
+    #    back to scoring nothing.
+    #  * That function also marks models incomplete and rebuilds them wholesale, which
+    #    can re-freeze a stale child into a parent we had already fixed. A patch that
+    #    skips already-'allow' classes cannot repair that.
+    #
+    # Rebuilding unconditionally is cheap, idempotent, and self-healing whatever ran
+    # first.
+    targets = [
+        cls
+        for evals_types in modules
+        for name in dir(evals_types)
+        if isinstance(cls := getattr(evals_types, name, None), type)
+        and issubclass(cls, pydantic.BaseModel)
+    ]
+
+    for cls in targets:
+        if cls.model_config.get("extra") in ("forbid", "ignore"):
+            cls.model_config["extra"] = "allow"
+    for cls in targets:
+        cls.__pydantic_complete__ = False
+        with contextlib.suppress(Exception):
+            cls.model_rebuild(force=True)
 
 
 def regroup_events_into_turns(agent_data: dict | None) -> dict | None:

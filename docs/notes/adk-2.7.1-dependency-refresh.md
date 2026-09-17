@@ -380,7 +380,7 @@ anything.
 | Surface | Result |
 | --- | --- |
 | `pairwise_eval` | **PASS.** 61 cases, 40 decisive, win-rate 0.575, p=0.43 (not significant) — the near-tie expected from two `gemini-2.5-flash` engines. Zero `Warmup skipped`, so the `agent_engines.get` call site fixed in #106 genuinely works. |
-| `simulated_eval` | **BROKEN upstream** — two of our defects fixed, the surface still returns no metrics. See below. |
+| `simulated_eval` | **FIXED 2026-09-17** — three of our defects, none upstream. See below. |
 | GEPA | **Machinery works.** Bounded run (`max_metric_calls` 12) completed on ADK 2.8.0: 13 metric calls, 1 candidate, optimized instruction produced, all three ADK patches held. Scores came back `0.0/0.0` — see the caveat below. |
 
 #### `simulated_eval`: a green verdict over a destroyed conversation
@@ -407,14 +407,58 @@ the result file said **`all_passed: true`**. Two separate defects, both ours, bo
   *failing* metric, so a run that scored nothing sailed through. An empty result is an
   **infra outcome, not a quality verdict**; it now fails loudly and says where to look.
 
-**Honest state: the surface is still broken.** `regroup_events_into_turns()` (regroup
-flat events by `invocation_id`, since the raters read `turn.events`) is implemented
-and unit-tested but **did not restore metrics live**. The relaxation verifiably
-applies to every class in both copies, yet the service still logs `extra_forbidden`
-internally and substitutes empties — so the residual mismatch looks like it is inside
-the SDK's own parsing, not ours. Treat `simulated_eval` as **known-broken on
-aiplatform 2.1.0**; the value delivered is that it now *fails* instead of passing
-quietly.
+**RESOLVED 2026-09-17, and it was ours after all.** The third defect was in the patch's
+own ordering, not in the SDK.
+
+`_patch_evals_extra_fields` did `set config; rebuild` in a single loop over `dir()` —
+which is **alphabetical**. A pydantic-v2 parent compiles its children's schemas into
+its own, so `AgentData` was rebuilt *before* `ConversationTurn` was relaxed, freezing
+the old `forbid` child into the parent. Rebuilding the child afterwards does not
+propagate upward.
+
+The symptom is why this note previously blamed the SDK — **both classes report the
+fix**:
+
+    AgentData.model_config['extra']        -> 'allow'
+    ConversationTurn.model_config['extra'] -> 'allow'
+    AgentData.model_validate({'turns': [<Event-shaped turn>]})
+        -> ValidationError: 49 validation errors for AgentData
+
+The `extra_forbidden` string appears nowhere in the client SDK, which was the tell:
+those were client-side pydantic errors raised in `run_inference` →
+`_process_multi_turn_agent_response`, not the service substituting empties.
+
+Fix: relax every config **first**, then rebuild everything, so each parent re-walks
+children that are already relaxed. Verified live — a 2-scenario run now returns three
+scored metrics with zero validation errors, where it previously returned `{}`:
+
+    multi_turn_task_success_v1        0.12
+    multi_turn_tool_use_quality_v1    0.50
+    multi_turn_trajectory_quality_v1  0.25
+
+**Those scores are low and are a separate question.** Two scenarios at three turns is
+far too small to conclude anything about coordinator quality; what is established is
+that the surface produces a verdict at all. Run it properly before reading the numbers.
+
+**A second defect, found by running the full suite.** `src/eval/_sdk_patches.py`
+flips the same kind of classes to **`'ignore'`** for the batch-eval path — and
+`'ignore'` is the setting that DROPS the conversation. The patch originally selected
+only classes currently set to `'forbid'`, so once `_sdk_patches` had run it became a
+**no-op**: in a process that runs both (`run_all_evals` does), whichever patched first
+won. `_sdk_patches` also marks models incomplete and rebuilds them wholesale, which can
+re-freeze a stale child into a parent we had already fixed.
+
+So the patch no longer selects on the current value. It collects every model, relaxes
+any `forbid`/`ignore`, and rebuilds them all — cheap, idempotent, and self-healing
+whatever ran first. Note the two packages keep *separate class objects*
+(`types.AgentData is not types.evals.AgentData`); the SDK constructs
+`types.evals.AgentData` at `_evals_common.py:3180`, which is the copy this patches.
+
+**The testing lesson.** Two tests already covered this patch — one asserted
+`model_config['extra'] == 'allow'` (both classes reported it) and one validated a
+`ConversationTurn` directly (the child was genuinely fixed). Neither exercised the
+PARENT, which is what `run_inference` constructs. Config is not behaviour, and the
+class you patch is not always the class that fails.
 
 #### GEPA's `0.0` scores — unresolved, and why
 
