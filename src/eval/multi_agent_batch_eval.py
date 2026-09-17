@@ -517,6 +517,16 @@ def _run_single_agent_eval(
                 "threshold": normalized_threshold,
                 "passed": passed,
             }
+    # AN EMPTY RESULT IS NOT A PASS. `all_pass` starts True and the loop above
+    # never executes when the service returns no /AVERAGE keys, so a run that
+    # scored *nothing* reported PASSED and exited 0 — in the module the CI eval
+    # gate runs. Exactly the defect PR #138 had to fix in `simulated_eval`
+    # ("zero metrics reporting all_passed=true"), still live here because the two
+    # paths were fixed separately. An absent measurement must never read as a
+    # green one; the run below prints the eval-run name so it can be chased.
+    if not metric_results:
+        all_pass = False
+
     # Flag every metric low-confidence when graded over too few items, so a
     # pass/fail over a demo-scale run isn't read with full trust.
     _annotate_low_confidence(metric_results, total_items)
