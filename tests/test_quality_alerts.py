@@ -45,7 +45,17 @@ def test_router_monitored_metrics_shape():
     from src.eval.quality_alerts import ROUTER_MONITORED_METRICS
 
     names = {m[0] for m in ROUTER_MONITORED_METRICS}
-    assert names == {"classifier_accuracy_pct", "cost_savings_pct", "classifier_latency_ms"}
+    # Exact set, not a subset: this pins WHAT is monitored, so adding or dropping a
+    # router series is a deliberate edit here rather than a silent change in
+    # coverage. `lite_tier_pct`/`tiers_used` joined 2026-09-17 — they are the only
+    # series that can see a routing collapse, which makes cost_savings_pct RISE.
+    assert names == {
+        "classifier_accuracy_pct",
+        "cost_savings_pct",
+        "classifier_latency_ms",
+        "lite_tier_pct",
+        "tiers_used",
+    }
     # Every entry is (name, threshold, comparison) with a valid direction.
     for _name, threshold, comparison in ROUTER_MONITORED_METRICS:
         assert isinstance(threshold, float)
@@ -143,11 +153,25 @@ def test_setup_all_alerts_covers_all_families(monkeypatch):
     results = qa.setup_all_alerts()
 
     families = {c[3] for c in calls}
-    assert families == {"agent_eval", "agent_router", "agent_online_eval"}
+    # `agent_router_quality` joined 2026-09-17: the router's 1-5 rubric scores, kept
+    # out of `agent_router` because that family holds percents and milliseconds.
+    assert families == {
+        "agent_eval",
+        "agent_router",
+        "agent_router_quality",
+        "agent_online_eval",
+    }
     # Coordinator metrics keep LT/agent_eval; router latency uses GT/agent_router.
     router_latency = [c for c in calls if c[0] == "classifier_latency_ms"]
     assert router_latency and router_latency[0][2] == "GT"
     assert router_latency[0][3] == "agent_router"
+    # The tier-collapse detectors alert in opposite directions, and getting either
+    # backwards would make it permanently silent.
+    by_name = {c[0]: c for c in calls}
+    assert by_name["lite_tier_pct"][2] == "GT", "a collapse RAISES the lite share"
+    assert by_name["tiers_used"][2] == "LT", "a collapse LOWERS the tier count"
+    # Router quality lands on its own family, never mixed into agent_router.
+    assert by_name["instruction_following"][3] == "agent_router_quality"
     # Online family splits by axis: the 1-5 quality rubrics alert on the floor
     # (LT), while the infra_empty_rate ceiling alerts on a spike (GT) — an
     # empty-at-200 surge is an infra failure, not a low quality score.

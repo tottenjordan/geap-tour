@@ -284,10 +284,74 @@ ALL_MONITORED_METRICS = [
 #   - cost_savings_pct      < 50%    (~10pp margin; catches routing drifting
 #                                     toward expensive tiers)
 #   - classifier_latency_ms > 8000ms (~13x the measured 598ms; very loose now)
+#   - lite_tier_pct         > 60%    (measured 35.0% — lite=14 flash=13 sonnet=13
+#                                     of 40 on 2026-09-17. Catches a collapse
+#                                     toward the cheap tier, which NOTHING above
+#                                     can see: a boundary change leaves
+#                                     classifier_accuracy_pct untouched by design
+#                                     — it grades the raw score against fixed
+#                                     reference bands, not the tunable cut-points
+#                                     — while cost_savings_pct *rises*, 93.1% ->
+#                                     ~99.6%. Both monitored numbers look BETTER
+#                                     while the router has stopped routing. The
+#                                     floor sits ~25pp above observed and still
+#                                     fires on a lite+flash merge (67.5%).)
+#   - tiers_used            < 2      (measured 3. A collapse onto any SINGLE tier,
+#                                     in either direction; deliberately the most
+#                                     conservative form of the same check, so it
+#                                     cannot cry wolf on ordinary variation.)
 ROUTER_MONITORED_METRICS = [
     ("classifier_accuracy_pct", 80.0, "LT"),
     ("cost_savings_pct", 50.0, "LT"),
     ("classifier_latency_ms", 8000.0, "GT"),
+    ("lite_tier_pct", 60.0, "GT"),
+    ("tiers_used", 2.0, "LT"),
+]
+
+# Router *quality* series (``agent_router_quality/*``), 1-5 axis.
+#
+# A SEPARATE family from ``agent_router/*`` on purpose: those are native-unit
+# economic numbers (percent, ms) and these are rubric scores. Mixing axes in one
+# family is how a dashboard ends up averaging a latency with a score.
+#
+# Why it exists at all: every router series before this measured the *decision*
+# (was the band right, was it cheap, was the classifier fast) and none measured
+# the *answer*. The coordinator has agent_eval/*; the router had no quality signal
+# whatsoever, despite being fully scoreable — get_eval_cases("router_agent")
+# returns 40 cases and the batch eval already resolves router_agent to
+# ROUTER_ENGINE_ID. The machinery existed and was never published.
+#
+# `tool_use` is DELIBERATELY ABSENT. The batch eval scores it with the generic
+# TOOL_USE_QUALITY rubric, a confirmed false-negative for a domain router
+# (docs/notes/coordinator-tool-use-quality.md). The router's 2026-08-20
+# rearchitecture to direct tools may well have invalidated that finding, but
+# "may well have" is not a basis for an alerting series — publishing a
+# known-suspect number is how a green tick stops meaning anything. Verify, then
+# add it.
+#
+# Floors are set from MEASUREMENT, not from copying the coordinator's 3.0. Two live
+# runs against router engine 6134 on 2026-09-17, scores shown on the published 1-5
+# axis:
+#
+#   metric                  n=6     n=20
+#   response_quality        4.52    3.84
+#   hallucination           5.00    4.60
+#   safety                  5.00    4.28
+#   instruction_following   2.72    3.20     <- straddles 3.0
+#
+# So `instruction_following` gets 2.5, not 3.0. Its observed range *contains* 3.0,
+# and a floor inside the observed range is a flapping alert — it would page on
+# ordinary sampling variation, and an alert that cries wolf gets muted, which is
+# worse than not having it. 2.5 sits below the observed minimum and still catches a
+# real regression. Tighten it once a wider baseline exists (the n=6 reading also
+# carried the harness's own `low_confidence` flag).
+#
+# The other three have >0.8 headroom to 3.0 even at their observed minimum.
+ROUTER_QUALITY_MONITORED_METRICS = [
+    ("response_quality", 3.0),
+    ("hallucination", 3.0),
+    ("safety", 3.0),
+    ("instruction_following", 2.5),
 ]
 
 # Online coordinator quality series (``agent_online_eval/*``). Same rubrics as
@@ -527,6 +591,17 @@ def setup_all_alerts(notification_channel: str | None = None) -> list:
                 notification_channel=notification_channel,
                 comparison=comparison,
                 family="agent_router",
+            )
+            results.append(result)
+        except Exception as e:
+            print(f"  Warning: failed to create alert for {metric_name}: {e}")
+    for metric_name, threshold in ROUTER_QUALITY_MONITORED_METRICS:
+        try:
+            result = create_quality_alert(
+                metric_name=metric_name,
+                threshold=threshold,
+                notification_channel=notification_channel,
+                family="agent_router_quality",
             )
             results.append(result)
         except Exception as e:

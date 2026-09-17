@@ -61,6 +61,7 @@ def publish_router_efficiency(
     latency = accuracy_results.get("avg_latency_ms")
     if latency is not None:
         scores["classifier_latency_ms"] = round(float(latency), 1)
+    scores.update(tier_spread(cost_results))
 
     if not scores:
         return {}
@@ -195,6 +196,54 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+TIER_ORDER = ["lite", "flash", "sonnet", "pro", "opus"]
+
+
+def tier_counts(cost_results) -> dict[str, int]:
+    """``{tier: n}`` from the per-case rows the cost eval already produced."""
+    from collections import Counter
+
+    counts = Counter(
+        c.get("tier") for c in (cost_results or {}).get("per_case", []) if c.get("tier")
+    )
+    return dict(counts)
+
+
+def tier_spread(cost_results) -> dict[str, float]:
+    """``lite_tier_pct`` + ``tiers_used`` — the shape of the routing decision.
+
+    **This is the router's blind spot, and it was computed and thrown away.** The
+    three existing series cannot see a routing collapse toward the cheap tier:
+    ``classifier_accuracy_pct`` grades the classifier's raw score against *fixed
+    reference bands*, deliberately not the tunable ``COMPLEXITY_LOW``/``HIGH``
+    cut-points, so a boundary change leaves it untouched (that decoupling is why
+    the same 40 prompts read 50% and then 82.5%). And ``cost_savings_pct`` *rises*
+    when everything routes to lite — 93.1% today, ~99.6% on a full collapse. Both
+    monitored numbers therefore look **better** while the router has stopped
+    routing. ``engine_baseline`` guards the two boundaries as critical, but only
+    when somebody runs ``verify_engine_config``; nothing alerts.
+
+    Two metrics because they fail differently:
+
+    * ``lite_tier_pct`` — magnitude, and catches drift toward cheap before it is
+      total.
+    * ``tiers_used`` — a collapse onto ANY single tier, in either direction.
+
+    Pure formatting on numbers already computed (``per_case`` carries ``tier``),
+    exactly like ``cost_savings_pct``, which was also computed and discarded until
+    it became a first-class series. Returns ``{}`` when there are no per-case rows,
+    so a partial run publishes nothing rather than a misleading ``0``.
+    """
+    counts = tier_counts(cost_results)
+    total = sum(counts.values())
+    if not total:
+        return {}
+    return {
+        "lite_tier_pct": round(counts.get("lite", 0) / total * 100.0, 1),
+        "tiers_used": float(len(counts)),
+    }
+
+
 def format_distribution(accuracy_results, cost_results) -> str:
     """Tier distribution + score histogram, for the log next to the published numbers.
 
@@ -210,12 +259,11 @@ def format_distribution(accuracy_results, cost_results) -> str:
     from collections import Counter
 
     lines = []
-    tiers = Counter(
-        c.get("tier") for c in (cost_results or {}).get("per_case", []) if c.get("tier")
-    )
+    tiers = tier_counts(cost_results)
     if tiers:
-        order = ["lite", "flash", "sonnet", "pro", "opus"]
-        ranked = sorted(tiers.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else 99)
+        ranked = sorted(
+            tiers.items(), key=lambda kv: TIER_ORDER.index(kv[0]) if kv[0] in TIER_ORDER else 99
+        )
         lines.append("  tiers:  " + "  ".join(f"{t}={n}" for t, n in ranked))
     scores = Counter(
         c.get("score")

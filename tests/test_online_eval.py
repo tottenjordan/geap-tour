@@ -247,12 +247,16 @@ def test_verify_queries_one_exact_metric_per_request():
 
     data = vm.verify_monitor_results(output_format="json", client=client)
 
-    # One request per monitored metric across ALL THREE surfaces, each an exact match.
+    # One request per monitored metric across ALL FOUR surfaces, each an exact match.
+    # Derived from the metric lists rather than hard-coded, so adding a surface
+    # updates the expectation here — and forgetting to read a new surface back
+    # shows up as a mismatch instead of a silently write-only series.
     from src.eval.quality_alerts import (
         OFFLINE_INFRA_METRICS,
         ONLINE_INFRA_METRICS,
         ONLINE_MONITORED_METRICS,
         ROUTER_MONITORED_METRICS,
+        ROUTER_QUALITY_MONITORED_METRICS,
     )
 
     expected_requests = (
@@ -261,6 +265,7 @@ def test_verify_queries_one_exact_metric_per_request():
         + len(ONLINE_MONITORED_METRICS)
         + len(ONLINE_INFRA_METRICS)
         + len(ROUTER_MONITORED_METRICS)
+        + len(ROUTER_QUALITY_MONITORED_METRICS)
     )
     assert len(client.requests) == expected_requests
     for req in client.requests:
