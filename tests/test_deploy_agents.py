@@ -590,6 +590,38 @@ class TestVersionCoupledServingDepsHaveUpperBounds:
             f"resolve a version we never tested: {missing}"
         )
 
+    def test_the_adk_pin_is_identical_in_pyproject(self):
+        """An upper bound is not enough for `google-adk` — the two pins must MATCH.
+
+        ADK is the one dependency where local and container are not merely
+        compatible but the same artifact viewed twice: the AdkApp is cloudpickled
+        against the ADK installed locally and unpickled by the ADK the container
+        rebuilt from REQUIREMENTS. A skew between them mis-loads tools or mangles
+        model calls, and nothing in the failure names a version.
+
+        `test_each_declares_an_upper_bound` passes if REQUIREMENTS says `==2.9.1`
+        while pyproject says `==2.8.0` — the exact case this guards. Bumping one
+        file and not the other is the natural way to do it, because the second copy
+        lives in a Python list nobody greps when editing dependencies.
+        """
+        import pathlib
+        import re
+
+        spec = self._requirement("google-adk")
+        assert spec is not None, "google-adk vanished from the serving REQUIREMENTS"
+        served = re.search(r"==\s*([\w.]+)", spec)
+        assert served, f"the serving google-adk pin is not exact: {spec!r}"
+
+        pyproject = pathlib.Path("pyproject.toml").read_text()
+        declared = re.search(r'"google-adk\[[^\]]*\]==\s*([\w.]+)"', pyproject)
+        assert declared, "pyproject.toml does not exact-pin google-adk"
+
+        assert served.group(1) == declared.group(1), (
+            f"google-adk is {served.group(1)} in deploy_agents.REQUIREMENTS but "
+            f"{declared.group(1)} in pyproject.toml. The served engine would rebuild "
+            "an ADK different from the one the AdkApp was pickled against."
+        )
+
     def test_each_is_actually_present(self):
         """Guard the guard: a renamed package would make the check above vacuous."""
         absent = [n for n in self.COUPLED if self._requirement(n) is None]
@@ -652,3 +684,147 @@ class TestGatewayConfigSetsBothModes:
     def test_flag_on_but_no_paths_is_none_not_empty_dict(self, monkeypatch):
         """An empty dict would be sent to the API as a binding request."""
         assert self._build(monkeypatch, enabled=True) is None
+
+
+class TestServingSpecsMatchPyproject:
+    """A package declared in both places must carry the SAME version specifier.
+
+    Not "compatible" — the same. The served engine rebuilds its environment from
+    `REQUIREMENTS` while the AdkApp is cloudpickled against the distributions
+    installed from `pyproject.toml`, so the two files describe one artifact seen
+    from two sides. `TestVersionCoupledServingDepsHaveUpperBounds` only asks whether
+    a bound exists; it is satisfied by `>=1.163.0` here and `==2.1.0` there.
+
+    That exact gap was live until 2026-09-17: `google-cloud-aiplatform` — the
+    distribution `AdkApp` and `vertexai.agent_engines` come from, i.e. the pickling
+    contract itself — was the one coupled package with no upper bound, which also
+    re-admitted the 2.1.3 release pyproject deliberately pins away from.
+
+    Only EXTRAS may legitimately differ, and only where the served engine genuinely
+    must not carry the extra.
+    """
+
+    #: package -> why its extras differ between the two declarations.
+    EXTRA_DEVIATIONS: ClassVar[dict[str, str]] = {
+        "google-cloud-aiplatform": (
+            "no `evaluation` extra in the engine: offline eval runs in the "
+            "eval-runner image, and the extra caps litellm <1.86.0 -> unresolvable"
+        ),
+        "google-adk": "no `eval` extra in the engine, same reason",
+    }
+
+    @staticmethod
+    def _parse(specs):
+        import re
+
+        out = {}
+        for spec in specs:
+            spec = spec.strip()
+            if not spec or spec.startswith("#"):
+                continue
+            m = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?(.*)$", spec)
+            out[m.group(1).lower()] = (m.group(2) or "", m.group(3).strip())
+        return out
+
+    @classmethod
+    def _both(cls):
+        import pathlib
+        import tomllib
+
+        from src.deploy.deploy_agents import REQUIREMENTS
+
+        declared = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+        return (
+            cls._parse(declared["project"]["dependencies"]),
+            cls._parse(REQUIREMENTS),
+        )
+
+    def test_shared_packages_declare_identical_versions(self):
+        pyproject, serving = self._both()
+        shared = sorted(set(pyproject) & set(serving))
+        assert shared, "parsing produced no overlap — the parser, not the deps, broke"
+
+        mismatched = {
+            name: (pyproject[name][1], serving[name][1])
+            for name in shared
+            if pyproject[name][1] != serving[name][1]
+        }
+        assert not mismatched, (
+            "these packages are declared with different version specifiers in "
+            "pyproject.toml vs deploy_agents.REQUIREMENTS "
+            f"(pyproject, serving): {mismatched}"
+        )
+
+    def test_extras_only_differ_where_documented(self):
+        pyproject, serving = self._both()
+        undocumented = {
+            name: (pyproject[name][0], serving[name][0])
+            for name in sorted(set(pyproject) & set(serving))
+            if pyproject[name][0] != serving[name][0] and name not in self.EXTRA_DEVIATIONS
+        }
+        assert not undocumented, (
+            "extras differ between pyproject and the serving set with no recorded "
+            f"reason — add one to EXTRA_DEVIATIONS or fix the spec: {undocumented}"
+        )
+
+    def test_every_serving_package_is_declared_locally(self):
+        """A dependency the engine installs but we never install is untested code.
+
+        `mcp` and `cloudpickle` were in this state: both load-bearing (ADK imports
+        symbols mcp 2.x removed; cloudpickle is the local half of the pickling
+        contract), both absent from pyproject, so locally they were whatever some
+        other package happened to drag in.
+        """
+        pyproject, serving = self._both()
+        assert not sorted(set(serving) - set(pyproject)), (
+            "declared for the served engine but not for the project: "
+            f"{sorted(set(serving) - set(pyproject))}"
+        )
+
+
+class TestGeneratedServingRequirementsAreNotStale:
+    """The `.txt` copies are generated; a hand-edit must fail the build.
+
+    Both copies had drifted to `google-adk[agent-identity]>=2` with no `mcp` bound,
+    and the coordinator's to `fastmcp>=2.0.0` — fastmcp 4.x requires mcp 2.x, which
+    removed the `McpHttpClientFactory` symbol ADK imports at module scope. That is
+    the 2026-09-08 outage chain, armed, in a file `scripts/deploy_router.sh` feeds
+    straight to `adk deploy agent_engine`.
+    """
+
+    def test_all_generated_copies_are_current(self):
+        from src.deploy import serving_requirements as sr
+
+        assert sr.check() == [], (
+            "serving requirements files are stale; regenerate with "
+            "`uv run python -m src.deploy.serving_requirements --write`"
+        )
+
+    def test_check_mode_exits_non_zero_on_drift(self, tmp_path, monkeypatch):
+        """Mutation-check: the guard must actually fire on a hand-edit."""
+        from src.deploy import serving_requirements as sr
+
+        stale = tmp_path / "src" / "router" / "requirements.txt"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("google-adk[agent-identity]>=2\nfastmcp>=2.0.0\n")
+        monkeypatch.setattr(sr, "_root", lambda: tmp_path)
+        monkeypatch.setattr(sr, "GENERATED", ("src/router/requirements.txt",))
+
+        assert sr.check() == ["src/router/requirements.txt"]
+        assert sr.main(["--check"]) == 1
+
+    def test_the_deploy_script_points_at_a_generated_file(self):
+        """`deploy_router.sh` must consume a path this module manages, or the
+        generator guards a file nobody deploys."""
+        import pathlib
+        import re
+
+        from src.deploy import serving_requirements as sr
+
+        script = pathlib.Path("scripts/deploy_router.sh").read_text()
+        used = re.search(r"--requirements_file=[^\s\\]*?([\w/.-]+requirements\.txt)", script)
+        assert used, "deploy_router.sh no longer passes --requirements_file"
+        assert any(used.group(1).endswith(rel) for rel in sr.GENERATED), (
+            f"deploy_router.sh deploys {used.group(1)}, which is not generated from "
+            f"REQUIREMENTS (managed: {sr.GENERATED})"
+        )

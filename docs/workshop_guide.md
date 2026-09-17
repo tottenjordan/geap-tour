@@ -214,7 +214,11 @@ Agents deploy to [Vertex AI Agent Engine](https://cloud.google.com/vertex-ai/gen
 # Self-contained agent directory structure:
 # src/agents/coordinator/
 #   agent.py          — defines root_agent with sub-agents inline
-#   requirements.txt  — google-cloud-aiplatform[adk,agent_engines], google-genai, fastmcp
+#   requirements.txt  — GENERATED from src/deploy/deploy_agents.py:REQUIREMENTS
+#                       (uv run python -m src.deploy.serving_requirements --write).
+#                       Don't hand-edit: this file and the Python deployer must
+#                       install the same versions, because the AdkApp is pickled
+#                       locally and unpickled by whatever the container installed.
 #   .env              — MCP URLs, Model Armor templates, GCP config
 
 adk deploy agent_engine \

@@ -85,22 +85,32 @@ from src.config import (
     TRAVEL_MODEL,
 )
 
-# Runtime dependency subset for the served Agent Engine. Keep the version floors
-# aligned with pyproject.toml (the stack we test + build the eval image against);
-# this hand-list exists only because the engine needs a trimmed set (no pytest,
-# kfp, pandas, matplotlib, etc.). Deliberate deviations from pyproject:
+# Runtime dependency subset for the served Agent Engine, and the SINGLE SOURCE for
+# every serving requirements file in the repo (src/deploy/serving_requirements.py
+# renders the `src/**/requirements.txt` copies from this list; a test fails if they
+# drift). This hand-list exists only because the engine needs a trimmed set (no
+# pytest, kfp, pandas, matplotlib, etc.).
+#
+# Every package that ALSO appears in pyproject.toml must carry the IDENTICAL version
+# specifier — enforced by
+# tests/test_deploy_agents.py:TestServingSpecsMatchPyproject. The engine rebuilds
+# this set from scratch while the AdkApp is cloudpickled against the locally
+# installed distributions, so "compatible" is not the bar; "the same" is. Only the
+# EXTRAS may differ, and only for these documented reasons:
 #   * No `evaluation`/`eval` extras — offline eval runs in the eval-runner image /
 #     Vertex pipeline, not in the served engine, and the evaluation extra caps
 #     litellm (<1.86.0), conflicting with our litellm floor → unresolvable build.
-#   * cloudpickle pinned <4 — Agent Engine serializes the app with cloudpickle.
-#   * google-adk exact-pinned to the tested/locked version (see uv.lock) so the
-#     runtime rebuild matches the ADK we pickle the app against locally — a
-#     local-pickle↔runtime version skew can mis-load tools / mangle model calls.
 REQUIREMENTS = [
-    "google-cloud-aiplatform[adk,agent-engines]>=1.163.0",
-    "google-genai>=2",
+    # EXACT-pinned, matching pyproject. This was `>=1.163.0` until 2026-09-17 — the
+    # one coupled package left unbounded, and the worst one to leave open: `AdkApp`
+    # and `vertexai.agent_engines` live in THIS distribution and are cloudpickled
+    # into the engine, so a floor let the container unpickle our app with a major
+    # version we have never run. It also silently re-admitted 2.1.3, which pyproject
+    # pins away from because it breaks `simulated_eval`.
+    "google-cloud-aiplatform[adk,agent-engines]==2.1.0",
+    "google-genai>=2.22,<3",
     "google-auth>=2.52.0",
-    "google-adk[agent-identity]==2.8.0",
+    "google-adk[agent-identity]==2.9.1",
     "a2a-sdk>=1",
     # PINNED BELOW 2.x, and this is deploy-blocking rather than cosmetic.
     #
@@ -128,7 +138,7 @@ REQUIREMENTS = [
     # and the container's resolver is not guaranteed to be uv. State the constraint
     # rather than inferring it. Mirrors the pin in pyproject.toml.
     "fastmcp>=3.4.7,<4",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
     # Upper bound matters here more than the floor. The Claude tiers run through
     # litellm, and src/models/tool_call_ids.py exists to work around a specific
     # litellm/Anthropic/ADK interaction (`AnthropicError: 'tool_call_id'`) that only
@@ -145,17 +155,22 @@ REQUIREMENTS = [
     #
     # A first attempt pinned >=1.93.0 to "match tested" and immediately reddened CI,
     # which tests 1.85.7. The range below admits both and still excludes the
-    # 1.97+ territory nothing here has ever exercised.
-    "litellm>=1.83.14,<1.97.0",
-    "pydantic>=2.12.5",
+    # 1.97+ territory nothing here has ever exercised. The floor is 1.85.7 rather
+    # than a lower number only because pyproject says 1.85.7 and these two must
+    # agree; it is still CI's exact version, so nothing tightened in practice.
+    "litellm>=1.85.7,<1.97.0",
+    "pydantic>=2.13.5",
     "cloudpickle>=3.0,<4.0",
     # OTel instrumentation — Agent Engine auto-enables telemetry, but without
     # these the emitted spans carry no gen_ai.* prompt/response attributes, so
     # Online Evaluators (which score {prompt}/{response} from gen_ai spans)
     # silently produce zero results. google-genai is the one that unblocks eval.
-    "opentelemetry-instrumentation-google-genai",
-    "opentelemetry-instrumentation-grpc",
-    "opentelemetry-instrumentation-httpx",
+    # Floors mirror pyproject: unversioned here meant the container could install a
+    # different instrumentation generation than the one whose span output we
+    # validated, and these packages exist precisely to shape spans.
+    "opentelemetry-instrumentation-google-genai>=0.7b1",
+    "opentelemetry-instrumentation-grpc>=0.63b1",
+    "opentelemetry-instrumentation-httpx>=0.63b1",
     # Required by ADK 2.8.0's first-party ModelArmorPlugin (see
     # src/armor/config.py:model_armor_plugin). ENABLE_MODEL_ARMOR_PLUGIN defaults ON
     # (this comment said "defaults off" until 2026-09-17, stale since the 2026-09-09

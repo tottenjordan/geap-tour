@@ -1,6 +1,27 @@
-google-cloud-aiplatform[adk,agent-engines]>=1.163.0
-google-genai>=2
-google-adk[agent-identity]>=2
-litellm>=1.83.14
-fastmcp>=2.0.0
-python-dotenv>=1.0.0
+# GENERATED FILE — DO NOT EDIT.
+#
+# Source of truth: src/deploy/deploy_agents.py:REQUIREMENTS, which carries the
+# reasoning for every bound below. Regenerate with:
+#
+#     uv run python -m src.deploy.serving_requirements --write
+#
+# Hand-editing this file silently diverges the `adk deploy agent_engine` path from
+# the Python deployer. It already did once: this file held `google-adk>=2` and
+# `fastmcp>=2.0.0`, which resolves fastmcp 4.x -> mcp 2.x -> the import error that
+# killed every engine worker on 2026-09-08.
+
+google-cloud-aiplatform[adk,agent-engines]==2.1.0
+google-genai>=2.22,<3
+google-auth>=2.52.0
+google-adk[agent-identity]==2.9.1
+a2a-sdk>=1
+mcp>=1.29.0,<2
+fastmcp>=3.4.7,<4
+python-dotenv>=1.2.2
+litellm>=1.85.7,<1.97.0
+pydantic>=2.13.5
+cloudpickle>=3.0,<4.0
+opentelemetry-instrumentation-google-genai>=0.7b1
+opentelemetry-instrumentation-grpc>=0.63b1
+opentelemetry-instrumentation-httpx>=0.63b1
+google-cloud-modelarmor>=0.2
