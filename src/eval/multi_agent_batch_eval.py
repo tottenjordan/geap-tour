@@ -257,9 +257,58 @@ def _select_cases(agent_name: str, limit: int | None) -> list[dict]:
 
     The CI eval gate passes a small ``limit`` to keep a run ~3-5 min; slicing an
     empty limit is a no-op so normal full runs are unaffected.
+
+    **When limiting, held-out cases go first.** A truncated sample used to be "the
+    first N as written", which quietly favoured whatever sits at the top of
+    ``agent_eval_configs`` — and some of those are prompts GEPA trained on, so the
+    cheap gate was partly grading memorization. Held-out prompts are the ones the
+    optimizer never saw, so they are the most informative cases to spend a small
+    budget on. The sort is *stable*: within each group the original order is kept.
+
+    An unlimited run is returned completely untouched — same objects, same order.
+    Reordering what a full run scores would move the published ``agent_eval/*``
+    numbers for a reason unrelated to quality.
+
+    Honest limitation: for ``travel_agent`` and ``router_agent`` this currently puts
+    **zero** cases first, because none of their held-out probes exist in the scored
+    collection at all (measured 2026-09-17). That is the finding, not a bug in the
+    sort — closing it needs new cases (2b in
+    docs/plans/2026-09-11-eval-reliability-followups.md).
     """
     cases = get_eval_cases(agent_name)
-    return cases[:limit] if limit else cases
+    if not limit:
+        return cases
+
+    from src.eval.holdout import is_holdout_case
+
+    # `not` -> False (0) sorts before True (1), so holdout cases lead.
+    return sorted(cases, key=lambda c: not is_holdout_case(agent_name, c))[:limit]
+
+
+def _contamination_line(agent_name: str) -> str:
+    """One line of provenance printed next to every score.
+
+    A rubric number published to ``agent_eval/*`` is not interpretable without
+    knowing how much of the set it was computed over is material GEPA trained on.
+    That caveat has existed in a doc since PR #116 and nowhere near the number
+    itself, so nobody reading a score encountered it.
+
+    Never raises: this is a diagnostic beside a result, and an eval run must not die
+    because a prompt file moved.
+    """
+    try:
+        from src.eval.holdout import scored_contamination
+
+        c = scored_contamination(agent_name)
+    except Exception as exc:  # broad by design — diagnostics must not break the run
+        return f"Contamination: unavailable ({type(exc).__name__})"
+
+    if not c["scored"]:
+        return "Contamination: not tracked for this agent"
+    return (
+        f"Contamination: {c['contaminated']}/{c['scored']} scored cases are in the "
+        f"GEPA train set; {c['holdout_present']}/{c['holdout_total']} holdout probes present"
+    )
 
 
 def _build_eval_dataset(cases: list[dict]) -> pd.DataFrame:
@@ -294,6 +343,7 @@ def _run_single_agent_eval(
     print(f"\n{'─' * 60}")
     print(f"  Agent: {agent_name} ({len(cases)} test cases)")
     print(f"  Metrics: {', '.join(getattr(m, 'name', str(m)) for m in metrics)}")
+    print(f"  {_contamination_line(agent_name)}")
     print(f"{'─' * 60}")
 
     eval_df = _build_eval_dataset(cases)
