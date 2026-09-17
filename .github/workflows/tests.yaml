@@ -54,7 +54,15 @@ jobs:
         # `uv run` re-resolve invites it to install a DIFFERENT set than the one
         # just verified. Matches the documented local command.
         #
-        # `--dist loadfile` is required, not decorative: ~10 modules reload
-        # src.config / src.registry and mutate module-level state, so a module's
-        # tests must stay on one worker. Per-test distribution would split them.
-        run: uv run --no-sync pytest -n auto --dist loadfile
+        # SERIAL ON PURPOSE — measured, not assumed. `-n auto --dist loadfile` is a
+        # 2.3x speedup locally (156s -> 67s on 8 cores) and made CI *slower*:
+        #
+        #     serial                          69s
+        #     -n auto --dist loadfile (gw4)   74s
+        #
+        # The runner has 4 cores, and each xdist worker re-pays the full
+        # ADK/vertexai/genai import before running anything; with `loadfile` the
+        # long modules then serialize anyway. The import cost dominates a 69s run,
+        # so there is nothing for parallelism to amortize. Use `-n` locally (see
+        # CLAUDE.md), not here, unless a future measurement says otherwise.
+        run: uv run --no-sync pytest

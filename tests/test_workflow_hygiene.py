@@ -100,6 +100,21 @@ class TestTheTestWorkflowSpecifically:
         for step in run_steps:
             assert "--no-sync" in step, f"pytest step re-resolves the env: {step!r}"
 
+    def test_the_serial_choice_carries_its_measurement(self):
+        """`-n auto` is the obvious optimization and it is WRONG here — measured 69s
+        serial vs 74s on 4 workers, because each worker re-pays the ADK import and
+        there is nothing to amortize in a 69s run.
+
+        A bare `run: pytest` looks like nobody thought about it, so the next person
+        adds `-n auto`, sees it pass, and ships a slowdown. The numbers live beside
+        the command; this asserts they stay there.
+        """
+        text = self.PATH.read_text()
+        assert "SERIAL ON PURPOSE" in text
+        assert "69s" in text and "74s" in text, (
+            "the measurement justifying serial execution must stay next to the command"
+        )
+
     def test_main_pushes_are_not_cancelled(self):
         """Cancelling a main-branch run because another merge landed leaves a commit
         with no green record. Only PR runs should supersede each other."""
