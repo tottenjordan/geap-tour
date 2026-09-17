@@ -267,3 +267,40 @@ class TestFlatEventsAreRegroupedIntoTurns:
         out = regroup_dataset_turns(R())
         for cell in out.eval_dataset_df["agent_data"]:
             assert cell["turns"][0]["events"], "row was not regrouped"
+
+
+class TestTheAiplatformPinIsDeliberate:
+    """`google-cloud-aiplatform` is pinned to 2.1.0, not floored.
+
+    2.1.3 reproducibly breaks this very module: the evaluation run returns FAILED with
+    `code=13 'Result item initialization failed due to an internal error.'` Measured
+    2026-09-17 with identical code and the same engine on both sides — 2/2 failures on
+    2.1.3, success with metrics on 2.1.0, and success again on 2.1.0 with the other 47
+    package upgrades in place. The upgrade is the sole variable.
+
+    The pin looks like staleness and will attract a "why are we behind?" cleanup, so
+    the reason lives next to it and this test keeps them together. Relaxing it to a
+    floor silently re-breaks simulated_eval — and the full unit suite stays green,
+    because the failure is server-side in the eval run.
+    """
+
+    @staticmethod
+    def _pyproject() -> str:
+        import pathlib as _p
+
+        return _p.Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
+
+    def test_it_is_an_exact_pin_not_a_floor(self) -> None:
+        text = self._pyproject()
+        assert 'google-cloud-aiplatform[adk,agent-engines,evaluation]==2.1.0"' in text, (
+            "aiplatform is no longer pinned to ==2.1.0; 2.1.3 breaks simulated_eval's "
+            "evaluation run with code=13 'Result item initialization failed'"
+        )
+
+    def test_the_reason_is_recorded_beside_the_pin(self) -> None:
+        """A pin without a reason gets removed by the next person who sees it."""
+        text = self._pyproject()
+        head = text[: text.index("google-cloud-aiplatform[adk,agent-engines,evaluation]==2.1.0")]
+        window = head[-700:]
+        assert "2.1.3" in window, "the pin does not say which version broke"
+        assert "simulated_eval" in window, "the pin does not say what it broke"

@@ -517,3 +517,55 @@ That is also why this was the right moment to escalate `server_side_armor` from
 advisory to **critical**: a remedy now ships and is on by default, both live engines
 pass on templates, so the escalation costs nothing today and means the next Gemini-3
 deploy cannot land unarmored in silence.
+
+---
+
+## Dependency refresh, 2026-09-17: 48 of 49, and why aiplatform is pinned
+
+`uv lock --upgrade` moved 49 packages. **48 were taken. `google-cloud-aiplatform`
+2.1.0 → 2.1.3 was rejected**, on evidence.
+
+Notable among the 48: `google-genai` 2.22.0 → 2.24.0, `ruff` 0.16.6 → 0.16.8,
+`ty` 0.0.79 → 0.0.81. `google-adk` stays at its exact `==2.8.0` pin and did not move.
+
+### 2.1.3 breaks `simulated_eval`
+
+The evaluation run comes back FAILED:
+
+```
+EvaluationRunState.FAILED
+ERROR: code=13 details=None message='Result item initialization failed due to an internal error.'
+```
+
+Three-way A/B, identical code and the same engine throughout:
+
+| aiplatform | other 47 upgrades | `simulated_eval` |
+| --- | --- | --- |
+| 2.1.0 | no | **SUCCEEDED**, metrics returned |
+| 2.1.3 | yes | **FAILED**, twice |
+| 2.1.0 | yes | **SUCCEEDED**, metrics returned |
+
+So the upgrade is the sole variable, and the other 47 are not implicated. The failure
+is server-side in the eval run, which is why it is invisible to the unit suite — hence
+the pin carries its reason inline and `tests/test_simulated_eval.py` keeps the two
+together, so a future "why are we behind?" cleanup fails loudly instead of silently
+re-breaking the surface.
+
+### What "a green suite does not prove an SDK bump worked" bought here
+
+The full gate passed on 2.1.3 — 1950 tests, ruff, ty, all clean. So did the structural
+checks: every `_sdk_patches` target still present, `types.evals.AgentData` still the
+class the SDK constructs, our pydantic relaxation still applying. **A live batch eval
+also passed on 2.1.3, all six metrics, no collapse toward zero** — which is the
+documented symptom of `_sdk_patches` silently no-oping, so that canary was worth
+running and came back clean.
+
+Only running `simulated_eval` end-to-end found it.
+
+### Known divergence, pre-existing
+
+`deploy_agents.REQUIREMENTS` floors aiplatform at `>=1.163.0`, so the **served engine
+image resolves 2.1.3** while local is pinned to 2.1.0 (confirmed in a build log). That
+is tolerable today because the broken path is eval-run creation, which runs from a
+workstation or CI and never inside the engine — but it means local and served are not
+the same SDK, and a future engine-side bug in 2.1.3 would not reproduce locally.
