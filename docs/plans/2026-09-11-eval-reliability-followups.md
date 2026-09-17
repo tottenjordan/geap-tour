@@ -1,10 +1,18 @@
 # Eval reliability follow-ups — parked 2026-09-11
 
 Three recommendations coming out of [`docs/notes/eval-reliability-audit.md`](../notes/eval-reliability-audit.md)
-(PR #116). **None is started.** Parked deliberately to pick up other work; this file
-exists so they are revisited rather than rediscovered.
+(PR #116). Parked deliberately to pick up other work; this file exists so they are
+revisited rather than rediscovered.
 
 Ordered by importance. Only the first is a safety claim.
+
+> **Re-evaluated 2026-09-17.** Every item below was re-measured rather than re-read,
+> and three had drifted: item 2's table was stale and missing the router, item 3's
+> multi-turn premise was wrong (`simulated_eval` is fixed), and "three uncovered
+> tools" was never accurate for the scored collection. **2a is now done.** Items 1,
+> 2b and 3 remain open; the two other smaller items are re-confirmed still open.
+> Corrections are marked inline rather than silently rewritten, so the drift itself
+> stays visible.
 
 ---
 
@@ -24,8 +32,24 @@ injections** blocked, 0 false positives on benign.
 **Why it is parked and not just done:** widening the corpus turns a required,
 always-green check **red**, and the honest fix is probably not "add more regexes" —
 a blocklist loses this game indefinitely. The real answer is to assert on the layer
-that does the work (Model Armor templates, or the ADK plugin), which today has no
-test at all. Flipping a required check and choosing that design is an owner call.
+that does the work. Flipping a required check and choosing that design is an owner
+call.
+
+**Updated 2026-09-17 — two facts here went stale; the recommendation narrows.**
+
+* The ADK plugin is no longer untested. `tests/test_armor_observable_plugin.py`
+  covers it — but only *structurally* (a screening failure and a genuine block emit
+  different metrics; `block_on_screening_failure` still defaults closed). Nothing
+  measures whether it stops an actual injection.
+* More importantly, **the plugin is not the live layer on the default backbone
+  any more.** `AGENT_MODEL` moved to `gemini-2.5-flash`, and `armor_layers()` gates
+  the plugin on `not server_side_armor_enabled(model)` — so today the default
+  coordinator reports `server_side=True, plugin=False`. The layer actually doing the
+  work is the **Model Armor templates**, and those have no behavioural test.
+
+So the recommendation is now specific: point the measurement at the templates on the
+regional-Gemini path. Still an owner decision, because it still means deciding what a
+required check is allowed to assert.
 
 **Scope limit, restated so this is not read as alarmism:** a server-side layer is
 always active (`armor_layers()`), so the *system* is not as exposed as the guardrail
@@ -36,29 +60,41 @@ injection resistance.
 
 ## 2. Point the scored path at the holdout that already exists
 
-**Status: not started. Scoped 2026-09-11 — it is two jobs, not one.**
+**Status: 2a DONE 2026-09-17. 2b still blocked.**
 
 `holdout.py` + `dataset_integrity.py` exist and are CI-enforced, but they guard
 `src/eval/evalsets/*` while `multi_agent_batch_eval` scores
 `src/eval/agent_eval_configs.py` and publishes *that* to `agent_eval/*`.
-`_select_cases` never consults `holdout`. For `travel_agent`, **0 of 3** held-out
-probes appear in the scored set.
 
-| agent | scored | GEPA train | contaminated | train left if decontaminated |
-| --- | --- | --- | --- | --- |
-| coordinator | 61 | 21 | 8 | **13** |
-| travel | 10 | 7 | 2 | **5** |
-| expense | 10 | 7 | 4 | **3** |
+Re-measured 2026-09-17 (the 2026-09-11 table was stale and had no router row):
 
-### 2a — plumbing (~1 working session, one PR, low risk)
+| agent | scored | GEPA train | contaminated | train left | holdout | **holdout ∩ scored** |
+| --- | --- | --- | --- | --- | --- | --- |
+| coordinator | 61 | 19 | 6 | 13 | 5 | **3** |
+| travel | 10 | 7 | 1 | 6 | 3 | **0** |
+| expense | 10 | 7 | 4 | 3 | 3 | **1** |
+| router | 40 | 21 | 1 | 20 | 5 | **0** |
 
-Extend `holdout` / `dataset_integrity` to cover the scored collection, make
-`_select_cases` holdout-aware, add a test that fails when the **scored** set gets
-contaminated. All the patterns exist; this points them at the right collection.
+The headline the first pass missed: **9 of 16 held-out probes never reach the scored
+path at all.** The generalization probes were reserved, CI-enforced, and then not
+used by the thing that publishes the number.
 
-**Important limitation to state in that PR:** 2a does **not** make the GEPA numbers
-trustworthy. It makes the untrustworthiness visible and bounded — the test records
-the current 40% / 20% / 13% contamination and fails on any increase.
+### 2a — plumbing (DONE)
+
+`holdout.scored_prompts` / `scored_contamination` / `is_holdout_case` join the scored
+collection to the holdout; `_select_cases` puts held-out cases first **when limiting**
+(so the CI gate's `--limit 8` spends its budget on prompts GEPA never saw) while
+leaving an unlimited run byte-identical; `multi_agent_batch_eval` prints the
+contamination line next to every score; and
+`tests/test_eval_dataset_integrity.py:TestTheScoredCollectionIsMeasured` pins the
+numbers above as bounds — contamination may not rise, holdout coverage may not fall.
+Both directions mutation-checked.
+
+**What 2a does not do:** it does not make the GEPA numbers trustworthy. It makes the
+untrustworthiness visible, bounded and regression-guarded. For `travel_agent` and
+`router_agent` the holdout-first sort currently selects **zero** cases, because they
+have no held-out probes in the scored set — that is 2b's problem, surfaced rather
+than hidden.
 
 ### 2b — content (blocked, needs a domain owner)
 
@@ -108,15 +144,21 @@ and it is unblocked. See `docs/notes/adk-2.7.1-dependency-refresh.md`
 
 ## Smaller, unblocked
 
-* **Three uncovered tools.** `cancel_booking`, `get_booking_details`,
-  `list_all_bookings` are exercised by no eval case — the same three the 2026-08-21
-  prompt audit added to the instruction *because* they had no coverage. The
-  instruction was fixed; the evalset was not. A few cases closes it.
+* **Three uncovered tools — HALF DONE, and this item was mis-stated.**
+  `cancel_booking`, `get_booking_details` and `list_all_bookings` have carried
+  `expected_tool` entries in `agent_eval_configs.py` since `97045a0` (2026-08-22) —
+  *before* this doc was written, so "exercised by no eval case" was never accurate
+  for the scored collection. They remain absent from `src/eval/evalsets/*.json`,
+  which is the collection GEPA and the holdout machinery read. Verified 2026-09-17.
 * **20 unlabelled gold cases.** `uv run python -m src.eval.annotate --annotator a2`.
-  Cheap, and calibration is currently blind where it counts.
-* **Router outcome metric.** Publish one, or state on the dashboard that the router
-  series measure classifier and cost only — a routing collapse currently *improves*
-  `cost_savings_pct` (93.09% → 99.59%) and fires nothing.
+  Cheap, and calibration is currently blind where it counts. Re-confirmed 2026-09-17:
+  `--status` reports `a2: 0/52 scored`.
+* **Router outcome metric.** Still open, re-confirmed 2026-09-17:
+  `quality_alerts.ROUTER_MONITORED_METRICS` holds only `classifier_accuracy_pct`,
+  `cost_savings_pct` and `classifier_latency_ms`. Publish an outcome metric, or state
+  on the dashboard that the router series measure classifier and cost only — a
+  routing collapse currently *improves* `cost_savings_pct` (93.09% → 99.59%) and
+  fires nothing.
 
 ## Also parked (unrelated to evals)
 

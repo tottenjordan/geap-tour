@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from src.eval import dataset_integrity as di
@@ -189,3 +191,117 @@ class TestSamplerCriteriaCanActuallyBeScored:
         """A moved file must not silently empty this sweep — the same failure the
         evalset sweep guards against."""
         assert len(self._sampler_configs()) >= 9
+
+
+class TestTheScoredCollectionIsMeasured:
+    """The holdout machinery guarded a collection nobody publishes.
+
+    `holdout.py` and `dataset_integrity.py` have been CI-enforced since PR #116, but
+    they cover `src/eval/evalsets/*`. `multi_agent_batch_eval` scores
+    `src/eval/agent_eval_configs.py` and publishes THAT to `agent_eval/*`. The two
+    were never connected, so every assertion above was true and none of it applied
+    to the number on the dashboard.
+
+    These tests do not fix the contamination — that needs new domain-authored cases
+    (2b in docs/plans/2026-09-11-eval-reliability-followups.md, blocked). They make
+    it a bounded, regression-guarded quantity instead of an unmeasured one.
+
+    Bounds, not equality: an improvement must never turn the suite red.
+    """
+
+    # Measured 2026-09-17. contaminated = scored prompts GEPA also trained on;
+    # holdout_present = reserved probes that actually reach the scored set.
+    BASELINE: ClassVar[dict[str, dict[str, int]]] = {
+        "coordinator_agent": {"contaminated": 6, "holdout_present": 3},
+        "travel_agent": {"contaminated": 1, "holdout_present": 0},
+        "expense_agent": {"contaminated": 4, "holdout_present": 1},
+        "router_agent": {"contaminated": 1, "holdout_present": 0},
+    }
+
+    @pytest.mark.parametrize("agent", sorted(BASELINE))
+    def test_contamination_does_not_increase(self, agent: str) -> None:
+        from src.eval.holdout import scored_contamination
+
+        got = scored_contamination(agent)["contaminated"]
+        assert got <= self.BASELINE[agent]["contaminated"], (
+            f"{agent}: {got} scored cases are now in the GEPA train set, up from "
+            f"{self.BASELINE[agent]['contaminated']}. A new eval case was copied from "
+            "the training evalset — the published score grades memorization for it."
+        )
+
+    @pytest.mark.parametrize("agent", sorted(BASELINE))
+    def test_holdout_coverage_does_not_regress(self, agent: str) -> None:
+        """The opposite direction, and the one nobody watches: losing a held-out
+        probe from the scored set silently removes generalization evidence."""
+        from src.eval.holdout import scored_contamination
+
+        got = scored_contamination(agent)["holdout_present"]
+        assert got >= self.BASELINE[agent]["holdout_present"], (
+            f"{agent}: only {got} holdout probes remain in the scored set, down from "
+            f"{self.BASELINE[agent]['holdout_present']}."
+        )
+
+    def test_the_measurement_reaches_the_operator(self) -> None:
+        """A caveat in a doc nobody opens is not a caveat. It prints beside the score."""
+        from src.eval.multi_agent_batch_eval import _contamination_line
+
+        line = _contamination_line("coordinator_agent")
+        assert "GEPA train set" in line
+        assert "holdout probes present" in line
+
+    def test_the_line_never_breaks_a_run(self) -> None:
+        """Diagnostics must not be able to kill the eval they annotate."""
+        from src.eval.multi_agent_batch_eval import _contamination_line
+
+        assert "not tracked" in _contamination_line("no_such_agent")
+
+
+class TestLimitedRunsPreferHeldOutCases:
+    """A small budget should be spent on prompts the optimizer never saw.
+
+    The CI gate runs `--limit 8`. That used to mean "the first 8 as written", which
+    is an arbitrary slice that can be mostly trained-on prompts.
+    """
+
+    def test_an_unlimited_run_is_byte_identical(self) -> None:
+        """THE guard. Reordering a full run would move the published agent_eval/*
+        numbers for a reason that has nothing to do with quality."""
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        for agent in ("coordinator_agent", "travel_agent", "expense_agent", "router_agent"):
+            assert _select_cases(agent, None) == get_eval_cases(agent), agent
+
+    def test_holdout_cases_lead_a_limited_run(self) -> None:
+        from src.eval.holdout import is_holdout_case
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        selected = _select_cases("coordinator_agent", 8)
+        flags = [is_holdout_case("coordinator_agent", c) for c in selected]
+        assert flags[:3] == [True, True, True], (
+            "the 3 coordinator holdout probes must head a limited run"
+        )
+        assert not any(flags[3:]), "holdout cases must be contiguous at the front"
+
+    def test_the_limit_is_still_respected(self) -> None:
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        assert len(_select_cases("coordinator_agent", 5)) == 5
+
+    def test_ordering_within_each_group_is_preserved(self) -> None:
+        """A stable sort, not a shuffle — an unstable one would make the gate's
+        sample vary run to run and turn a fixed set into a random one."""
+        from src.eval.agent_eval_configs import get_eval_cases
+        from src.eval.holdout import is_holdout_case
+        from src.eval.multi_agent_batch_eval import _select_cases
+
+        original = get_eval_cases("coordinator_agent")
+        selected = _select_cases("coordinator_agent", len(original))
+        for group in (True, False):
+            want = [
+                c["prompt"] for c in original if is_holdout_case("coordinator_agent", c) is group
+            ]
+            got = [
+                c["prompt"] for c in selected if is_holdout_case("coordinator_agent", c) is group
+            ]
+            assert got == want
