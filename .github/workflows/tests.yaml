@@ -12,10 +12,26 @@ on:
   push:
     branches: [main]
 
+# Supersede in-flight runs for the SAME pull request — pushing three commits to a
+# PR otherwise runs three full suites and you wait on the stale ones. Deliberately
+# NOT cancel-in-progress on `main`: that run is the record that main is green, and
+# cancelling it because another merge landed would leave a commit unverified.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    # Observed: median 84s, max 108s over the last 12 green runs. The GitHub
+    # default is 360 MINUTES, so a hung test would hold a runner for six hours
+    # before anyone learned anything. 10 is ~5x the worst observed run.
+    timeout-minutes: 10
+    # Least privilege, and the only workflow here that was missing it: this job
+    # reads the repo and needs nothing else.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +44,25 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
+        # `pipelines` + `doe` are NOT optional here: tests/conftest.py drops 39
+        # tests when pyDOE3/kfp are missing, and since 2026-09-17 a partial
+        # collection is a hard error in CI rather than a smaller green run.
         run: uv sync --group dev --group pipelines --group doe
 
       - name: Run tests
-        run: uv run --group pipelines --group doe pytest
+        # `--no-sync`: the step above already resolved the environment, and letting
+        # `uv run` re-resolve invites it to install a DIFFERENT set than the one
+        # just verified. Matches the documented local command.
+        #
+        # SERIAL ON PURPOSE — measured, not assumed. `-n auto --dist loadfile` is a
+        # 2.3x speedup locally (156s -> 67s on 8 cores) and made CI *slower*:
+        #
+        #     serial                          69s
+        #     -n auto --dist loadfile (gw4)   74s
+        #
+        # The runner has 4 cores, and each xdist worker re-pays the full
+        # ADK/vertexai/genai import before running anything; with `loadfile` the
+        # long modules then serialize anyway. The import cost dominates a 69s run,
+        # so there is nothing for parallelism to amortize. Use `-n` locally (see
+        # CLAUDE.md), not here, unless a future measurement says otherwise.
+        run: uv run --no-sync pytest

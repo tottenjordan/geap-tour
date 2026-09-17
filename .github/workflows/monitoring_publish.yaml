@@ -43,6 +43,9 @@ jobs:
     # Skips cleanly (never fails) when WIF isn't configured — forks, unset repos.
     if: ${{ vars.WIF_PROVIDER != '' && vars.AGENT_ENGINE_ID != '' }}
     runs-on: ubuntu-latest
+    # Observed median 1068s, max 1338s over 11 green runs. Four publish steps, each
+    # making live engine/judge calls; ~2x the worst observed run.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
