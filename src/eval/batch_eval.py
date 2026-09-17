@@ -28,6 +28,7 @@ from src.eval.eval_experiment import (
     eval_run_display_name,
     eval_run_labels,
 )
+from src.eval.stats import all_metrics_passed
 
 # ---------------------------------------------------------------------------
 # GCS destination for persisted evaluation artifacts
@@ -1197,17 +1198,19 @@ def _build_results(
     # 1-5 threshold to 0-1 for comparison (e.g., 3.0/5 = 0.6).
     normalized_threshold = score_threshold / 5.0
 
-    all_pass = True
-    metric_results = {}
-    for metric_name, avg in metric_averages.items():
-        passed = avg >= normalized_threshold
-        if not passed:
-            all_pass = False
-        metric_results[metric_name] = {
+    metric_results = {
+        metric_name: {
             "score": avg,
             "threshold": normalized_threshold,
-            "passed": passed,
+            "passed": avg >= normalized_threshold,
         }
+        for metric_name, avg in metric_averages.items()
+    }
+    # NOT `all_pass = True` then hope a loop disproves it: on an empty result the
+    # loop never runs and a scoreless eval reports success. Written that way three
+    # times in this repo (simulated_eval, multi_agent_batch_eval, here), so the
+    # rule now lives in one place. See stats.all_metrics_passed.
+    all_pass = all_metrics_passed(bool(d["passed"]) for d in metric_results.values())
 
     return {
         "run_id": run_id,

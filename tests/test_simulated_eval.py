@@ -160,17 +160,37 @@ class TestAnEmptyRunIsNotAPass:
     hint was one parenthetical line of output.
     """
 
-    def test_no_metrics_means_failure(self):
+    def test_the_verdict_comes_from_the_shared_rule(self):
+        """Rewritten 2026-09-17. This used to grep the source for a literal
+        ``all_pass = False`` inside the empty branch — which pinned one spelling of
+        the fix rather than the property, and went red the moment the same fix was
+        centralised. The property is now enforced in one place for all four eval
+        paths (``stats.all_metrics_passed``), so assert *that* wiring instead.
+        """
         import inspect
 
         from src.eval import simulated_eval
 
         src = inspect.getsource(simulated_eval.run_simulated_eval)
-        assert "if not metric_results:" in src, "the empty-result branch was renamed"
-        empty_branch = src.split("if not metric_results:", 1)[1]
-        assert "all_pass = False" in empty_branch.split("return", 1)[0], (
-            "an empty run must set all_pass=False — otherwise scoring nothing reports as success"
+        assert "all_metrics_passed(" in src, (
+            "the verdict must route through stats.all_metrics_passed, which is what "
+            "makes an empty result a failure"
         )
+
+    def test_the_shared_rule_fails_an_empty_result(self):
+        """The behaviour the test above delegates to."""
+        from src.eval.stats import all_metrics_passed
+
+        assert all_metrics_passed([]) is False
+
+    def test_the_operator_is_told_why(self):
+        """A FAIL with no explanation sends people looking at the agent."""
+        import inspect
+
+        from src.eval import simulated_eval
+
+        src = inspect.getsource(simulated_eval.run_simulated_eval)
+        assert "NO METRICS RETURNED" in src
 
 
 class TestFlatEventsAreRegroupedIntoTurns:

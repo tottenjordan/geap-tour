@@ -19,6 +19,7 @@ without touching Vertex.
 from __future__ import annotations
 
 from src.config import GCP_PROJECT_ID
+from src.eval.stats import all_metrics_passed
 
 # Both bake-off backbones are served on the global endpoint (see config.resolve_model:
 # native Gemini for gemini-3.x, LiteLlm for Claude — both location="global").
@@ -116,15 +117,22 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Preflight: checking {models} are served on the Vertex global endpoint…")
     results = preflight_models(models)
-    ok = True
     for model_id, (served, detail) in results.items():
-        mark = "✓" if served else "✗"
-        print(f"  {mark} {model_id}: {detail}")
-        ok = ok and served
+        print(f"  {'✓' if served else '✗'} {model_id}: {detail}")
+
+    # Checking NOTHING is not a pass. With an empty `results` the old loop never
+    # ran, `ok` stayed True, and this printed "Preflight OK — both backbones
+    # served" having verified neither — in the gate whose entire job is to stop an
+    # expensive bake-off before it starts. Same shape as the three eval verdicts;
+    # the rule lives in `stats.all_metrics_passed`.
+    ok = all_metrics_passed(served for served, _detail in results.values())
     if not ok:
-        print("Preflight FAILED — see the ✗ rows above.")
+        if not results:
+            print("Preflight FAILED — no models were checked, so nothing is verified.")
+        else:
+            print("Preflight FAILED — see the ✗ rows above.")
         return 1
-    print("Preflight OK — both backbones served.")
+    print(f"Preflight OK — {len(results)} backbone(s) served.")
     return 0
 
 

@@ -233,6 +233,7 @@ def run_simulated_eval(
 
     from src.config import GCP_PROJECT_ID, GCP_REGION, SIMULATOR_MODEL
     from src.eval.agent_eval_configs import build_agent_info, get_multi_turn_metrics
+    from src.eval.stats import all_metrics_passed
 
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
@@ -348,7 +349,6 @@ def run_simulated_eval(
         print(f"  Warning: could not extract summary metrics: {e}")
 
     normalized_threshold = score_threshold / 5.0
-    all_pass = True
     metric_results = {}
 
     print(f"\n=== Simulated Evaluation Results ({agent_name}) ===")
@@ -356,8 +356,6 @@ def run_simulated_eval(
         if "/AVERAGE" in key:
             avg = float(value)
             passed = avg >= normalized_threshold
-            if not passed:
-                all_pass = False
             status = "PASS" if passed else "FAIL"
             metric_name = key.rsplit("/AVERAGE", 1)[0]
             metric_results[metric_name] = {
@@ -367,13 +365,14 @@ def run_simulated_eval(
             }
             print(f"  {metric_name:50s} {avg:.2f} / {normalized_threshold:.2f}  [{status}]")
 
+    # A run that scored NOTHING must not report success — zero metrics used to sail
+    # through as `all_passed: true`, which is how the extra='ignore' data loss above
+    # stayed invisible. An empty result is an INFRA outcome, not a quality verdict.
+    # The rule lives in `all_metrics_passed`; its docstring lists all three places
+    # this repo got it wrong independently.
+    all_pass = all_metrics_passed(bool(d["passed"]) for d in metric_results.values())
+
     if not metric_results:
-        # A run that scored NOTHING must not report success. `all_pass` starts True
-        # and only flips on a failing metric, so zero metrics used to sail through
-        # as `all_passed: true` — the exact green-over-nothing this repo keeps
-        # finding, and how the extra='ignore' data loss above stayed invisible.
-        # An empty result is an INFRA outcome, not a quality verdict.
-        all_pass = False
         print("  NO METRICS RETURNED — this run measured nothing, so it is a FAIL.")
         print("    The eval run itself may report SUCCEEDED: the service scores what")
         print("    it is given, and an empty conversation scores as no metrics.")

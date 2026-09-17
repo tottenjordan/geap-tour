@@ -40,6 +40,7 @@ from src.eval.eval_experiment import (
     eval_run_display_name,
     eval_run_labels,
 )
+from src.eval.stats import all_metrics_passed
 
 # Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
 # and result loading before any inference/evaluation runs. See _sdk_patches.py.
@@ -505,27 +506,19 @@ def _run_single_agent_eval(
     # API returns scores on 0-1 scale; normalize threshold accordingly
     normalized_threshold = score_threshold / 5.0
     metric_results = {}
-    all_pass = True
     for key, value in raw_metrics.items():
         if "/AVERAGE" in key:
             avg = float(value)
-            passed = avg >= normalized_threshold
-            if not passed:
-                all_pass = False
             metric_results[key.rsplit("/AVERAGE", 1)[0]] = {
                 "score": avg,
                 "threshold": normalized_threshold,
-                "passed": passed,
+                "passed": avg >= normalized_threshold,
             }
-    # AN EMPTY RESULT IS NOT A PASS. `all_pass` starts True and the loop above
-    # never executes when the service returns no /AVERAGE keys, so a run that
-    # scored *nothing* reported PASSED and exited 0 — in the module the CI eval
-    # gate runs. Exactly the defect PR #138 had to fix in `simulated_eval`
-    # ("zero metrics reporting all_passed=true"), still live here because the two
-    # paths were fixed separately. An absent measurement must never read as a
-    # green one; the run below prints the eval-run name so it can be chased.
-    if not metric_results:
-        all_pass = False
+    # AN EMPTY RESULT IS NOT A PASS. Written as `all_pass = True` plus a loop, a
+    # run that scored *nothing* reports PASSED and exits 0 — in the module the CI
+    # eval gate runs. `all_metrics_passed` is where that rule lives now; see its
+    # docstring for the three places this was independently gotten wrong.
+    all_pass = all_metrics_passed(bool(d["passed"]) for d in metric_results.values())
 
     # Flag every metric low-confidence when graded over too few items, so a
     # pass/fail over a demo-scale run isn't read with full trust.
