@@ -385,3 +385,36 @@ class TestThePluginFlagDefault:
             assert "defaults on" in text or "defaults **on**" in text, (
                 f"{rel} documents ENABLE_MODEL_ARMOR_PLUGIN without stating it defaults ON"
             )
+
+
+class TestTheDocsDescribeTheArmorLayersThatExist:
+    """CLAUDE.md is loaded into context every session, so a stale claim there
+    misdirects every future change.
+
+    It said Gemini-3 had "armor omitted … and the client-side guardrail is the
+    guaranteed layer" — true before 2026-09-09, false after the plugin defaulted on,
+    and actively misleading while debugging a Gemini-3 coordinator that refused every
+    request *because of* the plugin. It never mentioned ModelArmorPlugin at all.
+    """
+
+    @staticmethod
+    def _claude_md() -> str:
+        import pathlib as _p
+
+        return _p.Path(__file__).resolve().parents[1].joinpath("CLAUDE.md").read_text()
+
+    def test_it_names_the_plugin_as_the_gemini3_layer(self) -> None:
+        text = self._claude_md()
+        assert "ModelArmorPlugin" in text, "CLAUDE.md does not mention the plugin at all"
+
+    def test_it_does_not_claim_gemini3_falls_back_to_the_client_guardrail(self) -> None:
+        """The exact stale sentence, and near-misses of it."""
+        text = self._claude_md()
+        assert "the client-side guardrail is the guaranteed layer" not in text
+
+    def test_it_records_the_grant_the_plugin_needs(self) -> None:
+        """The failure mode is invisible without this: the plugin calls Model Armor as
+        the engine's own identity, and without the role it refuses everything."""
+        text = self._claude_md()
+        assert "roles/modelarmor.user" in text
+        assert "grant_modelarmor_user" in text
