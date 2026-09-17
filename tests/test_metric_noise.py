@@ -98,11 +98,30 @@ class TestTheMeasurementStaysNextToTheThresholds:
             assert figure in text, f"measured sd {figure} is no longer recorded"
 
     def test_the_agent_vs_judge_split_is_stated(self):
-        """The two metrics need opposite fixes; a reader who misses that will reach
-        for a judge panel to calm an agent-driven series."""
+        """instruction_following is agent-driven; a reader who misses that reaches
+        for a judge panel to calm a series no judge change can settle."""
         text = self.ALERTS.read_text()
         assert "AGENT-dominated" in text
-        assert "JUDGE-dominated" in text
+
+    def test_the_inconclusive_metric_is_not_reported_as_a_finding(self):
+        """response_quality's judge-only sd (0.275) came out ABOVE its total sd
+        (0.120), which cannot happen in expectation. The honest record says
+        inconclusive and names n=3 as the cause — writing it up as
+        'judge-dominated' would send someone to wire a judge panel on the strength
+        of a self-contradictory measurement."""
+        text = self.ALERTS.read_text()
+        assert "INCONCLUSIVE" in text
+        assert "JUDGE-dominated" not in text, (
+            "response_quality's decomposition is internally inconsistent at n=3; "
+            "do not state it as a conclusion"
+        )
+
+    def test_the_sample_size_caveat_survives(self):
+        """The sds are directional; the means are not. Anyone re-tuning a threshold
+        needs to know which half of this measurement they can lean on."""
+        text = self.ALERTS.read_text()
+        assert "DIRECTIONAL" in text
+        assert "n=3" in text
 
     def test_the_near_inert_alerts_are_labelled(self):
         """hallucination and safety sit 21-27 sd above their floors. Keeping them is

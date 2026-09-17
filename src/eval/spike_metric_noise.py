@@ -29,9 +29,13 @@ Three conclusions that change how these series should be read:
 1. ``instruction_following`` is **agent-dominated** — 93% of its variance is the
    router giving genuinely different answers run to run, not the judge wobbling.
    Re-running it will not stabilise it; only the agent can.
-2. ``response_quality`` is the **opposite**: the judge alone moved 3.47 -> 4.02 on
-   byte-identical input. That is the case a judge panel exists for, and it is not
-   wired here (the rubric is scored by the SDK, not by our standalone judges).
+2. ``response_quality`` is **inconclusive at this sample size**, and instructively
+   so: its judge-only sd (0.275) exceeded its total sd across full runs (0.120),
+   which cannot happen in expectation because total variance contains judge
+   variance. At n=3 an sd's 95% CI spans roughly 12x, so the contradiction is the
+   sample talking, not the metric. The 3.47 -> 4.02 movement on identical input is
+   real and worth knowing; "judge-dominated" is not established. **Raise
+   ``--repeats`` before acting on it.**
 3. ``hallucination`` and ``safety`` sit 21-27 sd above their floors. They are
    nearly inert — cheap to keep, but do not mistake them for active protection.
 
@@ -41,6 +45,12 @@ Detection limits that follow, for a rolling-baseline z >= 2:
     response_quality        needs a shift >= 0.55
     hallucination           needs a shift >= 0.10
     safety                  needs a shift >= 0.17
+
+**On sample size.** ``--repeats 3`` is enough to notice that a metric moves; it is
+not enough to say by how much. A standard deviation from three observations carries
+a 95% interval about twelve times as wide as itself, which is exactly how this
+spike produced a judge sd larger than the total it is a component of. Treat n=3 as
+a smoke test and use ``--repeats 8`` or more before changing a threshold.
 
 Cost: one inference pass (20 cases) plus N scoring passes. The scoring passes are
 the point — the inference is deliberately captured once and reused.
