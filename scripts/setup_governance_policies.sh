@@ -151,6 +151,54 @@ L3_CREATED=0
 L3_EXISTING=0
 L3_FAILURES=0
 
+# Does an EXISTING authz policy point where we intend?
+#
+# The Layer 3 creates are POST-only, so a 409 is reported as "already exists
+# (unchanged)" and the run continues. That is honest about what it did and silent
+# about whether the result is right — and it was not: geap-iap-policy was created
+# against the INGRESS gateway on 2026-05-13, where IAP cannot be evaluated, and every
+# later run recreated-and-409'd without ever noticing.
+#
+# Read-only. Reports and counts; it does not delete or PATCH, because retargeting a
+# policy on a shared gateway is an operator's decision, not a setup script's.
+l3_assert_policy_target() {
+    local policy="$1"
+    local want_gateway="$2"
+
+    if $DRY_RUN; then
+        echo "    [dry-run] would verify ${policy} targets ${want_gateway}"
+        return 0
+    fi
+
+    local live
+    live="$(curl -s -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies/${policy}" \
+        | python3 -c "
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+targets = doc.get('target', {}).get('resources', [])
+print(targets[0].rsplit('/', 1)[-1] if targets else '')
+" 2>/dev/null)" || true
+
+    if [ -z "${live}" ]; then
+        warn "${policy}: could not read its target — not verifying."
+        return 0
+    fi
+    if [ "${live}" = "${want_gateway}" ]; then
+        ok "${policy}: targets ${live}"
+        return 0
+    fi
+    fail "${policy}: targets ${live}, but must target ${want_gateway}."
+    fail "  A POST cannot fix this — the resource exists, so the create 409s and the"
+    fail "  wrong target survives every run. Delete it and re-run:"
+    fail "    gcloud beta network-security authz-policies delete ${policy} --location=${REGION} --project=${PROJECT_ID}"
+    L3_FAILURES=$((L3_FAILURES + 1))
+}
+
+
 l3_post() {
     post_resource "$@" || true
     case "${POST_RESULT}" in
@@ -1320,15 +1368,31 @@ l3_post "IAP authz extension" \
 $DRY_RUN || sleep 10
 
 # 3b: IAP Authorization Policy (REQUEST_AUTHZ on ingress gateway)
+# THE EGRESS GATEWAY, not the ingress one. Corrected 2026-09-17 by audit.
+#
+# IAP REQUEST_AUTHZ is supported ONLY on an AGENT_TO_ANYWHERE (egress) gateway —
+# "IAP is not supported during ingress". A CLIENT_TO_AGENT (ingress) gateway accepts
+# exactly one policy and it must be CONTENT_AUTHZ. So this policy has pointed at a
+# gateway that cannot evaluate it since 2026-05-13, and re-running only recreated it.
+#
+# It is the same misplacement that made Layer 1 inert: those are roles/iap.egressor
+# bindings — EGRESS — and the only IAP delegation in the project was wired to ingress,
+# so nothing was ever positioned to evaluate them.
 info "Creating IAP authorization policy..."
-l3_post "IAP authz policy (REQUEST_AUTHZ → ingress gateway)" \
+l3_post "IAP authz policy (REQUEST_AUTHZ → EGRESS gateway)" \
     "https://networksecurity.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/authzPolicies?authzPolicyId=geap-iap-policy" \
     "{
-        \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_NAME}\"]},
+        \"target\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${GATEWAY_EGRESS_NAME}\"]},
         \"action\":\"CUSTOM\",
         \"customProvider\":{\"authzExtension\":{\"resources\":[\"projects/${PROJECT_NUMBER}/locations/${REGION}/authzExtensions/geap-iap-extension\"]}},
         \"policyProfile\":\"REQUEST_AUTHZ\"
     }"
+
+# A 409 means "exists", NOT "is correct". These creates are POST-only: nothing here can
+# ever converge a resource whose configuration is wrong, and the live geap-iap-policy is
+# wrong right now (it targets ingress). Without this check the run reports "already
+# exists (unchanged)" and moves on, which is true and useless.
+l3_assert_policy_target "geap-iap-policy" "${GATEWAY_EGRESS_NAME}"
 $DRY_RUN || sleep 10
 
 # 3c: Model Armor IAM prerequisites
@@ -1393,6 +1457,22 @@ l3_post "Model Armor authz policy (CONTENT_AUTHZ → ingress gateway)" \
     }"
 
 echo ""
+# The posture statement Layer 1 has carried since it started applying, and Layer 3 did
+# not. These policies are bound to GATEWAYS; a gateway evaluates nothing until an engine
+# carries agentGatewayConfig, and no engine in this project does (0 of 35, checked
+# 2026-09-17 — and the attach itself currently fails with code 13, see
+# docs/notes/geap-services-audit-2026-09.md).
+info "Layer 3 resources are CREATED but NOT YET IN FORCE. They bind to the gateways,"
+info "and a gateway screens nothing until an engine is attached to it. No engine here is."
+info ""
+info "Two placements, deliberately different — the docs allow exactly one of each:"
+info "  IAP          REQUEST_AUTHZ -> EGRESS gateway  (IAP is not supported on ingress)"
+info "  Model Armor  CONTENT_AUTHZ -> INGRESS gateway (its only supported profile; max 1)"
+info ""
+info "Both extensions are failOpen=true: if the callout breaks, traffic is ALLOWED"
+info "unscreened. That is an availability-over-safety choice and it is not the default"
+info "Google documents for IAP — revisit before calling this layer a control."
+info ""
 info "Verify deployed extensions and policies:"
 info "  gcloud beta service-extensions authz-extensions list --location=${REGION}"
 info "  gcloud beta network-security authz-policies list --location=${REGION}"

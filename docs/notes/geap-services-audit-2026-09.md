@@ -591,3 +591,98 @@ router again; its endpoint, agent-resource and project-level grants cleared; the
 deleted. `authz-extensions list` and `authz-policies list` show only the two originals,
 `endpoints list` is empty again, and the served engines report 0 critical with all 10 MCP
 tools resolving.
+
+---
+
+## Layer 3 audit (2026-09-17)
+
+Layer 3 was gated behind `--layer3` in #122 without anyone reading what it builds. This
+is that read. It creates four resources and makes two project-level IAM grants; **one of
+the four has been pointed at a gateway that cannot evaluate it since 2026-05-13.**
+
+### The IAP policy is on the wrong gateway
+
+`geap-iap-policy` is `policyProfile: REQUEST_AUTHZ`, delegating to
+`iap.googleapis.com`, targeting the **ingress** gateway. Per Google's docs:
+
+* IAP `REQUEST_AUTHZ` is supported **only on AGENT_TO_ANYWHERE (egress)** gateways —
+  *"IAP is not supported during ingress."*
+* A **CLIENT_TO_AGENT (ingress)** gateway supports **only `CONTENT_AUTHZ`**, maximum
+  **one** policy.
+* An egress gateway allows at most **four** policies, any profile.
+
+So the policy cannot do anything where it is, and never could.
+
+**This is the same misplacement that made Layer 1 inert.** Layer 1 binds
+`roles/iap.egressor` — egress — while the project's only IAP delegation pointed at
+ingress, so nothing was ever positioned to evaluate those bindings. The enforcement
+experiment had to create an egress extension and policy from scratch precisely because
+Layer 3's were on the wrong gateway. Corrected: the script now targets
+`GATEWAY_EGRESS_NAME`.
+
+### A 409 is not a passing grade
+
+Every Layer 3 create is a POST. When the resource exists the API returns 409 and (since
+#122) the run honestly reports *"already exists (unchanged)"* — true, and useless: the
+script can never converge a resource whose configuration is wrong. That is how the
+ingress mistake survived four months of re-runs.
+
+`l3_assert_policy_target` now reads the live policy back and fails if it does not point
+where intended, printing the `authz-policies delete` command. It does **not** delete:
+retargeting a policy on a shared gateway is an operator's decision.
+
+**The live `geap-iap-policy` still targets ingress** and must be deleted before a
+`--layer3` run can recreate it correctly.
+
+### What was already right
+
+The Model Armor half. `CONTENT_AUTHZ` on the **ingress** gateway is exactly what the
+docs prescribe — it is the only profile ingress supports — and the extension's
+`service: modelarmor.REGION.rep.googleapis.com` plus its `model_armor_settings` metadata
+(a JSON-array *string* of `request_template_id` / `response_template_id`) match the
+documented shape field for field.
+
+### Both extensions are failOpen=true
+
+If the callout breaks, traffic is **allowed unscreened**. That is availability over
+safety, and it is not what Google documents for IAP (their example uses
+`failOpen: false`). It is also the property that made the in-process Model Armor plugin
+failure so hard to see. Left as-is and now **stated in the script's output**, because
+changing a security posture is a decision, not a cleanup.
+
+### Open question: which service account makes the callout
+
+The script grants `roles/modelarmor.calloutUser` and
+`roles/serviceusage.serviceUsageConsumer` to
+`service-<OUR_PROJECT_NUMBER>@gcp-sa-dep.iam.gserviceaccount.com`.
+
+But the **egress gateway's own card** names a different principal:
+
+```
+serviceExtensionsServiceAccount: service-1058803961903@gcp-sa-dep.iam.gserviceaccount.com
+```
+
+— a Google-managed tenant project number, not ours. The ingress gateway exposes no card
+at all, so there is nothing to compare it against. The docs do not say which account
+needs the role.
+
+Given this repo has now paid for the wrong-principal mistake **twice** (the Agent
+Registry grant, and the Model Armor grant to the RE service agent), this is flagged
+rather than guessed. Resolve it by reading a real callout's denial before trusting
+Layer 3's Model Armor path.
+
+### Nothing here is in force
+
+These policies bind to **gateways**, and a gateway evaluates nothing until an engine
+carries `agentGatewayConfig`. **0 of 35** engines in this project do, and the attach
+itself currently fails with `code 13 INTERNAL` (see above). Layer 1 has carried an
+"applied but not enforced" statement since it started applying; Layer 3 now carries the
+equivalent.
+
+### Still open
+
+* Delete the misplaced live `geap-iap-policy` so a `--layer3` run can recreate it on
+  egress. Not done here: it is a shared gateway and a deletion is the operator's call.
+* Resolve the callout service-account question above.
+* Decide whether `failOpen: true` is the posture we want.
+

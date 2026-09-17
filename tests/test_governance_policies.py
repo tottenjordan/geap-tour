@@ -796,6 +796,65 @@ echo "MEMBERS=${{#EXTRA_EGRESS_IDENTITIES[@]}}"
         )
 
 
+class TestLayer3TargetsGatewaysThatCanEvaluateIt:
+    """IAP is EGRESS-only; ingress accepts exactly one CONTENT_AUTHZ policy.
+
+    `geap-iap-policy` was created against the INGRESS gateway on 2026-05-13 with
+    `policyProfile: REQUEST_AUTHZ`, where IAP cannot be evaluated — Google's docs say
+    "IAP is not supported during ingress", and a Client-to-Agent gateway supports only
+    CONTENT_AUTHZ, maximum one.
+
+    It is the same misplacement that made Layer 1 inert: Layer 1 binds
+    `roles/iap.egressor` — EGRESS — while the project's only IAP delegation pointed at
+    ingress, so nothing was ever positioned to evaluate those policies.
+    """
+
+    LAYER3: ClassVar[str] = SCRIPT[SCRIPT.index('step "Layer 3: Authorization Delegation (IAP') :]
+
+    def test_the_iap_policy_targets_the_egress_gateway(self) -> None:
+        block = self.LAYER3[: self.LAYER3.index("Model Armor authz extension")]
+        assert "GATEWAY_EGRESS_NAME" in block, "the IAP policy no longer targets egress"
+        iap = block[block.index("geap-iap-policy") :]
+        iap = iap[: iap.index("l3_assert_policy_target")]
+        assert "${GATEWAY_NAME}" not in iap, (
+            "the IAP policy targets the INGRESS gateway, which cannot evaluate IAP"
+        )
+
+    def test_model_armor_stays_on_ingress(self) -> None:
+        """Not everything here was wrong. CONTENT_AUTHZ is the ONLY profile an ingress
+        gateway supports, so the Model Armor half was correctly placed all along."""
+        ma = self.LAYER3[self.LAYER3.index("Model Armor authz policy") :]
+        assert "CONTENT_AUTHZ" in ma
+        assert "${GATEWAY_NAME}" in ma, "Model Armor moved off the ingress gateway"
+        assert "${GATEWAY_EGRESS_NAME}" not in ma[: ma.index("policyProfile")]
+
+    def test_an_existing_policy_is_verified_not_assumed(self) -> None:
+        """A 409 means "exists", not "is correct". These creates are POST-only, so a
+        wrong target survives every run while the log says "already exists
+        (unchanged)" — which is how the ingress mistake lasted four months."""
+        assert "l3_assert_policy_target" in SCRIPT
+        assert "targets ${live}, but must target" in SCRIPT
+        assert "A POST cannot fix this" in SCRIPT
+
+    def test_the_drift_check_does_not_delete_anything(self) -> None:
+        """Retargeting a policy on a shared gateway is an operator's decision. The
+        check reports and counts; it prints the delete command rather than running it."""
+        fn = SCRIPT[SCRIPT.index("l3_assert_policy_target() {") :]
+        fn = fn[: fn.index("\n}\n")]
+        assert "authz-policies delete" in fn, "the remedy is not shown"
+        assert (
+            "run_cmd gcloud" not in fn
+            and "$(gcloud beta network-security authz-policies delete" not in fn
+        )
+
+    def test_layer3_states_that_nothing_is_in_force(self) -> None:
+        """Layer 1 has said "applied but NOT enforced" since it started applying.
+        Layer 3's resources are equally inert — they bind to gateways, and no engine
+        in this project is attached to one."""
+        assert "NOT YET IN FORCE" in SCRIPT
+        assert "failOpen=true" in SCRIPT, "the fail-open posture is not disclosed"
+
+
 class TestTheScriptStillParses:
     """Cheap, and the only check here that covers the 800 lines these tests do not."""
 
