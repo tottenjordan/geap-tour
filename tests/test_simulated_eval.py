@@ -304,3 +304,100 @@ class TestTheAiplatformPinIsDeliberate:
         window = head[-700:]
         assert "2.1.3" in window, "the pin does not say which version broke"
         assert "simulated_eval" in window, "the pin does not say what it broke"
+
+
+class TestTheSdkDiscardsTheSimulatorOnTheRuntimePath:
+    """Why `--max-turns` does nothing against a deployed engine.
+
+    `agentplatform._genai._evals_common._run_agent` branches on runtime-vs-local and
+    passes `user_simulator_config=None` for a deployed engine, forwarding it only for
+    an in-process `LlmAgent`. So the multi-turn user simulation never runs on the path
+    this repo uses, `max_turn` never leaves the client, and the three `multi_turn_*`
+    raters grade a single turn — which is why two of them score exactly 0.00.
+
+    Measured 2026-09-17 on google-cloud-aiplatform 2.1.0: `max_turn` 1, 3 and 8 all
+    returned one invocation and zero `user`-authored events, and the raw service
+    response stopped after the agent's first reply.
+
+    **This test is a drift detector, not an endorsement.** It asserts the upstream
+    limitation still exists. When a future SDK starts honouring the config, this test
+    FAILS — which is the notification to delete the warning in `simulated_eval`, drop
+    this class, and fold the multi-turn smoke check back into the eval gate's guard.
+    Without it the workaround outlives the bug, silently, like the quarantine did.
+    """
+
+    @staticmethod
+    def _spy_on_execute(monkeypatch):
+        from agentplatform._genai import _evals_common as ec
+
+        seen = {}
+
+        def fake_execute(**kwargs):
+            seen["user_simulator_config"] = kwargs.get("user_simulator_config")
+            seen["inference_fn"] = getattr(kwargs.get("inference_fn"), "__name__", "")
+            return []
+
+        monkeypatch.setattr(ec, "_execute_inference_concurrently", fake_execute)
+        return ec, seen
+
+    def test_a_deployed_engine_gets_none(self, monkeypatch):
+        """THE finding. Not our config — the SDK drops it."""
+        import pandas as pd
+        from agentplatform import types
+
+        ec, seen = self._spy_on_execute(monkeypatch)
+        cfg = types.evals.UserSimulatorConfig(max_turn=5, model_name="gemini-2.5-flash")
+
+        ec._run_agent(
+            api_client=object(),
+            runtime="projects/p/locations/us-central1/reasoningEngines/1",
+            agent=None,
+            prompt_dataset=pd.DataFrame({"starting_prompt": ["hi"]}),
+            user_simulator_config=cfg,
+        )
+        assert seen["user_simulator_config"] is None, (
+            "upstream now forwards the simulator config for a deployed engine — "
+            "multi-turn may work. Re-measure, then remove the single-turn warning in "
+            "src/eval/simulated_eval.py and re-arm the eval-gate AND guard."
+        )
+
+    def test_a_local_agent_keeps_it(self, monkeypatch):
+        """The contrast that proves the branch is the cause, not a missing feature."""
+        import pandas as pd
+        from agentplatform import types
+
+        ec, seen = self._spy_on_execute(monkeypatch)
+        cfg = types.evals.UserSimulatorConfig(max_turn=5, model_name="gemini-2.5-flash")
+
+        ec._run_agent(
+            api_client=object(),
+            runtime=None,
+            agent=object(),  # stands in for an LlmAgent; _run_agent only checks truthiness
+            prompt_dataset=pd.DataFrame({"starting_prompt": ["hi"]}),
+            user_simulator_config=cfg,
+        )
+        assert seen["user_simulator_config"] is cfg
+        assert "local" in seen["inference_fn"]
+
+    def test_our_config_is_still_well_formed(self, monkeypatch):
+        """Guard against 'fixing' this by mangling our side.
+
+        `max_turn` is a real declared field and our value validates cleanly. The bug
+        is downstream of us, so the config we send must stay correct — it is what a
+        repaired SDK would honour.
+        """
+        from agentplatform import types
+
+        validated = types.EvalRunInferenceConfig.model_validate(
+            {"user_simulator_config": {"max_turn": 3, "model_name": "gemini-2.5-flash"}}
+        )
+        assert validated.user_simulator_config.max_turn == 3
+
+    def test_the_module_warns_operators(self):
+        """A limitation only recorded in a docstring is one nobody hits at runtime."""
+        import inspect
+
+        from src.eval import simulated_eval
+
+        src = inspect.getsource(simulated_eval.run_simulated_eval)
+        assert "NO EFFECT" in src and "SINGLE-TURN" in src
