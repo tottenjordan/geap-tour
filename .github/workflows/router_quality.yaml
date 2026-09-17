@@ -1,0 +1,114 @@
+name: Router Quality
+
+# Daily publish of the ROUTER's answer quality to agent_router_quality/*.
+#
+# WHY IT EXISTS: agent_router_quality/* shipped in #145 with four alert policies
+# (response_quality / hallucination / safety at 3.0, instruction_following at 2.5)
+# and NO WRITER. src/eval/baseline.py:MIN_BASELINE is 5, so the series sat at n=1
+# and every one of those policies watched something that could never move. Same
+# shape as agent_eval/tool_faithfulness (#84) and, later, its online twin — an
+# alert on a series nothing writes is indistinguishable from a healthy one.
+#
+# WHY NOT A STEP IN monitoring_publish.yaml: that workflow is hourly, and this is
+# the only router publisher that costs real engine inference plus judge calls (the
+# efficiency one is classifier-only, which is why it can afford to run hourly).
+# Hourly here is the wrong cadence, not merely an expensive one.
+#
+# WHY NOT AN HOUR-GATED STEP INSIDE THAT HOURLY WORKFLOW: GitHub DROPS scheduled
+# runs under load rather than queueing them — measured ~7 runs/day against a
+# '23 * * * *' cron over two weeks. A step conditioned on `hour == 4` would fire
+# only when that specific tick happened to survive, i.e. rarely and
+# unpredictably. A separate daily cron degrades gracefully: a dropped day costs
+# one point, not the whole signal.
+#
+# RAMP: one point per day, five needed. The static floors work from the FIRST
+# point; only the rolling-baseline z-score waits for five.
+
+on:
+  schedule:
+    # 04:37 UTC. Off the hour, and off :00/:30 — the most contended slots there are.
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  # A run is a real batch eval; never let a slow one overlap the next day's tick
+  # and double-publish into the same series.
+  group: router-quality
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish router quality
+    # Skips cleanly (never fails) when the vars aren't set — forks, unset repos.
+    if: ${{ vars.WIF_PROVIDER != '' && vars.ROUTER_ENGINE_ID != '' }}
+    runs-on: ubuntu-latest
+    # One batch eval over 20 cases. The coordinator's four-step publisher observed
+    # max 1338s; this is a fraction of that, so 20 is a ceiling, not a target.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      # ROUTER_ENGINE_ID is a SECOND copy of an engine id, and the first one has
+      # drifted before: on 2026-08-21 AGENT_ENGINE_ID held a 9-day-stale engine
+      # from an unrelated demo, so every CI eval scored the wrong agent and called
+      # it coordinator quality. `--role router` fails loudly on a wrong or
+      # misconfigured engine instead of quietly publishing its scores into this
+      # series. Deliberately NOT continue-on-error, unlike the coordinator
+      # workflow's advisory copy: there the scores are still about the right
+      # engine, here a bad id means the whole series is about the wrong one.
+      - name: Verify the router engine
+        run: |
+          uv run python -m src.deploy.verify_engine_config \
+            --engine-id "${{ vars.ROUTER_ENGINE_ID }}" --role router
+
+      # NOT advisory. The CLI already exits 1 when nothing was published, and a
+      # permanently broken daily publish reading green is the precise failure this
+      # workflow exists to end.
+      #
+      # --limit 20 is half the 40-case router evalset and clears
+      # stats.MIN_SAMPLES (8), so each published point is not self-flagged
+      # low_confidence. Lower this before lowering the cadence: a sub-8 sample
+      # produces points the harness itself distrusts.
+      - name: Publish router quality (agent_router_quality/*)
+        run: |
+          uv run python -m src.eval.publish_router_quality --run \
+            --agent-id "${{ vars.ROUTER_ENGINE_ID }}" \
+            --limit 20
+
+      # Read the series back in the same run. Publishing and then never looking is
+      # how a writer that silently stops goes unnoticed; this puts the point count
+      # in the log next to the scores that produced it.
+      - name: Report the series back
+        if: always()
+        run: |
+          uv run python -m src.eval.verify_monitors --format json --hours 48 > monitors.json
+          uv run python - <<'PY'
+          import json
+
+          block = json.load(open("monitors.json"))["router_quality"]
+          print(f"router_quality: {block['status']}")
+          for name, info in sorted(block["metrics"].items()):
+              print(f"  {name:<24} n={info['eval_count']:<4} current={info['current_score']}")
+          print("\n'underpowered' below 5 points is EXPECTED while the baseline fills.")
+          PY
