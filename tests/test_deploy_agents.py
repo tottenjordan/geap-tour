@@ -590,6 +590,38 @@ class TestVersionCoupledServingDepsHaveUpperBounds:
             f"resolve a version we never tested: {missing}"
         )
 
+    def test_the_adk_pin_is_identical_in_pyproject(self):
+        """An upper bound is not enough for `google-adk` — the two pins must MATCH.
+
+        ADK is the one dependency where local and container are not merely
+        compatible but the same artifact viewed twice: the AdkApp is cloudpickled
+        against the ADK installed locally and unpickled by the ADK the container
+        rebuilt from REQUIREMENTS. A skew between them mis-loads tools or mangles
+        model calls, and nothing in the failure names a version.
+
+        `test_each_declares_an_upper_bound` passes if REQUIREMENTS says `==2.9.1`
+        while pyproject says `==2.8.0` — the exact case this guards. Bumping one
+        file and not the other is the natural way to do it, because the second copy
+        lives in a Python list nobody greps when editing dependencies.
+        """
+        import pathlib
+        import re
+
+        spec = self._requirement("google-adk")
+        assert spec is not None, "google-adk vanished from the serving REQUIREMENTS"
+        served = re.search(r"==\s*([\w.]+)", spec)
+        assert served, f"the serving google-adk pin is not exact: {spec!r}"
+
+        pyproject = pathlib.Path("pyproject.toml").read_text()
+        declared = re.search(r'"google-adk\[[^\]]*\]==\s*([\w.]+)"', pyproject)
+        assert declared, "pyproject.toml does not exact-pin google-adk"
+
+        assert served.group(1) == declared.group(1), (
+            f"google-adk is {served.group(1)} in deploy_agents.REQUIREMENTS but "
+            f"{declared.group(1)} in pyproject.toml. The served engine would rebuild "
+            "an ADK different from the one the AdkApp was pickled against."
+        )
+
     def test_each_is_actually_present(self):
         """Guard the guard: a renamed package would make the check above vacuous."""
         absent = [n for n in self.COUPLED if self._requirement(n) is None]
