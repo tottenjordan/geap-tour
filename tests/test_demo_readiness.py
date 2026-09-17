@@ -9,6 +9,7 @@ from src.eval.demo_readiness import (
     build_default_checks,
     check_engine_config,
     check_engine_live,
+    check_gateway_callouts,
     check_mcp_tools,
     check_memory,
     check_monitors,
@@ -201,3 +202,72 @@ class TestMain:
         out = capsys.readouterr().out
         assert '"ok": true' in out
         assert '"name": "a"' in out
+
+
+class TestTheGatewayCalloutRow:
+    """The green board must show fail-open, without crying wolf about `no_data`.
+
+    Both authz extensions are `failOpen: true`: a failed callout lets the request
+    through unevaluated. Google emits `extension/failed_open_count` for it, and until
+    now nothing on the readiness board read it.
+
+    The tension this row resolves: nothing is attached to a gateway, so the series is
+    permanently empty. A red row on every run is the `agent_router/*` mistake — an
+    alarm that is always wrong gets ignored. A silently green row is the
+    `server_side_armor` mistake — absence read as health. So the row is green and the
+    DETAIL carries the verdict verbatim.
+    """
+
+    def test_an_observed_fail_open_is_a_red_row(self) -> None:
+        ok, detail = check_gateway_callouts(
+            read_fn=lambda _h: {"verdict": "failing", "detail": "2 of 100 callouts FAILED OPEN"}
+        )
+        assert ok is False
+        assert "failing" in detail
+
+    def test_no_data_is_green_but_says_so(self) -> None:
+        """Green, because it is the expected state — but the detail must make it
+        impossible to read as 'verified working'."""
+        ok, detail = check_gateway_callouts(
+            read_fn=lambda _h: {"verdict": "no_data", "detail": "UNOBSERVED, not healthy."}
+        )
+        assert ok is True
+        assert "no_data" in detail
+        assert "UNOBSERVED" in detail
+
+    def test_real_traffic_with_no_failures_is_green(self) -> None:
+        ok, detail = check_gateway_callouts(
+            read_fn=lambda _h: {"verdict": "ok", "detail": "120 callouts, none failed open."}
+        )
+        assert ok is True
+        assert "ok" in detail
+
+    def test_it_is_advisory_and_never_gates_the_demo(self) -> None:
+        """A fail-open is a governance problem, not a reason to block a working demo —
+        and `is_ready` only considers critical rows."""
+        checks = build_default_checks(engine_id="1", user_id="alice")
+        row = next(c for c in checks if c["name"] == "gateway_callouts")
+        assert row["critical"] is False
+        results = [{"name": "gateway_callouts", "ok": False, "critical": False, "detail": "x"}]
+        assert is_ready(results) is True
+
+    def test_it_is_on_the_default_board(self) -> None:
+        """A verifier nothing calls is the same failure as a metric nobody watches."""
+        names = [c["name"] for c in build_default_checks(engine_id="1", user_id="alice")]
+        assert "gateway_callouts" in names
+
+    def test_a_broken_reader_renders_red_rather_than_crashing_the_board(self) -> None:
+        def boom(_h):
+            raise RuntimeError("monitoring unreachable")
+
+        results = run_readiness(
+            checks=[
+                {
+                    "name": "gateway_callouts",
+                    "critical": False,
+                    "run": lambda: check_gateway_callouts(read_fn=boom),
+                }
+            ]
+        )
+        assert results[0]["ok"] is False
+        assert "RuntimeError" in results[0]["detail"]
