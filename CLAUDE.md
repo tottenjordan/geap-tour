@@ -12,11 +12,22 @@ GEAP Workshop: a hands-on demo of the Gemini Enterprise Agent Platform — ADK a
 # Install
 uv sync
 
-# Run all tests — ALWAYS --all-groups first. tests/conftest.py collect_ignores the
-# DOE/pipeline modules when pyDOE3/kfp are absent, and a bare `uv run <anything>`
-# re-syncs to the default groups and evicts them: you then get "1093 passed"
-# instead of 1132, with no skips and no warning that 39 tests vanished.
+# Run all tests — still use --all-groups. tests/conftest.py collect_ignores the
+# DOE/pipeline modules when pyDOE3/kfp are absent, and `collect_ignore` makes them
+# VANISH rather than skip: 1959 collected becomes 1920, no skip count, no warning.
+# This is no longer silent — conftest prints a NOT COLLECTED header, and in CI
+# (CI env var set) a partial suite is a hard error, exit 4. Two caveats: pytest
+# suppresses report headers under `-q`, which is the form everyone runs; and the
+# eviction itself is uv-version-dependent (on uv 0.9.9 a bare `uv run pytest` no
+# longer prunes the groups, so the old "1093 vs 1132" symptom may not reproduce).
+# Override deliberately with ALLOW_PARTIAL_TEST_RUN=1.
 uv sync --all-groups && uv run pytest tests/
+
+# Same suite, 2.3x faster (156s -> 67s, verified same 1959 passing). `--dist loadfile`
+# is required, not cosmetic: ~10 test modules reload src.config/src.registry and mutate
+# module-level state, so a module's tests must stay on one worker. Not the default —
+# xdist startup makes single-file runs slower, and that is the common dev action.
+uv run pytest tests/ -n 8 --dist loadfile
 
 # Run a single test file / test
 uv run pytest tests/test_router.py

@@ -128,6 +128,12 @@ analytics = [
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    # Optional but measured: `-n 8 --dist loadfile` takes the suite from 156s to 67s
+    # (2.3x) with all 1959 tests still passing. NOT enabled by default — `loadfile` is
+    # required (per-test distribution would split modules that share reloaded module
+    # state), and xdist's startup cost makes single-file runs, the common dev action,
+    # slower rather than faster.
+    "pytest-xdist>=3.6",
     "ruff>=0.16.6",
     "ty>=0.0.79",
 ]

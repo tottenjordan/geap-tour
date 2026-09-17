@@ -20,9 +20,65 @@ _OPTIONAL_DEP_MODULES = {
     "test_optimize_pipeline.py": "kfp",
 }
 
-collect_ignore = [
+_IGNORED_MODULES = [
     module for module, dep in _OPTIONAL_DEP_MODULES.items() if importlib.util.find_spec(dep) is None
 ]
+
+collect_ignore = list(_IGNORED_MODULES)
+
+
+def _missing_deps() -> list[str]:
+    return sorted({_OPTIONAL_DEP_MODULES[m] for m in _IGNORED_MODULES})
+
+
+def pytest_report_header(config):  # pytest hook signature; `config` is unused
+    """Say out loud that the suite shrank.
+
+    `collect_ignore` makes modules VANISH — not skip. There is no `s` in the
+    progress output, no skip count in the summary, and no warning: the run simply
+    reports a smaller number that looks like a pass. Measured exposure is 39 tests
+    (1959 -> 1920), which is how CLAUDE.md's warning came to be written.
+
+    A shrinking green suite is the failure mode this repo keeps finding elsewhere
+    (an alert on a series with no writer; a plugin reported ACTIVE because a flag
+    was set). Reporting it in the header costs nothing and makes it unmissable.
+
+    NOTE: pytest suppresses report headers under `-q`. That is why the CI gate below
+    is a hard error and not merely this banner — the short form is exactly the one
+    people run.
+    """
+    if not _IGNORED_MODULES:
+        return None
+    return [
+        f"WARNING: {len(_IGNORED_MODULES)} test modules NOT COLLECTED "
+        f"(missing: {', '.join(_missing_deps())})",
+        "  " + ", ".join(sorted(_IGNORED_MODULES)),
+        "  These are ignored, not skipped — the totals below are silently short.",
+        "  Run `uv sync --all-groups` to collect the whole suite.",
+    ]
+
+
+def pytest_sessionstart(session):  # pytest hook signature; `session` is unused
+    """In CI, a partial suite is an error rather than a smaller pass.
+
+    `.github/workflows/tests.yaml` syncs `dev + pipelines + doe`, so nothing should
+    be ignored there. Nothing verified that. Drop one `--group` from that line and
+    39 tests disappear behind a green check — the workflow has no idea what it was
+    supposed to collect.
+
+    Set ALLOW_PARTIAL_TEST_RUN=1 to opt out deliberately.
+    """
+    if not _IGNORED_MODULES or os.environ.get("ALLOW_PARTIAL_TEST_RUN"):
+        return
+    if not os.environ.get("CI"):
+        return  # local runs degrade to the loud header above
+    raise pytest.UsageError(
+        f"CI collected a PARTIAL suite: {len(_IGNORED_MODULES)} modules ignored "
+        f"({', '.join(sorted(_IGNORED_MODULES))}) because these dependency groups "
+        f"are missing: {', '.join(_missing_deps())}. A green run here would be "
+        "reporting on a suite that silently shrank. Fix the `uv sync --group ...` "
+        "line, or set ALLOW_PARTIAL_TEST_RUN=1 if this is intentional."
+    )
 
 
 @pytest.fixture
