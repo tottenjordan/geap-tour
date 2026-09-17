@@ -20,7 +20,25 @@ dependencies = [
     "litellm>=1.85.7",
     "pandas>=3.0.5",
     "a2a-sdk>=1",
-    "google-adk[agent-identity,eval]==2.8.0",
+    # EXACT-pinned, and duplicated in src/deploy/deploy_agents.py:REQUIREMENTS.
+    # Both copies must move together: the served Agent Engine rebuilds its own
+    # environment from that list, but the AdkApp is cloudpickled against the ADK
+    # installed HERE — a local-pickle <-> runtime skew can mis-load tools or mangle
+    # model calls, with no error that names the version.
+    #
+    # Raising it is not a lockfile edit. ADK and `mcp` move as a pair (mcp 2.x
+    # removed `McpHttpClientFactory`, which ADK imports; see the long note in
+    # deploy_agents.REQUIREMENTS), and this repo subclasses/copies four private ADK
+    # surfaces that shift between minors:
+    #   * CachingPreloadMemoryTool carries a verbatim copy of PreloadMemoryTool's
+    #     render (guarded by test_render_matches_stock_adk)
+    #   * ObservableModelArmorPlugin overrides _handle_screening_failure /
+    #     _handle_sanitization_result on google.adk.integrations.model_armor
+    #   * run_optimize._patch_adk patches the GEPA optimizer
+    #   * src/models/tool_call_ids.py compensates for ADK's `adk-` id strip in
+    #     flows/llm_flows/contents.py
+    # Checked against 2.9.1 on 2026-09-17: all four intact, mcp stays <2.
+    "google-adk[agent-identity,eval]==2.9.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
     "matplotlib>=3.11.1",
     "paperbanana>=0.3.0",

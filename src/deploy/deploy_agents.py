@@ -100,7 +100,7 @@ REQUIREMENTS = [
     "google-cloud-aiplatform[adk,agent-engines]>=1.163.0",
     "google-genai>=2",
     "google-auth>=2.52.0",
-    "google-adk[agent-identity]==2.8.0",
+    "google-adk[agent-identity]==2.9.1",
     "a2a-sdk>=1",
     # PINNED BELOW 2.x, and this is deploy-blocking rather than cosmetic.
     #
