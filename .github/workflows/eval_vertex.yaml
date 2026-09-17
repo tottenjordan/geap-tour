@@ -15,12 +15,22 @@ on:
         type: boolean
         default: false
 
+# Submits a Vertex PipelineJob, which costs real money. Two concurrent dispatches
+# of the same ref would submit two pipelines; the older one is never the one
+# anybody wanted.
+concurrency:
+  group: eval-vertex-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   submit:
     # Requires GCP auth — skip (don't fail) when WIF isn't configured (e.g. forks /
     # repos without the WIF_PROVIDER + WIF_SERVICE_ACCOUNT repo variables set).
     if: ${{ vars.WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
+    # No successful run on record to size from, so this is a ceiling rather than a
+    # measurement: it submits a Vertex PipelineJob and should not take 30 min.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write

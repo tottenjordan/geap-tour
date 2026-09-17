@@ -72,6 +72,9 @@ jobs:
       github.event_name == 'schedule' ||
       contains(github.event.pull_request.labels.*.name, 'run-eval')) }}
     runs-on: ubuntu-latest
+    # Observed 363s. Bounded by MAX_POLL_SECONDS inside the eval, but a hung HTTP
+    # call is not bounded by anything, and this job makes billable live calls.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
