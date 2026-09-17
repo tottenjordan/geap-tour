@@ -38,6 +38,42 @@ touch code or configuration.
 
 See the `modern-python` skill for the full rationale and command reference.
 
+## Testing: exercise the wiring, and the default path
+
+Two rules, both learned the expensive way in this repo. Four separate defects in one
+week shared these shapes; every one of them shipped with a green suite.
+
+- **Invoke the code the way production invokes it.** If a shell script runs a program,
+  the test must run it through that same invocation — not a reconstruction of it. A
+  harness that rebuilds the call cannot see a bug *in* the call.
+
+  `setup_governance_policies.sh` ran an embedded Python block as
+  `printf … | python3 - "$file" <<'PY'`. `python3 -` reads its *program* from stdin and
+  the heredoc was already supplying it, so the block's `json.load(sys.stdin)` got an
+  empty stream and the guard never once ran its comparison. The tests wrote the block to
+  a file and ran `python3 block.py policy.json` with data on stdin — a different
+  invocation, and **the difference was the defect**. Fixing that harness then missed the
+  *next* bug, an inverted `if ! cmd; then rc=0; else rc=$?` that mapped "foreign binding
+  found" to "clean", because the tests drove the Python but not the bash that interprets
+  its result. Same gap, one layer out.
+
+  So: extract the real invocation from the source and execute it, or execute the real
+  function with its dependencies stubbed. Assert on what it *did*, not on a copy of what
+  it should do.
+
+- **Test the default path, not just the configured one.** The path with no flags set is
+  the path almost everyone takes, and it is the easiest one to never run.
+
+  `EXTRA_EGRESS_ENGINE_IDS` was exercised only with the variable *set* — a dry run and a
+  live apply, both green, both merged. Unset, `${VAR//,/ }` is fatal under `set -u`, so
+  every ordinary run of the script died before doing anything. Cover unset, empty, and
+  each documented input form.
+
+**Mutation-check any guard you add.** Reintroduce the defect it exists to catch and
+confirm the suite goes red. A guard that passes on the broken code is worse than none —
+it is a claim of coverage. This is also how to discover that a test only covers the
+payload: mutate the *wiring* and watch it stay green.
+
 ## Linting posture
 
 `ruff` is configured with a pragmatic curated ruleset (`E, F, W, I, UP, B, SIM,
