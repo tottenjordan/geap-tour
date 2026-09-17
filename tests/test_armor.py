@@ -341,3 +341,47 @@ class TestArmorAcceptsARealAgentsModel:
         from src.armor.config import model_id
 
         assert model_id(object()) is None
+
+
+class TestThePluginFlagDefault:
+    """`ENABLE_MODEL_ARMOR_PLUGIN` defaults ON, and two comments said OFF for eight days.
+
+    The flip landed 2026-09-09; `armor/config.py` and `deploy_agents.py` both kept
+    claiming "default OFF" until 2026-09-17. That mattered — both comments would have
+    told someone debugging a Gemini-3 coordinator's blanket refusal that the plugin
+    could not be involved, when it was the cause.
+    """
+
+    def test_unset_means_ON(self, monkeypatch) -> None:
+        """The DEFAULT path, which is what a fresh deploy takes."""
+        import importlib
+
+        monkeypatch.delenv("ENABLE_MODEL_ARMOR_PLUGIN", raising=False)
+        import src.config as cfg
+
+        assert importlib.reload(cfg).ENABLE_MODEL_ARMOR_PLUGIN is True
+
+    def test_explicit_zero_opts_out(self, monkeypatch) -> None:
+        import importlib
+
+        monkeypatch.setenv("ENABLE_MODEL_ARMOR_PLUGIN", "0")
+        import src.config as cfg
+
+        assert importlib.reload(cfg).ENABLE_MODEL_ARMOR_PLUGIN is False
+
+    def test_every_file_documenting_the_flag_says_it_defaults_ON(self) -> None:
+        """Guards the stale-comment defect itself, in all THREE files that carried it.
+
+        Positive assertion, not a ban on the phrase "default off": the corrections
+        themselves quote the old wording to record what changed, and a blunt negative
+        check flags them. What matters is that each file states the CURRENT default.
+        """
+        import pathlib as _p
+
+        root = _p.Path(__file__).resolve().parents[1]
+        for rel in ("src/config.py", "src/armor/config.py", "src/deploy/deploy_agents.py"):
+            text = root.joinpath(rel).read_text().lower()
+            assert "enable_model_armor_plugin" in text, f"{rel} no longer mentions the flag"
+            assert "defaults on" in text or "defaults **on**" in text, (
+                f"{rel} documents ENABLE_MODEL_ARMOR_PLUGIN without stating it defaults ON"
+            )

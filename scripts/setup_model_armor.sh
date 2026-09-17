@@ -121,6 +121,19 @@ for role in roles/modelarmor.user roles/modelarmor.calloutUser; do
     fi
 done
 
+# The grants above are for the SERVICE AGENTS, which serve the Gemini-2.x template path
+# where Vertex calls Model Armor on the engine's behalf. They are not enough.
+#
+# On a Gemini-3 backbone the templates are omitted (regional-only) and ADK's
+# ModelArmorPlugin screens inside the engine instead — calling Model Armor as the
+# ENGINE'S OWN AGENT_IDENTITY. That principal held no modelarmor role at all, the call
+# failed, and block_on_screening_failure=True turned it into a 100% refusal rate on a
+# fresh coordinator. See docs/notes/ and lib/config.sh:grant_modelarmor_user.
+echo "  Granting roles/modelarmor.user to the ENGINE identities..."
+for pair in "Coordinator:${AGENT_ENGINE_ID:-}" "Router:${ROUTER_ENGINE_ID:-}"; do
+    grant_modelarmor_user "${pair%%:*}" "${pair#*:}" || MA_FAILURES=$((MA_FAILURES + 1))
+done
+
 PROMPT_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/${PROMPT_TEMPLATE_NAME}"
 RESPONSE_TEMPLATE="projects/${PROJECT_ID}/locations/${REGION}/templates/${RESPONSE_TEMPLATE_NAME}"
 

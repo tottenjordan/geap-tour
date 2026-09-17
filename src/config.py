@@ -322,8 +322,13 @@ ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", 
 # coordinator is baked at gemini-2.5-flash (armor active), but .env's AGENT_MODEL is
 # gemini-3.5-flash — so the next deploy would silently drop to the client-side
 # blocklist alone. Latent, not an active outage; this closes it before it lands.
-# Default off (needs google-cloud-modelarmor in the serving requirements), so an
-# unset flag keeps behaviour byte-identical. See src/armor/config.py:armor_layers.
+# Defaults ON (flipped 2026-09-09). This comment said "Default off ... byte-identical"
+# until 2026-09-17 — the third of three stale copies of that claim, and the one in the
+# file that actually sets the default. On a Gemini-3 backbone the plugin is then the
+# ONLY server-side layer, and because it screens in-process the caller is the engine's
+# AGENT_IDENTITY, which must hold roles/modelarmor.user (scripts/lib/config.sh:
+# grant_modelarmor_user). Without it ADK's block_on_screening_failure=True answers
+# EVERY request with its blocked message. See src/armor/config.py:armor_layers.
 # Ceiling on LLM calls within a single invocation (ADK 2.8.0). Not a tuning knob —
 # a runaway-loop backstop. 100 is far above any legitimate turn here (the deepest
 # measured coordinator turn is a handful of tool hops), so it never fires in normal

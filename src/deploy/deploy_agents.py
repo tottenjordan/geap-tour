@@ -157,8 +157,10 @@ REQUIREMENTS = [
     "opentelemetry-instrumentation-grpc",
     "opentelemetry-instrumentation-httpx",
     # Required by ADK 2.8.0's first-party ModelArmorPlugin (see
-    # src/armor/config.py:model_armor_plugin). Shipped even though
-    # ENABLE_MODEL_ARMOR_PLUGIN defaults off — unlike the BigQuery analytics deps
+    # src/armor/config.py:model_armor_plugin). ENABLE_MODEL_ARMOR_PLUGIN defaults ON
+    # (this comment said "defaults off" until 2026-09-17, stale since the 2026-09-09
+    # flip), so on a Gemini-3 backbone the plugin is the only server-side layer and
+    # this package is load-bearing, not speculative — unlike the BigQuery analytics deps
     # below, which are omitted because that plugin is PROVEN broken on the managed
     # runtime, this one is expected to work, and a flag that silently degrades to
     # "client-side guardrail only" because a package is missing is exactly the
