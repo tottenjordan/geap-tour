@@ -77,15 +77,46 @@ WRITER_IDENTITY=$(gcloud logging sinks describe "$SINK_NAME" \
 # This grant is what lets the sink write at all: without it the sink exists, the
 # script says nothing, and every trace is dropped on the floor. A silently empty
 # dataset is a much worse outcome than a loud failure here.
+# A FAILED grant is not the same as MISSING access, and conflating them is its own
+# false alarm — one this script shipped for a few hours. `bq add-iam-policy-binding`
+# returns "This feature requires allowlisting" in this project, so the command always
+# fails here, while the writer already holds WRITER on the dataset through the legacy
+# access list and the sink has been writing tables since 2026-08-12. The first honest
+# version of this block therefore declared a working pipeline broken, in alarming
+# terms, and exited 1.
+#
+# So: attempt the grant, and on failure ASK THE DATASET whether the access exists
+# anyway. Only a writer that genuinely cannot write is a failure. Legacy WRITER/OWNER
+# are checked alongside the IAM role name because a dataset ACL reports the legacy
+# spelling, and WRITER is what dataEditor grants.
+_writer_has_access() {
+    bq show --format=prettyjson "${PROJECT_ID}:${DATASET_NAME}" 2>/dev/null \
+        | python3 -c "
+import json, sys
+want = sys.argv[1].removeprefix('serviceAccount:')
+for entry in json.load(sys.stdin).get('access', []):
+    who = entry.get('userByEmail') or entry.get('iamMember') or ''
+    role = entry.get('role', '')
+    if who.endswith(want) and role in ('WRITER', 'OWNER', 'roles/bigquery.dataEditor'):
+        sys.exit(0)
+sys.exit(1)
+" "$1"
+}
+
 if [[ -n "$WRITER_IDENTITY" ]]; then
     if bq add-iam-policy-binding \
         --member="$WRITER_IDENTITY" \
         --role="roles/bigquery.dataEditor" \
-        "$PROJECT_ID:$DATASET_NAME" >/dev/null; then
+        "$PROJECT_ID:$DATASET_NAME" >/dev/null 2>&1; then
         echo "  Granted roles/bigquery.dataEditor to ${WRITER_IDENTITY}"
+    elif _writer_has_access "$WRITER_IDENTITY"; then
+        echo "  ✓ ${WRITER_IDENTITY} already has dataset write access (grant call unavailable"
+        echo "    in this project — 'bq add-iam-policy-binding' requires allowlisting)."
     else
-        echo "  ✗ FAILED to grant roles/bigquery.dataEditor to ${WRITER_IDENTITY}." >&2
-        echo "    The sink will accept logs and BigQuery will discard them." >&2
+        echo "  ✗ ${WRITER_IDENTITY} has NO write access to ${DATASET_NAME}, and the grant" >&2
+        echo "    call failed. The sink will accept logs and BigQuery will discard them." >&2
+        echo "    Add it by hand: bq show --format=prettyjson ${PROJECT_ID}:${DATASET_NAME}," >&2
+        echo "    append a WRITER entry for that service account, then bq update --source." >&2
         SINK_FAILURES=$((SINK_FAILURES + 1))
     fi
 else
