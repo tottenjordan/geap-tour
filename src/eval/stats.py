@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 import random
 import statistics
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 # Below this many observations an aggregate is flagged low-confidence. Chosen to
 # match the demo-scale evalsets (~8-25 cases); override per call site as needed.
@@ -44,6 +44,36 @@ def is_low_confidence(n: int, floor: int = MIN_SAMPLES) -> bool:
 def confidence_label(n: int, floor: int = MIN_SAMPLES) -> str:
     """``"low_confidence"`` when ``n`` is below the floor, else ``"ok"``."""
     return "low_confidence" if is_low_confidence(n, floor) else "ok"
+
+
+def all_metrics_passed(passed_flags: Iterable[bool]) -> bool:
+    """``True`` only if there is **at least one** metric and every one passed.
+
+    Exists because the obvious spelling is wrong in a way that always fails
+    *safe-looking*::
+
+        all_pass = True                     # <- and nothing ever disproves it
+        for name, score in metrics.items(): # <- never executes when empty
+            ...
+
+    A run that scored **nothing** then reports success. That is not hypothetical:
+    the identical bug was written three separate times in this repo, once per eval
+    path, each copied from the last —
+
+    * ``simulated_eval`` — fixed in PR #138, after an evaluation run reported
+      ``SUCCEEDED`` and ``all_passed: true`` over a conversation the SDK had
+      silently discarded;
+    * ``multi_agent_batch_eval`` — fixed 2026-09-17, in the module the **CI eval
+      gate** runs, so a scoreless run exited 0;
+    * ``batch_eval`` — fixed 2026-09-17 alongside this helper.
+
+    Python's builtin ``all([])`` is ``True``, which is correct for logic and wrong
+    for verdicts: an absent measurement is not a passing one. Routing every verdict
+    through here puts that distinction in one place instead of relying on three
+    authors remembering it.
+    """
+    flags = list(passed_flags)
+    return bool(flags) and all(flags)
 
 
 def _percentile(sorted_vals: Sequence[float], pct: float) -> float:
