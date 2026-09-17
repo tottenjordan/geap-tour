@@ -1,5 +1,6 @@
 """Tests for Agent Armor — validates guardrail callbacks and configuration."""
 
+import pathlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,8 @@ from src.armor.config import (
     get_model_armor_config,
     input_guardrail_callback,
 )
+
+_REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _make_context(text: str):
@@ -343,6 +346,34 @@ class TestArmorAcceptsARealAgentsModel:
         assert model_id(object()) is None
 
 
+def _config_in_clean_env(expr: str, **env: str) -> str:
+    """Evaluate `expr` against a FRESHLY imported src.config, with no `.env` in scope.
+
+    Two traps this avoids, both hit while writing these tests:
+
+    * `monkeypatch.delenv` + `importlib.reload` does not test a default. config.py
+      calls `load_dotenv()` at import, which walks up from cwd, finds the repo's
+      `.env`, and puts the variable straight back — so the reload re-reads the FILE.
+    * `importlib.reload` also MUTATES the module other tests already imported, so a
+      test that reloads with a flag off leaves it off for everything after it.
+
+    A subprocess in a directory with no `.env` above it has neither problem.
+    """
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c", f"import src.config as c; print({expr})"],
+        cwd="/tmp",
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(_REPO), **env},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
 class TestThePluginFlagDefault:
     """`ENABLE_MODEL_ARMOR_PLUGIN` defaults ON, and two comments said OFF for eight days.
 
@@ -352,22 +383,15 @@ class TestThePluginFlagDefault:
     could not be involved, when it was the cause.
     """
 
-    def test_unset_means_ON(self, monkeypatch) -> None:
+    def test_unset_means_ON(self) -> None:
         """The DEFAULT path, which is what a fresh deploy takes."""
-        import importlib
+        assert _config_in_clean_env("c.ENABLE_MODEL_ARMOR_PLUGIN") == "True"
 
-        monkeypatch.delenv("ENABLE_MODEL_ARMOR_PLUGIN", raising=False)
-        import src.config as cfg
-
-        assert importlib.reload(cfg).ENABLE_MODEL_ARMOR_PLUGIN is True
-
-    def test_explicit_zero_opts_out(self, monkeypatch) -> None:
-        import importlib
-
-        monkeypatch.setenv("ENABLE_MODEL_ARMOR_PLUGIN", "0")
-        import src.config as cfg
-
-        assert importlib.reload(cfg).ENABLE_MODEL_ARMOR_PLUGIN is False
+    def test_explicit_zero_opts_out(self) -> None:
+        assert (
+            _config_in_clean_env("c.ENABLE_MODEL_ARMOR_PLUGIN", ENABLE_MODEL_ARMOR_PLUGIN="0")
+            == "False"
+        )
 
     def test_every_file_documenting_the_flag_says_it_defaults_ON(self) -> None:
         """Guards the stale-comment defect itself, in all THREE files that carried it.
@@ -418,3 +442,77 @@ class TestTheDocsDescribeTheArmorLayersThatExist:
         text = self._claude_md()
         assert "roles/modelarmor.user" in text
         assert "grant_modelarmor_user" in text
+
+
+class TestTheDefaultBackboneTakesTheTemplatesPath:
+    """`AGENT_MODEL` defaults to gemini-2.5-flash, deliberately (2026-09-17).
+
+    The two backbones get DIFFERENT server-side screening, with different
+    prerequisites and different failure shapes:
+
+    * Gemini-2.x -> Model Armor TEMPLATES, applied by Vertex as a service agent. No
+      per-engine grant needed. Every live engine here has run this for months.
+    * Gemini-3   -> ADK's ModelArmorPlugin, which screens in-process as the engine's
+      own AGENT_IDENTITY, needs `roles/modelarmor.user` plus a recycle, and
+      `block_on_screening_failure` defaults True — so a missing grant refuses 100% of
+      traffic rather than degrading.
+
+    Gemini-3 is supported and opt-in; it is not the default, because failing CLOSED on
+    a prerequisite a fresh project must discover is the worst shape for a default.
+    """
+
+    def test_the_code_default_is_gemini_2_5(self) -> None:
+        """The DEFAULT path: no env var AND no `.env` to fall back on.
+
+        Written first with delenv+reload, which does not test this at all — config.py
+        re-reads `.env` on import, so reverting the literal to gemini-3.5-flash passed
+        all 51 tests. The CODE_STANDARDS lesson landing on its author: the configured
+        path was covered, the default path was not.
+        """
+        out = _config_in_clean_env("c.AGENT_MODEL, c.COORDINATOR_MODEL")
+        assert out.split() == ["gemini-2.5-flash", "gemini-2.5-flash"], out
+
+    def test_the_default_backbone_is_covered_by_templates_not_the_plugin(self) -> None:
+        """The whole point of the pin: no per-engine IAM grant is required to be safe."""
+        from src.armor.config import armor_layers
+
+        layers = armor_layers("gemini-2.5-flash")
+        assert layers["server_side"] is True, "the default backbone lost template armor"
+        assert layers["plugin"] is False, "the default backbone should not need the plugin"
+        assert layers["client_guardrail"] is True
+
+    def test_the_shipped_env_template_agrees_with_the_code_default(self) -> None:
+        """`.env.example` is TRACKED and is what a fresh install copies, so it is the
+        pin that actually ships. `.env` itself is gitignored — a correction there is
+        local to one machine."""
+        example = _REPO / ".env.example"
+        pinned = [
+            line.split("=", 1)[1].strip().strip("\"'")
+            for line in example.read_text().splitlines()
+            if line.startswith("AGENT_MODEL=")
+        ]
+        assert pinned == ["gemini-2.5-flash"], f".env.example pins AGENT_MODEL={pinned}"
+
+    def test_dot_env_agrees_with_the_code_default(self) -> None:
+        """`.env` overrides the code default, so a 3.5 pin there would reinstate the
+        plugin path for every local run and every deploy — silently, because the code
+        default would still read 2.5."""
+        import pathlib as _p
+
+        env = _p.Path(__file__).resolve().parents[1] / ".env"
+        if not env.exists():  # CI has no .env
+            pytest.skip("no .env in this checkout")
+        pinned = [
+            line.split("=", 1)[1].strip().strip("\"'")
+            for line in env.read_text().splitlines()
+            if line.startswith("AGENT_MODEL=")
+        ]
+        assert pinned == ["gemini-2.5-flash"], f".env pins AGENT_MODEL={pinned}"
+
+    def test_gemini3_remains_supported_as_an_opt_in(self) -> None:
+        """Pinning back must not break the opt-in path — the plugin still covers it."""
+        from src.armor.config import armor_layers
+
+        layers = armor_layers("gemini-3.5-flash")
+        assert layers["plugin"] is True
+        assert layers["server_side"] is False
