@@ -215,3 +215,79 @@ echo "SURVIVED"
         drift back onto a service agent, which has now happened twice."""
         defs = [f"{f.name}" for f in SHELL_SCRIPTS if "\nengine_identity() {" in f.read_text()]
         assert defs == ["config.sh"], f"engine_identity defined in: {defs}"
+
+
+class TestAFailedGrantIsNotMissingAccess:
+    """`setup_logging_sink.sh` must not call a working pipeline broken.
+
+    The false-success sweep replaced `bq add-iam-policy-binding … || true` with a loud
+    failure — correct in principle, wrong here. `bq add-iam-policy-binding` returns
+    "This feature requires allowlisting" in this project, so the call ALWAYS fails,
+    while the sink's writer already holds WRITER on the dataset through the legacy
+    access list and has been writing tables since 2026-08-12.
+
+    So for a few hours the script declared a healthy log pipeline broken, in alarming
+    terms, and exited 1. Over-reporting is a different bug from under-reporting, not a
+    safe direction: an alarm that is always wrong gets ignored, and then the real one
+    is ignored too.
+    """
+
+    FUNCTION: ClassVar[str] = (
+        lambda text: text[
+            text.index("_writer_has_access() {") : text.index(
+                "\n}\n", text.index("_writer_has_access() {")
+            )
+            + 3
+        ]
+    )((SCRIPTS / "setup_logging_sink.sh").read_text())
+
+    def _check(self, access: list[dict], member: str) -> int:
+        """Run the REAL access probe with `bq show` stubbed to a given ACL."""
+        import json as _json
+
+        harness = f"""
+PROJECT_ID=p
+DATASET_NAME=d
+bq() {{ cat <<'JSON'
+{_json.dumps({"access": access})}
+JSON
+}}
+{self.FUNCTION}
+_writer_has_access "{member}"
+"""
+        return subprocess.run(
+            ["bash", "-c", harness], capture_output=True, text=True, timeout=30
+        ).returncode
+
+    SA = "serviceAccount:service-1@gcp-sa-logging.iam.gserviceaccount.com"
+    EMAIL = "service-1@gcp-sa-logging.iam.gserviceaccount.com"
+
+    def test_legacy_writer_counts_as_access(self) -> None:
+        """What the live dataset actually has. A dataset ACL reports the legacy
+        spelling, not the IAM role name, so checking only for dataEditor sees nothing."""
+        assert self._check([{"role": "WRITER", "userByEmail": self.EMAIL}], self.SA) == 0
+
+    def test_owner_counts_as_access(self) -> None:
+        assert self._check([{"role": "OWNER", "userByEmail": self.EMAIL}], self.SA) == 0
+
+    def test_the_iam_role_name_counts_too(self) -> None:
+        assert (
+            self._check([{"role": "roles/bigquery.dataEditor", "iamMember": self.SA}], self.SA) == 0
+        )
+
+    def test_reader_is_not_write_access(self) -> None:
+        """The failure must stay real when it IS real — READER cannot write."""
+        assert self._check([{"role": "READER", "userByEmail": self.EMAIL}], self.SA) == 1
+
+    def test_a_different_principal_is_not_access(self) -> None:
+        assert self._check([{"role": "WRITER", "userByEmail": "someone@else.com"}], self.SA) == 1
+
+    def test_an_empty_acl_is_not_access(self) -> None:
+        assert self._check([], self.SA) == 1
+
+    def test_the_script_consults_the_dataset_before_declaring_failure(self) -> None:
+        """Structural: the failure branch must be reachable only after the probe."""
+        text = (SCRIPTS / "setup_logging_sink.sh").read_text()
+        probe = text.index("elif _writer_has_access")
+        failure = text.index("has NO write access to")
+        assert probe < failure, "the script fails before checking whether access exists"
