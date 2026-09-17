@@ -92,10 +92,10 @@ def model_armor_plugin(model: str | None = None):
     Measured 2026-09-08. The *live* coordinator (``3639…``) is baked with
     ``COORDINATOR_MODEL=gemini-2.5-flash``, so templates are genuinely active on it
     today. The gap is **latent, not active**: ``.env`` sets
-    ``AGENT_MODEL=gemini-3.5-flash``, so the next coordinator deploy would drop
-    server-side screening to nothing but the client-side blocklist — and the only
-    thing that would say so is an *advisory* baseline finding nobody has to act on.
-    The bake-off engines already run Gemini-3 backbones.
+    ``AGENT_MODEL=gemini-3.5-flash`` — true until 2026-09-17, when the default was
+    pinned BACK to gemini-2.5-flash so a fresh deploy takes the better-travelled
+    templates path. Gemini-3 is now opt-in, and the bake-off engines still run it, so
+    this plugin remains the layer that covers them.
 
     ``google.adk.integrations.model_armor.ModelArmorPlugin`` (new in ADK 2.8.0)
     screens inside the ADK request path rather than via a ``GenerateContentConfig``

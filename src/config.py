@@ -119,7 +119,27 @@ OTEL_ENV_VARS = {
     "OTEL_TRACES_SAMPLER_ARG": "1.0",
 }
 
-AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-3.5-flash")
+# gemini-2.5-flash, not 3.5 — a deliberate step BACK, taken 2026-09-17.
+#
+# The two backbones do not get the same server-side screening. A regional Gemini-2.x
+# coordinator is covered by Model Armor TEMPLATES, which Vertex applies on the engine's
+# behalf as a service agent. Gemini-3 runs on the global endpoint, where templates 400,
+# so it is covered instead by ADK's ModelArmorPlugin — which screens in-process, calls
+# Model Armor as the engine's OWN AGENT_IDENTITY, and defaults to
+# block_on_screening_failure=True. A fresh Gemini-3 coordinator therefore refused 100%
+# of its traffic until that identity was granted roles/modelarmor.user.
+#
+# That specific bug is fixed and guarded. The reason to default to 2.5 anyway is that
+# the two paths have very different mileage: templates have served every live engine
+# here for months, while the plugin path has now been exercised end-to-end exactly
+# once, deliberately, on a disposable engine. It also has one more prerequisite that a
+# fresh project must get right (a per-engine IAM grant, then a recycle) and fails
+# CLOSED when it does not — the worst failure shape for a default.
+#
+# So 3.5 is OPT-IN: `AGENT_MODEL=gemini-3.5-flash` (or COORDINATOR_MODEL for just the
+# coordinator) still works and is fully supported — engine_baseline now fails loudly if
+# its identity cannot reach Model Armor. Revisit once the plugin has real service time.
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
 
 # Per-agent model overrides (default to the shared AGENT_MODEL; overridable for DOE experiments).
 COORDINATOR_MODEL = os.environ.get("COORDINATOR_MODEL", AGENT_MODEL)
@@ -319,9 +339,9 @@ ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", 
 # region-scoped templates it is model-family-independent.
 #
 # It exists because the template path covers ONLY regional Gemini-2.x. The live
-# coordinator is baked at gemini-2.5-flash (armor active), but .env's AGENT_MODEL is
-# gemini-3.5-flash — so the next deploy would silently drop to the client-side
-# blocklist alone. Latent, not an active outage; this closes it before it lands.
+# coordinator is baked at gemini-2.5-flash (armor active). .env's AGENT_MODEL was
+# gemini-3.5-flash until 2026-09-17 and is now 2.5 as well, so a default deploy stays
+# on templates; this plugin covers the opt-in Gemini-3 path and the bake-off engines.
 # Defaults ON (flipped 2026-09-09). This comment said "Default off ... byte-identical"
 # until 2026-09-17 — the third of three stale copies of that claim, and the one in the
 # file that actually sets the default. On a Gemini-3 backbone the plugin is then the
@@ -344,8 +364,8 @@ ADK_MAX_LLM_CALLS = int(os.environ.get("ADK_MAX_LLM_CALLS", "100"))
 # returns None on a regional Gemini-2.x backbone, where the templates already screen,
 # so no request is ever double-screened. Both currently-deployed engines are
 # gemini-2.5-flash, so flipping this changes nothing about them today — the point is
-# that the NEXT Gemini-3 deploy (which .env's AGENT_MODEL=gemini-3.5-flash would
-# produce) is covered by default instead of silently unarmored.
+# that a Gemini-3 deploy (now opt-in rather than the .env default) is covered instead
+# of silently unarmored.
 #
 # Set ENABLE_MODEL_ARMOR_PLUGIN=0 to opt out.
 ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "1") not in (

@@ -82,8 +82,10 @@ client-side blocklist as the only layer.
 **Measured, and narrower than it first looked.** The live coordinator `3639…` is
 baked with `COORDINATOR_MODEL=gemini-2.5-flash`, so templates *are* active on it
 today. The gap is **latent, not an active outage**: `.env` sets
-`AGENT_MODEL=gemini-3.5-flash`, so the next coordinator deploy would drop to one
-layer — and the bake-off engines already run Gemini-3 backbones. (An earlier draft
+`AGENT_MODEL=gemini-3.5-flash`, so the next coordinator deploy would have dropped to
+one layer. **Pinned back to `gemini-2.5-flash` on 2026-09-17** — see the last section —
+so a default deploy now stays on templates and Gemini-3 is opt-in. The bake-off engines
+still run Gemini-3 backbones, so the plugin still matters. (An earlier draft
 of this note claimed production was unarmored. It was not; the check below is what
 established that.)
 
