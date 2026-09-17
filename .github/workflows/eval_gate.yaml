@@ -163,19 +163,32 @@ jobs:
       #   * empty-at-200 — a zero-character HTTP 200 is an INFRA failure that the
       #     rubric path can score as merely low quality.
       # Deliberately small and advisory; both are billable, so keep the counts low.
-      # QUARANTINED 2026-09-09 — known broken upstream, not a regression here.
-      # simulated_eval returns zero metrics on google-cloud-aiplatform 2.1.0: the
-      # service returns flat ADK events where ConversationTurns are expected, the
-      # multi-turn raters read turn.events, find nothing, and the run still reports
-      # SUCCEEDED. Two defects on our side are fixed (silent data loss, and zero
-      # metrics reporting all_passed=true) so it now FAILS loudly, but the residual
-      # mismatch is inside the SDK's own parsing.
+      # ADVISORY, and NOT in the both-failed guard below — but read why, because the
+      # reason changed on 2026-09-17 and the old one was wrong about someone else.
       #
-      # It is deliberately still RUN rather than skipped: a skipped step can never
-      # tell us upstream fixed it. What changes is that it no longer counts toward
-      # the both-failed guard below, which would otherwise silently degrade to
-      # "fail only if the ONLINE smoke fails" while looking like a two-signal guard.
-      - name: Multi-turn smoke (QUARANTINED — known broken on aiplatform 2.1.0)
+      # This step was quarantined 2026-09-09 as "known broken upstream — the residual
+      # mismatch is inside the SDK's own parsing". That was incorrect. PR #138 found
+      # all three defects were OURS and fixed them; `simulated_eval` returns real
+      # metrics again. Do not reintroduce the upstream claim.
+      #
+      # What a live run against this same engine actually shows (measured 2026-09-17,
+      # engine 3639…, 0 critical on verify_engine_config):
+      #
+      #   multi_turn_task_success_v1        0.33 / 0.60  FAIL
+      #   multi_turn_tool_use_quality_v1    0.00 / 0.60  FAIL
+      #   multi_turn_trajectory_quality_v1  0.00 / 0.60  FAIL
+      #
+      # The data reaching the raters is intact — an inference-only probe showed a real
+      # trajectory (`expense_mcp_get_user_expenses` -> response -> text). The visible
+      # anomaly is that the conversation collapses to ONE turn despite --max-turns 3,
+      # and multi-turn raters have nothing to grade across a single turn. Unresolved:
+      # whether that is the user simulator, the config, or the agent ending early.
+      #
+      # So it stays out of the AND guard — not because the harness is broken, but
+      # because a step that always fails would make the guard equivalent to
+      # "online smoke failed" while looking like two signals. It keeps RUNNING,
+      # because a skipped step can never tell us the score recovered.
+      - name: Multi-turn smoke (advisory — currently failing, see comment above)
         id: multiturn
         continue-on-error: true
         run: |
@@ -200,7 +213,7 @@ jobs:
             echo ""
             echo "| Check | Result | Catches |"
             echo "|---|---|---|"
-            echo "| multi-turn (simulated_eval) | ${{ steps.multiturn.outcome }} | QUARANTINED — known broken on aiplatform 2.1.0 |"
+            echo "| multi-turn (simulated_eval) | ${{ steps.multiturn.outcome }} | multi-turn regressions — EXPECTED FAIL, conversation collapses to 1 turn |"
             echo "| online quality (dry-run) | ${{ steps.online_smoke.outcome }} | empty-at-200 infra failures |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
@@ -212,24 +225,25 @@ jobs:
       # BOTH, not either: one failing smoke check is a flaky live engine and must not
       # red an advisory gate. Both failing is the harness itself being broken (a
       # renamed flag, a moved module), which is what needs to be loud.
-      # Only the online smoke counts while multi-turn is quarantined. Leaving the
-      # quarantined step in an AND guard would make the guard unreachable and let a
-      # real online-smoke failure pass unnoticed — a two-signal guard that is really
-      # a zero-signal one.
-      - name: Fail if the un-quarantined smoke check failed
+      # Only the online smoke counts while multi-turn fails for a known reason (see
+      # above). Putting a permanently-failing step into an AND guard would make the
+      # guard equivalent to "online smoke failed" while reading as two signals —
+      # worse than one honest signal. Fold multi-turn back in when it can pass.
+      - name: Fail if the load-bearing smoke check failed
         if: ${{ steps.online_smoke.outcome == 'failure' }}
         run: |
           echo "::error::The online smoke check failed — the harness is broken, not just the agent."
           exit 1
 
-      # A quarantine with no exit condition becomes permanent. This is the only
-      # thing that will tell us the upstream fix landed.
-      - name: Notice if the quarantined check starts passing
+      # An exclusion with no exit condition becomes permanent. This is the only thing
+      # that will tell us multi-turn recovered — it has to be checked by the workflow,
+      # because the gate is label-gated and nobody watches an advisory table.
+      - name: Notice if the multi-turn check starts passing
         if: ${{ steps.multiturn.outcome == 'success' }}
         run: |
-          echo "::warning::multi-turn smoke PASSED — simulated_eval may be fixed upstream."
-          echo "Re-check docs/notes/adk-2.7.1-dependency-refresh.md and lift the quarantine."
-          echo "> **multi-turn is passing again** — lift the quarantine in eval_gate.yaml." \
+          echo "::warning::multi-turn smoke PASSED — fold it back into the AND guard."
+          echo "See docs/notes/adk-2.7.1-dependency-refresh.md; update eval_gate.yaml."
+          echo "> **multi-turn is passing again** — add it back to the both-failed guard." \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish score to job summary

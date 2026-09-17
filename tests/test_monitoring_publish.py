@@ -394,35 +394,61 @@ class TestTheEvalGateReportsItsOwnBreakage:
         assert "steps.online_smoke.outcome" in run
         assert ".conclusion" not in run
 
-    def test_the_guard_excludes_the_quarantined_check(self):
-        """multi-turn is QUARANTINED (simulated_eval is broken on aiplatform 2.1.0,
-        so it fails every run). Leaving it in an AND guard would make the guard
-        unreachable and let a real online-smoke failure pass unnoticed — a
-        two-signal guard that is really a zero-signal one."""
-        guard = _step(_gate_steps(), "Fail if the un-quarantined smoke check failed")["if"]
-        assert "steps.online_smoke.outcome == 'failure'" in guard
-        assert "multiturn" not in guard, (
-            "the quarantined check must not gate the job — it fails by construction"
-        )
+    def test_the_guard_excludes_the_permanently_failing_check(self):
+        """multi-turn currently fails every run, so it stays out of the AND guard.
 
-    def test_the_quarantine_is_labelled_where_a_reader_will_see_it(self):
+        The REASON changed on 2026-09-17 even though the structure did not, and the
+        reason is the point: it is not a broken harness (PR #138 fixed that, and the
+        old claim of an upstream SDK bug was wrong). `simulated_eval` returns real
+        metrics; the coordinator scores 0.33/0.00/0.00 against a 0.60 floor. A step
+        that always fails, placed in an AND guard, makes the guard equivalent to
+        "the other one failed" while reading as two signals.
+        """
+        guard = _step(_gate_steps(), "Fail if the load-bearing smoke check failed")["if"]
+        assert "steps.online_smoke.outcome == 'failure'" in guard
+        assert "multiturn" not in guard, "a check that fails by construction must not gate the job"
+
+    def test_the_expected_failure_is_labelled_where_a_reader_will_see_it(self):
         """A red row with no explanation trains people to ignore the table."""
         names = [s.get("name") or "" for s in _gate_steps()]
-        assert any("QUARANTINED" in n for n in names)
+        assert any("Multi-turn smoke" in n and "currently failing" in n for n in names), (
+            "the step name must say the failure is expected"
+        )
         row = _step(_gate_steps(), "Publish smoke results")["run"]
-        assert "QUARANTINED" in row
+        assert "EXPECTED FAIL" in row
 
-    def test_the_quarantine_has_an_exit_condition(self):
-        """A quarantine with no way out becomes permanent. This step is the only
-        thing that will tell us the upstream fix landed."""
-        step = _step(_gate_steps(), "Notice if the quarantined check starts passing")
+    def test_the_workflow_does_not_blame_the_sdk(self):
+        """A regression guard on a specific false claim, because it was there.
+
+        From 2026-09-09 to 2026-09-17 this workflow asserted that `simulated_eval`
+        was "known broken upstream" and that "the residual mismatch is inside the
+        SDK's own parsing". PR #138 established all three defects were ours. Stating
+        someone else's software is broken is a claim that needs evidence, and the
+        cost of it going stale is that nobody re-checks a dependency we blamed.
+        """
+        text = Path(".github/workflows/eval_gate.yaml").read_text()
+        # Allowed: the historical note that says the claim WAS made and was wrong.
+        for phrase in ("known broken upstream —", "inside the SDK's own parsing"):
+            assert phrase not in text or "was incorrect" in text, (
+                f"the workflow asserts an upstream defect ({phrase!r}) without "
+                "recording that PR #138 disproved it"
+            )
+        assert "returns zero metrics" not in text, (
+            "simulated_eval returns three real metrics since PR #138"
+        )
+
+    def test_the_exclusion_has_an_exit_condition(self):
+        """An exclusion with no way out becomes permanent. This step is the only
+        thing that will tell us multi-turn recovered — the gate is label-gated, so
+        nobody is watching the advisory table."""
+        step = _step(_gate_steps(), "Notice if the multi-turn check starts passing")
         assert "steps.multiturn.outcome == 'success'" in step["if"]
-        assert "lift the quarantine" in step["run"]
+        assert "AND guard" in step["run"]
 
-    def test_the_quarantined_step_still_runs(self):
-        """Skipping it would guarantee we never learn it was fixed."""
+    def test_the_excluded_step_still_runs(self):
+        """Skipping it would guarantee we never learn the score recovered."""
         step = _step(_gate_steps(), "Multi-turn smoke")
-        assert "if" not in step, "the quarantined step must still execute"
+        assert "if" not in step, "the excluded step must still execute"
         assert step.get("continue-on-error") is True
 
     def test_the_score_summary_still_publishes_after_the_guard(self):
@@ -430,7 +456,7 @@ class TestTheEvalGateReportsItsOwnBreakage:
         harness would also hide the rubric scores."""
         steps = _gate_steps()
         names = [s.get("name") or "" for s in steps]
-        guard_i = next(i for i, n in enumerate(names) if "Fail if the un-quarantined" in n)
+        guard_i = next(i for i, n in enumerate(names) if "Fail if the load-bearing" in n)
         score_i = next(i for i, n in enumerate(names) if "Publish score" in n)
         assert score_i > guard_i
         assert "always()" in steps[score_i]["if"]

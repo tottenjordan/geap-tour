@@ -84,8 +84,25 @@ Two legitimate answers; picking one beats drifting:
   on the dashboard and in the gate summary, and add gold cases at 3 and 4 so
   calibration at least covers the boundary it defends.
 * **Real gate.** ~200 coordinator cases (measured: that is what resolves 2.9 vs 3.0 at
-  sd 0.5; ~800 at sd 1.0), gold sets for the three uncalibrated judges, and a
-  multi-turn surface to replace the quarantined `simulated_eval`.
+  sd 0.5; ~800 at sd 1.0), gold sets for the three uncalibrated judges, and a working
+  multi-turn surface.
+
+**Updated 2026-09-17 — the multi-turn premise changed.** This item used to call for "a
+multi-turn surface to replace the quarantined `simulated_eval`". That is no longer the
+task: PR #138 fixed `simulated_eval` (three defects, all ours — the quarantine's claim
+of an upstream SDK bug was wrong), and `eval_gate.yaml` no longer says otherwise.
+
+What a live run now shows is a *different* problem, and a more interesting one. The
+harness works; the coordinator **fails** it — `0.33 / 0.00 / 0.00` against a 0.60
+floor. The raters are not blind (an inference-only probe found a real trajectory:
+`CALL:expense_mcp_get_user_expenses -> RESP -> text`), but the conversation collapses
+to **one turn** despite `--max-turns 3`, and multi-turn raters have nothing to grade
+across a single turn.
+
+So the multi-turn surface exists and reports. The open question is why it only ever
+gets one turn — simulator, config, or the agent ending early. That is the follow-up,
+and it is unblocked. See `docs/notes/adk-2.7.1-dependency-refresh.md`
+("Working is not passing").
 
 ---
 
