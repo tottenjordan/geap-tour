@@ -108,14 +108,47 @@ real deployed engine (`src/eval/multi_agent_batch_eval.py:107`,
 `agent=agent_resource_name`), so the calls do happen — but whether the managed
 Agent Engine surfaces the nested sub-agent tool calls into the captured
 trajectory is unverified. The locally-saved batch JSON has `item_count: 0` /
-`items: []` (the SDK did not persist per-item rationales), so the per-item
-"why 1/3" rationale could not be read directly in this investigation. If the
-trajectory only carries `transfer_to_agent`, a rubric swap alone will not lift
-the score — the trajectory-capture path would need fixing first.
+`items: []`, so the per-item "why 1/3" rationale could not be read directly in
+this investigation. If the trajectory only carries `transfer_to_agent`, a rubric
+swap alone will not lift the score — the trajectory-capture path would need
+fixing first.
 
-This is the same class of platform trace-content limitation documented for the
-native online evaluators (see [[online-eval-content-capture-blocked]] and
-[offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md)).
+> **CORRECTION (2026-09-18): the empty `item_count` was OUR BUG, not the SDK's.**
+> The sentence above originally read "(the SDK did not persist per-item
+> rationales)". It did persist them. `_run_single_agent_eval` read
+> `evaluation_run.evaluation_items`, a field `EvaluationRun` has never had — the
+> data is in `evaluation_item_results`, whose own description says it is
+> "only populated when include_evaluation_items is set to True", the flag this
+> module already passed. `EvaluationRun` sets `extra='forbid'`, so the attribute
+> could not appear dynamically either; the read was guarded by `hasattr`, so it
+> produced no error to notice. Wrong since the module's first commit, `items=[]`
+> on every run ever.
+>
+> Fixed in `_extract_item_results`. The rationales were there the whole time, and
+> they answer this section's question directly — a live re-read of a router run
+> gives, per case, the failing rubrics and the judge's reasoning:
+>
+> ```text
+> case 4: score=0.17  5 failed rubric(s)
+>   why: The agent only called `search_mcp_search_hotels` to address the first
+>        part of the request. It did not make any call to `expense_mc…`
+> ```
+>
+> That is a genuine coverage failure, not a delegation artifact. Two traps found
+> while fixing it, both worth knowing before reading this data: a **failed**
+> rubric verdict arrives as `None`, never `False` (protobuf omits a default
+> `false`), and the rationale is split — pointwise metrics use `explanation`,
+> rubric metrics use `rubric_verdicts`, 15/15 on the run measured. The extraction
+> normalises the first and captures both halves of the second.
+>
+> Cited here because this note is the reason the question was dropped: an
+> `item_count: 0` was read as a platform limit and closed the line of enquiry.
+
+This *remains* the same class of question as the platform trace-content limitation
+documented for the native online evaluators (see
+[[online-eval-content-capture-blocked]] and
+[offline-eval-monitoring-bridge](./offline-eval-monitoring-bridge.md)) — but this
+particular instance of it was self-inflicted.
 
 ## Recommended follow-up
 

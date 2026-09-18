@@ -334,6 +334,93 @@ def _build_eval_dataset(cases: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _extract_item_results(evaluation_run) -> list[dict]:
+    """Per-case rubric scores and judge rationales from a finished evaluation run.
+
+    **This read was wrong from the module's first commit and failed silently.** It
+    asked for ``evaluation_run.evaluation_items``; the SDK's ``EvaluationRun`` has no
+    such field. The data lives in ``evaluation_item_results``, whose own description
+    reads "only populated when include_evaluation_items is set to True" — the flag
+    this module already passes. ``EvaluationRun`` sets ``extra='forbid'``, so the
+    attribute cannot appear dynamically either: ``hasattr`` was False on every run
+    ever, and because the guard was ``hasattr`` rather than an attribute access, it
+    produced no ``AttributeError`` to swallow and no log. ``items=[]`` /
+    ``item_count=0`` on every run, indistinguishable from "the service returned
+    nothing".
+
+    It cost a real investigation. ``docs/notes/coordinator-tool-use-quality.md``
+    recorded the empty ``item_count`` and concluded "the SDK did not persist per-item
+    rationales", so the per-item *why* behind a 1/3 ``tool_use_quality`` was written
+    off as a platform limit. The rationales were there.
+
+    **The rationale lives in two different places and only half of it is
+    ``explanation``.** Measured on a real run: of 30 metric results, 15 carried
+    ``explanation`` and 15 carried ``rubric_verdicts`` instead — the split is
+    pointwise metrics vs rubric-based ones. ``tool_use_quality_v1``, the metric that
+    prompted this whole investigation, is on the ``rubric_verdicts`` side, so reading
+    ``explanation`` alone would have shipped a fix that still had nothing to say
+    about the one question asked of it.
+
+    Verdicts are compacted to ``{rubric, verdict, reasoning}``. The raw form is
+    ~4.5KB per metric result, most of it nested proto wrapper around a one-line
+    description; the compact form keeps every word of the reasoning. Budget roughly
+    200KB of ``items`` on a ``--limit 8`` run.
+
+    Returns plain JSON-serialisable dicts: the result file is written with
+    ``default=str``, which never raises, so a leaked pydantic object would stringify
+    into an unusable blob just as quietly.
+    """
+
+    def _verdicts(detail) -> list[dict]:
+        out = []
+        for v in getattr(detail, "rubric_verdicts", None) or []:
+            content = getattr(getattr(v, "evaluated_rubric", None), "content", None)
+            prop = getattr(content, "property", None)
+            out.append(
+                {
+                    "rubric": getattr(prop, "description", None),
+                    # `bool(...)`, not the raw value. A FAILED verdict arrives as
+                    # `None`, never `False`: protobuf omits a default-valued
+                    # `false`, and the field deserializes to None. Verified against
+                    # a live run — `true_count / len(verdicts)` equalled the metric
+                    # score exactly in all 21 case/metric pairs, with 46 None and
+                    # ZERO False across 103 verdicts. Passing None through would
+                    # rebuild this function's own bug one layer up: the obvious
+                    # `if v["verdict"] is False` finds no failures on a case that
+                    # scored 0.167.
+                    "verdict": bool(getattr(v, "verdict", None)),
+                    "reasoning": getattr(v, "reasoning", None),
+                }
+            )
+        return out
+
+    items: list[dict] = []
+    try:
+        results = getattr(evaluation_run, "evaluation_item_results", None)
+        for case in getattr(results, "eval_case_results", None) or []:
+            metrics: dict[str, dict] = {}
+            for candidate in getattr(case, "response_candidate_results", None) or []:
+                for name, detail in (getattr(candidate, "metric_results", None) or {}).items():
+                    metrics[str(name)] = {
+                        "score": getattr(detail, "score", None),
+                        # Both, never one: see the docstring on the 15/15 split.
+                        "explanation": getattr(detail, "explanation", None),
+                        "rubric_verdicts": _verdicts(detail),
+                        # How a per-case failure surfaces at all — e.g. the service
+                        # refusing to grade tool_use_quality on a tool-free case.
+                        "error_message": getattr(detail, "error_message", None),
+                    }
+            items.append(
+                {"index": getattr(case, "eval_case_index", len(items)), "metrics": metrics}
+            )
+    except Exception:
+        # Still swallowed: a shape change in the SDK's items must not fail a run
+        # whose scores are already computed. But no longer silent — the whole point
+        # of this function's history is that an empty list looked like a fact.
+        logger.debug("per-item extraction failed; items will be empty", exc_info=True)
+    return items
+
+
 def _run_single_agent_eval(
     client: Client,
     agent_name: str,
@@ -528,18 +615,8 @@ def _run_single_agent_eval(
     # pass/fail over a demo-scale run isn't read with full trust.
     _annotate_low_confidence(metric_results, total_items)
 
-    # Per-item details
-    items = []
-    try:
-        if hasattr(evaluation_run, "evaluation_items"):
-            for item in evaluation_run.evaluation_items or []:
-                items.append(dict(item) if not isinstance(item, dict) else item)
-    except Exception:
-        # Swallowing is right (a shape change in the SDK's items must not fail a
-        # scored run) but the result was indistinguishable from an SDK that returned
-        # no items: `items=[]`, `item_count=0`, no trace. Callers read those as
-        # facts about the run.
-        logger.debug("per-item extraction failed; items will be empty", exc_info=True)
+    # Per-item details — the per-metric score AND the judge's rationale.
+    items = _extract_item_results(evaluation_run)
 
     # Print agent summary
     print(f"\n  Results for {agent_name} ({total_items} items):")
