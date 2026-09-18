@@ -460,3 +460,60 @@ class TestTheEvalGateReportsItsOwnBreakage:
         score_i = next(i for i, n in enumerate(names) if "Publish score" in n)
         assert score_i > guard_i
         assert "always()" in steps[score_i]["if"]
+
+
+class TestTheEmptyRateABArm:
+    """Both online arms must be labelled, or the A/B is unreadable.
+
+    As of 2026-09-18 both live coordinator engines return empty-at-200 at a measured
+    8-19%, with all five documented causes ruled out (docs/empty_at_200_analysis.md).
+    The probe engine trends worse and carries ADK 2.9.1, but Fisher p=0.42 at n=26 —
+    separating the rates needs ~150 samples per arm.
+
+    Sampling both on the same hourly tick accumulates that for free AND interleaved,
+    so time-of-day load cannot masquerade as an engine difference. It only works if
+    the two arms are distinguishable in the series.
+    """
+
+    def test_both_online_quality_steps_exist(self):
+        steps = _load_steps()
+        online = [
+            s
+            for s in steps
+            if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
+        ]
+        assert len(online) == 2, "expected a pinned arm and a probe arm"
+
+    def test_each_arm_is_labelled(self):
+        """Unlabelled, the two engines' points land in one indistinguishable series
+        and the comparison is lost — silently, since the numbers still look fine."""
+        runs = [
+            s.get("run", "")
+            for s in _load_steps()
+            if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
+        ]
+        assert any("engine=pinned" in r for r in runs)
+        assert any("engine=probe" in r for r in runs)
+
+    def test_the_arms_target_different_engines(self):
+        """Both arms pointing at one engine would produce a confident null result."""
+        runs = [
+            s.get("run", "")
+            for s in _load_steps()
+            if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
+        ]
+        pinned = next(r for r in runs if "engine=pinned" in r)
+        probe = next(r for r in runs if "engine=probe" in r)
+        assert "vars.AGENT_ENGINE_ID" in pinned
+        assert "vars.PROBE_ENGINE_ID" in probe
+
+    def test_the_probe_arm_skips_cleanly_when_unset(self):
+        """A repo without PROBE_ENGINE_ID (a fork) must skip, not fail."""
+        step = _step(_load_steps(), "probe engine (A/B arm)")
+        assert "vars.PROBE_ENGINE_ID != ''" in step["if"]
+
+    def test_the_arm_carries_its_own_exit_condition(self):
+        """An A/B with no stated end is permanent extra spend. The comment has to
+        say when to delete it, because nothing else will."""
+        text = WORKFLOW.read_text()
+        assert "DELETE THIS STEP" in text
