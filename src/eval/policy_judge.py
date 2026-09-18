@@ -22,6 +22,7 @@ import re
 from typing import TYPE_CHECKING
 
 from src.eval.batch_eval import EVAL_CASES, POLICY_COMPLIANCE_METRIC
+from src.eval.types import JudgeScore, PanelScore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -79,7 +80,7 @@ def build_policy_prompt(prompt: str, response: str) -> str:
 def score_pairs(
     pairs: Sequence[tuple[str, str]],
     generate_fn: Callable[[str], str],
-) -> dict:
+) -> JudgeScore:
     """Judge each ``(prompt, response)`` pair; return the mean 0-1 score.
 
     ``generate_fn`` takes the rendered judge prompt and returns the judge's raw
@@ -137,7 +138,7 @@ def run_policy_compliance_eval(
     warm: bool = True,
     panel: bool = False,
     judges: Sequence[Callable[[str], str]] | None = None,
-) -> dict:
+) -> JudgeScore | PanelScore:
     """Score policy_compliance for the deployed coordinator over policy cases.
 
     Runs inference over the expense/routing-expense subset of the coordinator's

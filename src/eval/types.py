@@ -71,15 +71,89 @@ class RateSummary(TypedDict):
     three-valued verdict and the metric-noise retraction both came from. Keeping
     them in one type means a producer cannot emit the point estimate alone.
 
-    Keys beyond these four (``counts``, ``by_tier``, latency percentiles) are
-    produced by ``verify_router_health.summarize`` and are not declared here —
-    nothing outside that module reads them by key.
+    ``silent_empty`` and ``labelled_failure`` are separate on purpose. A labelled
+    throttle is a failed turn but not a *silent* one, and conflating them would make
+    the retry wrapper's entire contribution invisible.
+
+    **This type was decorative for its first two hours.** It shipped declaring four
+    keys, matched no producer (``_rates`` emits six), and had zero usages outside its
+    own declaration and a test that hand-built one — the exact failure the module
+    docstring warns about, committed alongside the warning. It is now what
+    ``verify_router_health._rates`` returns and what the verdict functions accept.
     """
 
     n: int
     silent_empty: int
+    labelled_failure: int
     empty_rate: float
     empty_rate_ci: tuple[float, float]
+    full_rate: float
+    # Added by `summarize` after `_rates` builds the base, hence NotRequired: the
+    # per-tier breakdown is a RateSummary of the same shape, one level down.
+    counts: NotRequired[dict[str, int]]
+    skipped: NotRequired[int]
+    p50_latency_s: NotRequired[float]
+    p95_latency_s: NotRequired[float]
+    by_tier: NotRequired[dict[str, RateSummary]]
+
+
+class JudgeScore(TypedDict):
+    """A pointwise judge's mean score over a set of pairs.
+
+    ``policy_judge.score_pairs`` and ``tool_use_judge.score_pairs`` returned this
+    exact shape independently; one type now says they are the same contract.
+
+    ``score`` is ``None``, never ``0.0``, when nothing parsed — an unparseable
+    verdict is dropped from the average rather than counted as a failure, so a run
+    where every verdict was garbage must not read as a perfect zero.
+    """
+
+    score: float | None
+    n_scored: int
+    n_total: int
+
+
+class PanelScore(JudgeScore):
+    """:class:`JudgeScore` plus the inter-rater agreement behind it.
+
+    Separate from ``JudgeScore`` rather than a ``NotRequired`` field on it: a panel
+    score without its reliability is not the same claim as a single judge's score,
+    and the type should not let one be passed where the other is read.
+    """
+
+    reliability: PanelReliability
+
+
+class PanelReliability(TypedDict):
+    """Krippendorff alpha and spread across a judge panel.
+
+    ``alpha`` is ``None`` when it cannot be computed (fewer than two judges scored
+    an item), which is different from an alpha of 0 — no agreement measured versus
+    no agreement found.
+    """
+
+    alpha: float | None
+    mean_spread: float
+    n_items: int
+    n_judges: int
+
+
+class PanelVerdict(TypedDict):
+    """One item scored by the whole panel, before aggregation.
+
+    ``median`` rather than mean is the aggregation on purpose — it is what keeps a
+    single miscalibrated autorater from deciding a verdict.
+    """
+
+    median: float | None
+    # A LIST, positional by judge index — not a dict keyed by judge name. Krippendorff
+    # alpha reads these rows positionally, so judge i must stay column i; a dict would
+    # make that ordering implicit and reorderable. (Declared as a dict on the first
+    # pass of this conversion, from memory rather than from the code — caught by
+    # wiring it to the real producer, which is the whole argument for wiring.)
+    per_judge: list[float | None]
+    spread: float | None
+    n_valid: int
 
 
 class BatchResult(TypedDict):

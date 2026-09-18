@@ -46,7 +46,7 @@ import argparse
 import json
 from typing import TYPE_CHECKING, Any
 
-from src.eval.types import HealthVerdict
+from src.eval.types import HealthVerdict, RateSummary
 from src.eval.verify_router_health import (
     DEFAULT_THRESHOLD,
     run_probes,
@@ -110,7 +110,7 @@ def check_health(
     }
 
 
-def three_valued_verdict(summary: dict, *, threshold: float) -> HealthVerdict:
+def three_valued_verdict(summary: RateSummary, *, threshold: float) -> HealthVerdict:
     """PASS / FAIL / INCONCLUSIVE on the silent-empty rate.
 
     The router's binary :func:`~src.eval.verify_router_health.verdict` compares a
