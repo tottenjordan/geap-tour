@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import sys
 import time
 from datetime import datetime
@@ -42,6 +43,8 @@ from src.eval.eval_experiment import (
 )
 from src.eval.stats import all_metrics_passed
 from src.eval.types import BatchResult, MetricDetail
+
+logger = logging.getLogger(__name__)
 
 # Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
 # and result loading before any inference/evaluation runs. See _sdk_patches.py.
@@ -532,7 +535,11 @@ def _run_single_agent_eval(
             for item in evaluation_run.evaluation_items or []:
                 items.append(dict(item) if not isinstance(item, dict) else item)
     except Exception:
-        pass
+        # Swallowing is right (a shape change in the SDK's items must not fail a
+        # scored run) but the result was indistinguishable from an SDK that returned
+        # no items: `items=[]`, `item_count=0`, no trace. Callers read those as
+        # facts about the run.
+        logger.debug("per-item extraction failed; items will be empty", exc_info=True)
 
     # Print agent summary
     print(f"\n  Results for {agent_name} ({total_items} items):")

@@ -23,6 +23,7 @@ from src.config import (
     EXPENSE_MCP_SERVER,
     EXPENSE_MCP_URL,
     GCP_PROJECT_ID,
+    GCP_STAGING_BUCKET,
     SEARCH_MCP_SERVER,
     SEARCH_MCP_URL,
 )
@@ -79,7 +80,9 @@ def _wire(task):
 
 @dsl.pipeline(
     name="geap-optimize-pipeline",
-    pipeline_root="gs://geap-tour-staging-v2/pipeline-root",
+    # See eval_pipeline: derived from config so compiling this module directly does
+    # not bake one project's bucket into the spec.
+    pipeline_root=f"gs://{GCP_STAGING_BUCKET}/pipeline-root",
 )
 def optimize_pipeline(
     agent_opt_module: str = "src/agents/coordinator",

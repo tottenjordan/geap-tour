@@ -382,3 +382,58 @@ class TestDefensivePathsDoNotCrashOrLie:
             {"turns": [{"events": [{"content": {"parts": [{"text": "hi"}]}}]}]}
         )
         assert len(events) == 1
+
+
+class TestAnItemExtractionFailureLeavesATrace:
+    """`items=[]` and `item_count=0` are read as facts about the run.
+
+    Per-item extraction is wrapped in `try/except: pass`, and swallowing is right —
+    a shape change in the SDK's `evaluation_items` must not fail a run whose scores
+    are already computed. But the swallowed result was *identical* to a run the SDK
+    genuinely returned no items for: empty list, zero count, no error, no log. The
+    scores stay trustworthy either way; the diagnosis of "why are there no items"
+    was impossible.
+    """
+
+    class _ExplodingItems(_FakeEvals):
+        """An item the extraction cannot convert — the realistic SDK shape change.
+
+        Note the failure had to be chosen carefully: raising ``AttributeError`` from
+        ``evaluation_items`` does *not* reach the swallow at all, because the guard
+        above it is ``hasattr(...)``, which catches ``AttributeError`` and returns
+        False. The code then skips the block entirely and still reports
+        ``items=[]`` — a second, quieter path to the same indistinguishable result.
+        An object ``dict()`` refuses is what actually lands in the ``except``.
+        """
+
+        def get_evaluation_run(self, name=None, include_evaluation_items=False):
+            run = super().get_evaluation_run(name=name)
+            return SimpleNamespace(
+                **{**run.__dict__, "evaluation_items": [object()]},
+            )
+
+    def _run(self, caplog, offline):
+        import logging
+
+        metrics = {"runtime_0/safety_v1/AVERAGE": 0.9}
+        with caplog.at_level(logging.DEBUG, logger="src.eval.multi_agent_batch_eval"):
+            result = mabe._run_single_agent_eval(
+                client=_FakeClient(self._ExplodingItems(_df(["a"]), metrics)),
+                agent_name="coordinator_agent",
+                agent_resource_name="projects/p/locations/l/reasoningEngines/1",
+                score_threshold=3.0,
+            )
+        return result, caplog
+
+    def test_the_scores_survive_the_failure(self, caplog, offline):
+        """Behaviour must not change: the swallow is load-bearing."""
+        result, _ = self._run(caplog, offline)
+        assert result["status"] in {"PASSED", "FAILED"}
+        assert result["metrics"], "an item-extraction failure must not lose the scores"
+
+    def test_the_failure_is_logged_with_its_exception(self, caplog, offline):
+        _result, log = self._run(caplog, offline)
+        debug = [r for r in log.records if r.levelno == 10]
+        assert debug, "the extraction failure left no trace at all"
+        assert any("per-item extraction failed" in r.getMessage() for r in debug)
+        assert any(r.exc_info for r in debug), "logged without the exception"
