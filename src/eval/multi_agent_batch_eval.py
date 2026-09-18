@@ -41,6 +41,7 @@ from src.eval.eval_experiment import (
     eval_run_labels,
 )
 from src.eval.stats import all_metrics_passed
+from src.eval.types import BatchResult, MetricDetail
 
 # Fix the evals SDK for Gemini 3.x responses (thought-signature function calls)
 # and result loading before any inference/evaluation runs. See _sdk_patches.py.
@@ -336,7 +337,7 @@ def _run_single_agent_eval(
     agent_resource_name: str,
     score_threshold: float,
     limit: int | None = None,
-) -> dict:
+) -> BatchResult:
     """Run batch evaluation for a single agent."""
     cases = _select_cases(agent_name, limit)
     metrics = get_metrics(agent_name)
@@ -505,7 +506,7 @@ def _run_single_agent_eval(
     # Extract AVERAGE scores (keys like "agent_engine_0/safety_v1/AVERAGE")
     # API returns scores on 0-1 scale; normalize threshold accordingly
     normalized_threshold = score_threshold / 5.0
-    metric_results = {}
+    metric_results: dict[str, MetricDetail] = {}
     for key, value in raw_metrics.items():
         if "/AVERAGE" in key:
             avg = float(value)

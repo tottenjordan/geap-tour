@@ -44,6 +44,7 @@ import json
 from collections.abc import Mapping  # runtime use: isinstance in _score_of
 from typing import TYPE_CHECKING
 
+from src.eval.types import BatchResult, MetricDetail, PublishedScores
 from src.observability.metrics import MetricsWriter, write_router_quality_scores
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ METRIC_ALIASES: dict[str, str] = {
 }
 
 
-def extract_router_quality(batch_result: Mapping | None) -> dict[str, float]:
+def extract_router_quality(batch_result: BatchResult | None) -> PublishedScores:
     """Pull the monitored 1-5 scores out of a ``run_agent_eval`` result.
 
     Handles the unstable candidate prefix (``runtime_0/`` on aiplatform 2.x,
@@ -105,7 +106,7 @@ def extract_router_quality(batch_result: Mapping | None) -> dict[str, float]:
     return scores
 
 
-def _score_of(value) -> float | None:
+def _score_of(value: MetricDetail | float | None) -> float | None:
     """The numeric score, whether the batch stored a scalar or a detail dict.
 
     ``_run_single_agent_eval`` stores ``{"score", "threshold", "passed"}`` per
@@ -125,7 +126,7 @@ def _score_of(value) -> float | None:
 
 
 def publish_router_quality(
-    batch_result: Mapping | None,
+    batch_result: BatchResult | None,
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
 ) -> dict[str, float]:
@@ -138,7 +139,7 @@ def publish_router_quality(
     return scores
 
 
-def run_batch(limit: int | None = None, agent_id: str | None = None) -> dict:
+def run_batch(limit: int | None = None, agent_id: str | None = None) -> BatchResult:
     """Score the router with the existing batch eval. Costs engine calls."""
     import vertexai
     from agentplatform import Client
@@ -169,7 +170,7 @@ class _NoopMetricClient:
         return None
 
 
-def _load_batch(path: str) -> dict:
+def _load_batch(path: str) -> BatchResult:
     """Read a ``run_all_evals`` artifact and find the router's block."""
     with open(path) as fh:
         data = json.load(fh)
