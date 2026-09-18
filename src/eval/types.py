@@ -173,6 +173,13 @@ class BatchResult(TypedDict):
     """
 
     agent: NotRequired[str]
+    #: The engine resource name that actually answered. Distinct from ``agent``,
+    #: which names an *evalset*: ``travel_agent``/``expense_agent`` have no
+    #: deployment of their own and are scored against the coordinator. Carried on
+    #: every branch — "which engine refused to grade" is the first question asked of
+    #: a FAILED run, and ``publish_router_quality.run_batch()`` consumes this record
+    #: directly, with no run-level ``agent_engines`` map to fall back on.
+    engine: NotRequired[str]
     status: NotRequired[str]
     metrics: NotRequired[dict[str, MetricDetail]]
     error: NotRequired[str]
