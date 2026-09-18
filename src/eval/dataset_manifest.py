@@ -40,6 +40,7 @@ import json
 from pathlib import Path
 
 from src.eval.dataset_integrity import EVAL_EVALSETS, TRAIN_EVALSETS, resolve
+from src.eval.types import DatasetDescription
 
 MANIFEST_PATH = "src/eval/data/dataset_manifest.json"
 
@@ -98,7 +99,7 @@ def checksum(path: str | Path) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def describe(path: str | Path) -> dict:
+def describe(path: str | Path) -> DatasetDescription:
     """Current on-disk facts for one evalset."""
     return {"checksum": checksum(path), "n_cases": len(_cases(path))}
 
