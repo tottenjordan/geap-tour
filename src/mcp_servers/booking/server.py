@@ -14,11 +14,25 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 try:
+    from .mock_db import (
+        BookingList,
+        BookingRecord,
+        ToolError,
+        create_booking,
+        get_booking,
+        list_bookings,
+    )
     from .mock_db import cancel_booking as _cancel
-    from .mock_db import create_booking, get_booking, list_bookings
 except ImportError:
+    from mock_db import (  # ty: ignore[unresolved-import]  # ty: ignore[unresolved-import]
+        BookingList,
+        BookingRecord,
+        ToolError,
+        create_booking,
+        get_booking,
+        list_bookings,
+    )
     from mock_db import cancel_booking as _cancel  # ty: ignore[unresolved-import]
-    from mock_db import create_booking, get_booking, list_bookings  # ty: ignore[unresolved-import]
 
 mcp = FastMCP("booking-mcp", instructions="Book and manage flight and hotel reservations.")
 
@@ -59,7 +73,7 @@ DESTRUCTIVE_TOOL = ToolAnnotations(
 
 
 @mcp.tool(annotations=ADDITIVE_TOOL)
-def book_flight(flight_id: str, passenger_name: str) -> dict:
+def book_flight(flight_id: str, passenger_name: str) -> BookingRecord:
     """Book a flight for a passenger.
 
     Args:
@@ -70,7 +84,7 @@ def book_flight(flight_id: str, passenger_name: str) -> dict:
 
 
 @mcp.tool(annotations=ADDITIVE_TOOL)
-def book_hotel(hotel_id: str, guest_name: str, checkin: str, checkout: str) -> dict:
+def book_hotel(hotel_id: str, guest_name: str, checkin: str, checkout: str) -> BookingRecord:
     """Book a hotel for a guest.
 
     Args:
@@ -91,7 +105,7 @@ def book_hotel(hotel_id: str, guest_name: str, checkin: str, checkout: str) -> d
 
 
 @mcp.tool(annotations=DESTRUCTIVE_TOOL)
-def cancel_booking(booking_id: str) -> dict:
+def cancel_booking(booking_id: str) -> BookingRecord | ToolError:
     """Cancel an existing booking.
 
     Args:
@@ -104,7 +118,7 @@ def cancel_booking(booking_id: str) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
-def get_booking_details(booking_id: str) -> dict:
+def get_booking_details(booking_id: str) -> BookingRecord | ToolError:
     """Get details of an existing booking.
 
     Args:
@@ -117,7 +131,7 @@ def get_booking_details(booking_id: str) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
-def list_all_bookings(limit: int = 20) -> dict:
+def list_all_bookings(limit: int = 20) -> BookingList:
     """List the most recent bookings in the system.
 
     Returns at most `limit` bookings (capped at 20), newest first, plus
