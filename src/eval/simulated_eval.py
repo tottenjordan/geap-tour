@@ -331,10 +331,10 @@ def run_simulated_eval(
         print(f"  ERROR: {err}")
         return False
 
-    evaluation_run = client.evals.get_evaluation_run(
-        name=evaluation_run.name,
-        include_evaluation_items=True,
-    )
+    # See multi_agent_batch_eval: the flag costs N GCS reads and prints load
+    # failures for data this function never touches. Summary metrics are identical
+    # without it (verified live).
+    evaluation_run = client.evals.get_evaluation_run(name=evaluation_run.name)
 
     raw_metrics: dict = {}
     try:
