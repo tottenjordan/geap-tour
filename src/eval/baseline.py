@@ -18,6 +18,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from src.eval.types import RegressionCheck
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -68,7 +70,7 @@ def detect_regression(
     direction: str = "LT",
     z_threshold: float = DEFAULT_Z_THRESHOLD,
     min_baseline: int = MIN_BASELINE,
-) -> dict:
+) -> RegressionCheck:
     """Flag whether ``current`` is an anomalous move away from its ``history``.
 
     ``direction`` mirrors the metric's alert direction so the check is one-sided
