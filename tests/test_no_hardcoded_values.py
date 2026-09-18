@@ -441,3 +441,86 @@ class TestGuardsAreNotVacuous:
             TestShellScriptsAreEnvDriven, "_shell_scripts", staticmethod(lambda: [script])
         )
         TestShellScriptsAreEnvDriven().test_no_shell_script_embeds_an_engine_id()
+
+
+class TestNoHardcodedGcsBucket:
+    """A `gs://` literal in a pipeline root is the same staleness class as a
+    hardcoded engine id, minus the error message.
+
+    `eval_pipeline.py` and `optimize_pipeline.py` both declared
+    ``pipeline_root="gs://geap-tour-staging-v2/pipeline-root"`` while importing from
+    `src.config` two lines above. It happened to be harmless: `submit.py` passes a
+    config-derived root that overrides the decorator's. So the literal only bites
+    where nothing overrides it — `kfp.compiler` compiling the module directly, or
+    any submitter that trusts the pipeline's own declared root. There it writes
+    artifacts into a bucket belonging to one specific project, and a project that
+    cannot write there gets a permission error that names a bucket nobody
+    configured.
+
+    The bucket already has a config home: `config.GCP_STAGING_BUCKET`, whose default
+    is derived from the project id.
+    """
+
+    @staticmethod
+    def _literal_gcs_urls(path: pathlib.Path):
+        """`gs://...` strings that are genuinely constant.
+
+        `_string_constants` cannot be reused directly: in `f"gs://{BUCKET}/x"` the
+        prefix is an `ast.Constant` node **inside** a `JoinedStr`, so a naive walk
+        reports every correctly-derived URL in the package as a violation. The first
+        draft of this guard did exactly that and flagged `submit.py` — which builds
+        its root from config and is the thing the fix imitates. Excluding f-string
+        parts is what makes the check mean "hardcoded".
+        """
+        tree = ast.parse(path.read_text())
+        interpolated = {
+            id(part)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.JoinedStr)
+            for part in node.values
+        }
+        return [
+            (node.lineno, node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("gs://")
+            and id(node) not in interpolated
+        ]
+
+    def test_no_pipeline_declares_a_literal_gcs_bucket(self):
+        offenders = [
+            f"{_rel(path)}:{lineno}: {value}"
+            for path in sorted((SRC / "pipelines").rglob("*.py"))
+            for lineno, value in self._literal_gcs_urls(path)
+        ]
+        assert not offenders, "hardcoded bucket in a pipeline:\n" + "\n".join(offenders)
+
+    def test_the_detector_still_catches_a_real_literal(self, tmp_path):
+        """Guards the guard. The f-string exclusion above is exactly the kind of
+        loosening that quietly turns a check into a no-op — this pins that a
+        genuinely hardcoded URL is still reported."""
+        f = tmp_path / "p.py"
+        f.write_text('R = "gs://someones-bucket/pipeline-root"\nOK = f"gs://{B}/x"\n')
+        found = [v for _l, v in self._literal_gcs_urls(f)]
+        assert found == ["gs://someones-bucket/pipeline-root"]
+
+    @pytest.mark.parametrize(
+        "module", ["src/pipelines/eval_pipeline.py", "src/pipelines/optimize_pipeline.py"]
+    )
+    def test_the_pipeline_root_is_derived_from_config(self, module):
+        """Absence of a literal is not presence of the config path — a root deleted
+        outright would also pass the check above."""
+        src = (_REPO_ROOT / module).read_text()
+        assert "GCP_STAGING_BUCKET" in src, f"{module} does not read the bucket from config"
+        assert re.search(r"pipeline_root=f?\"gs://\{GCP_STAGING_BUCKET\}", src), (
+            f"{module}'s pipeline_root is not built from GCP_STAGING_BUCKET"
+        )
+
+    def test_the_decorator_still_evaluates_at_import(self):
+        """KFP evaluates decorator arguments at import time, so a NameError here is
+        an import-time crash of the whole pipeline module, not a runtime one."""
+        from src.config import GCP_STAGING_BUCKET
+        from src.pipelines.eval_pipeline import eval_pipeline
+
+        assert GCP_STAGING_BUCKET in str(eval_pipeline.pipeline_spec)

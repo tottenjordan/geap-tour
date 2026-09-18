@@ -13,7 +13,6 @@ environment; param-channel factors (eval fidelity) become CLI flags.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -21,6 +20,7 @@ import sys
 from src.config import GCP_STAGING_BUCKET
 from src.doe.design import DesignPoint
 from src.doe.factors import Factor, requires_fresh_deploy
+from src.eval.artifacts import write_json_atomic
 
 _JOB_PREFIX = "Submitted PipelineJob: "
 
@@ -153,10 +153,10 @@ def write_manifest(manifest: dict, out_dir: str, upload_gcs: bool = True) -> str
     stays truly side-effect-free (the local manifest is still a useful plan
     preview; the GCS write is deferred to a real ``--execute`` launch).
     """
-    os.makedirs(out_dir, exist_ok=True)
-    local_path = os.path.join(out_dir, "manifest.json")
-    with open(local_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+    # Atomic: this manifest records the design points a DOE launched, and
+    # open(...,"w") truncates before writing — a Ctrl-C mid-write destroys the
+    # previous one too. See src/eval/artifacts.py.
+    local_path = str(write_json_atomic(os.path.join(out_dir, "manifest.json"), manifest))
 
     if not upload_gcs:
         print(f"[dry-run] manifest written locally → {local_path} (GCS upload skipped)")

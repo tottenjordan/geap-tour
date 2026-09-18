@@ -43,11 +43,16 @@ def test_generate_with_retry_retries_on_empty_then_succeeds() -> None:
         return r
 
     slept: list[float] = []
-    out = generate_with_retry(call, max_attempts=3, backoff_s=1.0, sleep=slept.append)
+    out = generate_with_retry(
+        call, max_attempts=3, backoff_s=1.0, sleep=slept.append, jitter=lambda: 0.0
+    )
 
     assert out == "Score: 5"
     assert calls["n"] == 3
-    assert slept == [1.0, 2.0]  # linear backoff between the 3 attempts
+    # Exponential since 2026-09-18 (was linear). At three attempts the first two
+    # delays coincide with the old policy — 1s, 2s — so pin jitter to 0 and let
+    # TestBackoffIsExponentialWithJitter assert the sequence where they diverge.
+    assert slept == [1.0, 2.0]
 
 
 def test_generate_with_retry_retries_on_exception_then_succeeds() -> None:
@@ -169,3 +174,85 @@ def test_build_judge_generate_fn_targets_global_for_gemini_3() -> None:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+class TestBackoffIsExponentialWithJitter:
+    """The judge path is the one that fans out, and it had the weaker retry.
+
+    `src/models/quota_retry.py` already does exponential (2s/4s) for the same
+    failure class — a rate-limited Vertex call. `generate_with_retry` did
+    `backoff_s * attempt`, i.e. LINEAR, and had no jitter at all. That is the wrong
+    way round: `judge_panel` runs its judges through a `ThreadPoolExecutor`
+    (:179 and :229), so several workers hit the same quota and, without jitter,
+    retry in lockstep and collide again.
+    """
+
+    @staticmethod
+    def _always_fails():
+        raise RuntimeError("429")
+
+    def test_the_delay_doubles_rather_than_increments(self):
+        """Linear gave 1s, 2s, 3s. Exponential gives 1s, 2s, 4s — the difference is
+        whether a sustained rate limit ever gets time to clear."""
+        from src.eval.judge_client import generate_with_retry
+
+        slept: list[float] = []
+        generate_with_retry(
+            self._always_fails,
+            max_attempts=4,
+            backoff_s=1.0,
+            sleep=slept.append,
+            jitter=lambda: 0.0,
+        )
+        assert slept == [1.0, 2.0, 4.0]
+
+    def test_jitter_desynchronises_concurrent_workers(self):
+        """Without it, N workers throttled at the same instant all wake at the same
+        instant. The jitter is additive and bounded, so it spreads the retry without
+        changing the growth curve."""
+        from src.eval.judge_client import generate_with_retry
+
+        slept: list[float] = []
+        generate_with_retry(
+            self._always_fails,
+            max_attempts=3,
+            backoff_s=1.0,
+            sleep=slept.append,
+            jitter=lambda: 0.25,
+        )
+        assert slept == [1.25, 2.25]
+
+    def test_jitter_is_on_by_default(self):
+        """A default of zero jitter would leave the thundering herd in place for
+        every caller that does not know to ask."""
+        import inspect
+
+        from src.eval.judge_client import generate_with_retry
+
+        default = inspect.signature(generate_with_retry).parameters["jitter"].default
+        assert default is not None
+        samples = {default() for _ in range(20)}
+        assert len(samples) > 1, "the default jitter must actually vary"
+
+    def test_a_success_still_costs_no_sleep(self):
+        """Backoff must not apply to the happy path."""
+        from src.eval.judge_client import generate_with_retry
+
+        slept: list[float] = []
+        out = generate_with_retry(lambda: type("R", (), {"text": "verdict"})(), sleep=slept.append)
+        assert out == "verdict"
+        assert slept == []
+
+    def test_the_last_attempt_does_not_sleep(self):
+        """Sleeping after the final try delays the caller for nothing."""
+        from src.eval.judge_client import generate_with_retry
+
+        slept: list[float] = []
+        generate_with_retry(
+            self._always_fails,
+            max_attempts=2,
+            backoff_s=1.0,
+            sleep=slept.append,
+            jitter=lambda: 0.0,
+        )
+        assert len(slept) == 1

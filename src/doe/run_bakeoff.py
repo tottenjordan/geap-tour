@@ -40,7 +40,6 @@ Examples::
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -50,6 +49,7 @@ from src.doe.bakeoff_report import (
     online_from_grouped_monitors,
 )
 from src.doe.factors import get_factors
+from src.eval.artifacts import write_json_atomic
 
 # The DOE main-effect direction fixes the roles: gemini (coded -1) = baseline,
 # claude (coded +1) = candidate, so "candidate wins" reads as "Claude beats Gemini".
@@ -300,9 +300,10 @@ def _write_manifest(
             },
         ],
     }
-    os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
+    # Atomic: this manifest is the ONLY record of the engines this run created,
+    # and open(...,"w") truncates before writing — a Ctrl-C mid-write loses the
+    # ids and leaks billing engines. See src/eval/artifacts.py.
+    write_json_atomic(os.path.join(out_dir, "manifest.json"), manifest)
     return manifest
 
 

@@ -304,7 +304,12 @@ def _emit_block_telemetry(reason: str, metrics_writer=None) -> None:
         if span is not None and span.is_recording():
             span.add_event("guardrail.blocked", {"guardrail.reason": reason})
     except Exception:
-        pass
+        # Swallowed, but no longer silent. `agent_armor/blocked` is an ALERTED
+        # series; a permanently broken writer means it is simply never written, and
+        # a series nothing writes looks exactly like a series with nothing to
+        # report. debug, not warning: a block is already a hot path and this must
+        # not become its own noise source.
+        logger.debug("guardrail block span event failed", exc_info=True)
 
     try:
         writer = metrics_writer
@@ -314,7 +319,7 @@ def _emit_block_telemetry(reason: str, metrics_writer=None) -> None:
             writer = MetricsWriter()
         writer.write_gauge(ARMOR_BLOCKED_METRIC, 1, labels={"reason": reason})
     except Exception:
-        pass
+        logger.debug("guardrail block metric write failed", exc_info=True)
 
 
 def guardrail_with_telemetry(callback_context=None, metrics_writer=None, **kwargs):

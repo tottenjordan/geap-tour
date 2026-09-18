@@ -382,3 +382,248 @@ class TestDefensivePathsDoNotCrashOrLie:
             {"turns": [{"events": [{"content": {"parts": [{"text": "hi"}]}}]}]}
         )
         assert len(events) == 1
+
+
+class TestPerItemResultsAreActuallyRead:
+    """`items` was always `[]` — the field it read has never existed.
+
+    The extraction asked for `evaluation_run.evaluation_items`. The SDK's
+    `EvaluationRun` has no such field; the per-item data lives in
+    `evaluation_item_results`, whose own description says it "is only populated
+    when include_evaluation_items is set to True" — which this code already passes.
+    `EvaluationRun` is a pydantic model with ``extra='forbid'``, so the attribute
+    cannot even be created dynamically from a server response: `hasattr` is False
+    on every run, forever, and the `hasattr` guard turns that into a silent no-op
+    rather than an `AttributeError`.
+
+    Wrong since the module's first commit (1b7ee9f), and it cost something real.
+    `docs/notes/coordinator-tool-use-quality.md` recorded the symptom and
+    attributed it to the platform — "the SDK did not persist per-item rationales" —
+    so the per-item "why 1/3" rationale that investigation wanted was declared
+    unavailable. It was in `evaluation_item_results` the whole time, explanations
+    included.
+    """
+
+    class _WithItemResults(_FakeEvals):
+        """Shaped like the real response: eval_case_results -> candidates -> metrics."""
+
+        def get_evaluation_run(self, name=None, include_evaluation_items=False):
+            run = super().get_evaluation_run(name=name)
+            metric = SimpleNamespace(score=1.0, explanation="No policies were violated.")
+            case = SimpleNamespace(
+                eval_case_index=0,
+                response_candidate_results=[SimpleNamespace(metric_results={"safety_v1": metric})],
+            )
+            return SimpleNamespace(
+                **{
+                    **run.__dict__,
+                    "evaluation_item_results": SimpleNamespace(eval_case_results=[case]),
+                }
+            )
+
+    def _run(self, evals):
+        return mabe._run_single_agent_eval(
+            client=_FakeClient(evals),
+            agent_name="coordinator_agent",
+            agent_resource_name="projects/p/locations/l/reasoningEngines/1",
+            score_threshold=3.0,
+        )
+
+    def test_the_items_are_extracted(self, offline):
+        result = self._run(self._WithItemResults(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9}))
+        assert result["item_count"] == 1, "per-item results were requested and dropped"
+        assert result["items"]
+
+    def test_the_per_metric_explanation_survives(self, offline):
+        """The rationale is the whole reason to pay for `include_evaluation_items`.
+        An item count with no 'why' would not have unblocked the investigation that
+        went looking for it."""
+        result = self._run(self._WithItemResults(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9}))
+        safety = result["items"][0]["metrics"]["safety_v1"]
+        assert safety["score"] == 1.0
+        assert safety["explanation"] == "No policies were violated."
+
+    def test_a_rubric_metrics_why_is_captured_too(self, offline):
+        """`explanation` is None for rubric-based metrics — their reasoning is in
+        `rubric_verdicts`. Measured on a real run: 15 of 30 metric results each way.
+        `tool_use_quality_v1` is on the verdicts side, so reading only `explanation`
+        would have shipped a fix that still answered nothing about the metric that
+        prompted the investigation."""
+        verdict = SimpleNamespace(
+            evaluated_rubric=SimpleNamespace(
+                content=SimpleNamespace(property=SimpleNamespace(description="Calls a tool."))
+            ),
+            verdict=False,
+            reasoning="The agent claimed a booking with no book_flight call.",
+        )
+        detail = SimpleNamespace(
+            score=0.33, explanation=None, rubric_verdicts=[verdict], error_message=None
+        )
+        case = SimpleNamespace(
+            eval_case_index=0,
+            response_candidate_results=[
+                SimpleNamespace(metric_results={"tool_use_quality_v1": detail})
+            ],
+        )
+
+        class _Rubric(_FakeEvals):
+            def get_evaluation_run(self, name=None, include_evaluation_items=False):
+                run = super().get_evaluation_run(name=name)
+                return SimpleNamespace(
+                    **{
+                        **run.__dict__,
+                        "evaluation_item_results": SimpleNamespace(eval_case_results=[case]),
+                    }
+                )
+
+        result = self._run(_Rubric(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9}))
+        got = result["items"][0]["metrics"]["tool_use_quality_v1"]["rubric_verdicts"]
+        assert got == [
+            {
+                "rubric": "Calls a tool.",
+                "verdict": False,
+                "reasoning": "The agent claimed a booking with no book_flight call.",
+            }
+        ]
+
+    def test_items_are_json_serialisable(self, offline):
+        """`items` is written straight into the run's result JSON with
+        `default=str`. A pydantic/proto object would stringify into an unusable
+        blob — silently, since `default=str` never raises."""
+        import json
+
+        result = self._run(self._WithItemResults(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9}))
+        assert json.loads(json.dumps(result["items"])) == result["items"]
+
+    def test_a_run_without_item_results_is_still_empty_not_broken(self, offline):
+        """`_FakeEvals` has no `evaluation_item_results` at all — the shape the old
+        code produced for every run. Must be an empty list, not a crash."""
+        result = self._run(_FakeEvals(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9}))
+        assert result["items"] == []
+        assert result["item_count"] == 0
+
+
+class TestAnItemExtractionFailureLeavesATrace:
+    """`items=[]` and `item_count=0` are read as facts about the run.
+
+    Per-item extraction is wrapped in `try/except: pass`, and swallowing is right —
+    a shape change in the SDK's `evaluation_items` must not fail a run whose scores
+    are already computed. But the swallowed result was *identical* to a run the SDK
+    genuinely returned no items for: empty list, zero count, no error, no log. The
+    scores stay trustworthy either way; the diagnosis of "why are there no items"
+    was impossible.
+    """
+
+    class _ExplodingItems(_FakeEvals):
+        """`metric_results` is not a mapping — a plausible SDK shape change.
+
+        The failure has to be chosen with care, because the extraction is a chain of
+        tolerant `getattr(..., None) or []` calls that absorbs most bad shapes into
+        an empty list. That tolerance is deliberate, and it is exactly why the log
+        matters: the quiet paths here outnumber the loud ones.
+        """
+
+        def get_evaluation_run(self, name=None, include_evaluation_items=False):
+            run = super().get_evaluation_run(name=name)
+            case = SimpleNamespace(
+                eval_case_index=0,
+                response_candidate_results=[SimpleNamespace(metric_results=42)],
+            )
+            return SimpleNamespace(
+                **{
+                    **run.__dict__,
+                    "evaluation_item_results": SimpleNamespace(eval_case_results=[case]),
+                }
+            )
+
+    def _run(self, caplog, offline):
+        import logging
+
+        metrics = {"runtime_0/safety_v1/AVERAGE": 0.9}
+        with caplog.at_level(logging.DEBUG, logger="src.eval.multi_agent_batch_eval"):
+            result = mabe._run_single_agent_eval(
+                client=_FakeClient(self._ExplodingItems(_df(["a"]), metrics)),
+                agent_name="coordinator_agent",
+                agent_resource_name="projects/p/locations/l/reasoningEngines/1",
+                score_threshold=3.0,
+            )
+        return result, caplog
+
+    def test_the_scores_survive_the_failure(self, caplog, offline):
+        """Behaviour must not change: the swallow is load-bearing."""
+        result, _ = self._run(caplog, offline)
+        assert result["status"] in {"PASSED", "FAILED"}
+        assert result["metrics"], "an item-extraction failure must not lose the scores"
+
+    def test_the_failure_is_logged_with_its_exception(self, caplog, offline):
+        _result, log = self._run(caplog, offline)
+        debug = [r for r in log.records if r.levelno == 10]
+        assert debug, "the extraction failure left no trace at all"
+        assert any("per-item extraction failed" in r.getMessage() for r in debug)
+        assert any(r.exc_info for r in debug), "logged without the exception"
+
+
+class TestAFailedRubricVerdictIsNotNone:
+    """A failed verdict arrives as `None`, never `False`.
+
+    Protobuf omits a default-valued `false`, so the absent field deserializes to
+    `None`. Measured on a live run: 103 verdicts, 57 `True`, 46 `None`, **zero**
+    `False` — while `true_count / len(verdicts)` equalled the metric score exactly
+    in all 21 case/metric pairs. `None` is a failure, not an unknown.
+
+    Passing it through unchanged would rebuild the bug this whole extraction was
+    fixed for, one layer up: the obvious `if v["verdict"] is False` finds no
+    failures on a case that scored 0.167.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [(None, False), (True, True), (False, False)],
+        ids=["none-means-failed", "true-passes", "explicit-false-if-sdk-changes"],
+    )
+    def test_the_verdict_is_normalised_to_a_bool(self, raw, expected):
+        from src.eval.multi_agent_batch_eval import _extract_item_results
+
+        verdict = SimpleNamespace(evaluated_rubric=None, verdict=raw, reasoning="r")
+        detail = SimpleNamespace(
+            score=0.5, explanation=None, rubric_verdicts=[verdict], error_message=None
+        )
+        run = SimpleNamespace(
+            evaluation_item_results=SimpleNamespace(
+                eval_case_results=[
+                    SimpleNamespace(
+                        eval_case_index=0,
+                        response_candidate_results=[SimpleNamespace(metric_results={"m": detail})],
+                    )
+                ]
+            )
+        )
+        got = _extract_item_results(run)[0]["metrics"]["m"]["rubric_verdicts"][0]["verdict"]
+        assert got is expected
+
+    def test_counting_failures_works_on_the_extracted_shape(self):
+        """The actual downstream use. This is what silently returned 0 before."""
+        from src.eval.multi_agent_batch_eval import _extract_item_results
+
+        verdicts = [
+            SimpleNamespace(evaluated_rubric=None, verdict=v, reasoning="r")
+            for v in (True, None, None)
+        ]
+        detail = SimpleNamespace(
+            score=1 / 3, explanation=None, rubric_verdicts=verdicts, error_message=None
+        )
+        run = SimpleNamespace(
+            evaluation_item_results=SimpleNamespace(
+                eval_case_results=[
+                    SimpleNamespace(
+                        eval_case_index=0,
+                        response_candidate_results=[SimpleNamespace(metric_results={"m": detail})],
+                    )
+                ]
+            )
+        )
+        got = _extract_item_results(run)[0]["metrics"]["m"]
+        failed = [v for v in got["rubric_verdicts"] if v["verdict"] is False]
+        assert len(failed) == 2, "the failures must be countable"
+        passed = len(got["rubric_verdicts"]) - len(failed)
+        assert passed / len(got["rubric_verdicts"]) == pytest.approx(got["score"])

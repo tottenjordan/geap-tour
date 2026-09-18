@@ -20,6 +20,7 @@ from kfp import dsl  # ty: ignore[unresolved-import]
 from src.config import (
     BOOKING_MCP_SERVER,
     EXPENSE_MCP_SERVER,
+    GCP_STAGING_BUCKET,
     ROUTER_ENGINE_ID,
     SEARCH_MCP_SERVER,
 )
@@ -62,7 +63,11 @@ def _wire(task):
 
 @dsl.pipeline(
     name="geap-eval-pipeline",
-    pipeline_root="gs://geap-tour-staging-v2/pipeline-root",
+    # Derived, not literal. ``submit.py`` passes a config-derived root that wins over
+    # this one, so a hardcoded bucket here was invisible in the normal path and only
+    # surfaced where nothing overrides it — ``kfp.compiler`` run against the module,
+    # or any other submitter. There it wrote into one specific project's bucket.
+    pipeline_root=f"gs://{GCP_STAGING_BUCKET}/pipeline-root",
 )
 def eval_pipeline(
     agent_id: str = "",
