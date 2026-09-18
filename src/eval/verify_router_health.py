@@ -35,9 +35,10 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.eval.stats import wilson_ci
+from src.eval.types import HealthVerdict, RateSummary
 from src.models.quota_retry import EMPTY_RESPONSE_PREFIX, THROTTLED_RESPONSE_PREFIX
 
 if TYPE_CHECKING:
@@ -109,7 +110,7 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
     return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (rank - lo)
 
 
-def _rates(outcomes: list[str]) -> dict[str, Any]:
+def _rates(outcomes: list[str]) -> RateSummary:
     n = len(outcomes)
     silent = sum(1 for o in outcomes if o == "EMPTY")
     full = sum(1 for o in outcomes if o == "FULL")
@@ -123,7 +124,7 @@ def _rates(outcomes: list[str]) -> dict[str, Any]:
     }
 
 
-def summarize(results: Sequence[dict]) -> dict[str, Any]:
+def summarize(results: Sequence[dict]) -> RateSummary:
     """Aggregate per-probe results into counts, rates (with CI) and latencies.
 
     ``empty_rate`` counts **silent** empties only — a labelled throttle/empty is
@@ -150,18 +151,23 @@ def summarize(results: Sequence[dict]) -> dict[str, Any]:
     return summary
 
 
-def verdict(summary: dict, *, threshold: float = DEFAULT_THRESHOLD) -> dict[str, Any]:
+def verdict(summary: RateSummary, *, threshold: float = DEFAULT_THRESHOLD) -> HealthVerdict:
     """PASS/FAIL on the silent-empty rate. Zero samples never passes."""
     n = summary.get("n", 0)
     rate = summary.get("empty_rate", 0.0)
+    passed = bool(n) and rate <= threshold
     return {
-        "passed": bool(n) and rate <= threshold,
+        "passed": passed,
+        # Two-valued here, deliberately: this is the router's own gate and it has
+        # always been PASS/FAIL. `verify_coordinator_health.three_valued_verdict`
+        # is the one that adds INCONCLUSIVE, and it consumes the same RateSummary.
+        "status": "PASS" if passed else "FAIL",
         "threshold": threshold,
         "reason": "no samples" if not n else f"silent empty rate {rate:.1%} vs {threshold:.1%}",
     }
 
 
-def format_report(summary: dict, decision: dict) -> str:
+def format_report(summary: RateSummary, decision: HealthVerdict) -> str:
     lines = [
         "=" * 60,
         "ROUTER HEALTH",
