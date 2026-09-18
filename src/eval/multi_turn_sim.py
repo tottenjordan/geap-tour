@@ -53,6 +53,14 @@ import argparse
 import json
 from typing import TYPE_CHECKING, Any
 
+from src.eval.types import (
+    ConversationSummary,
+    ConversationTurn,
+    DiscriminationResult,
+    MultiTurnScore,
+    SimulatedConversation,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -126,7 +134,9 @@ def parse_simulator_reply(text: str | None) -> str | None:
     return cleaned or None
 
 
-def build_turn(turn_index: int, user_message: str, agent_events: Sequence[dict]) -> dict:
+def build_turn(
+    turn_index: int, user_message: str, agent_events: Sequence[dict]
+) -> ConversationTurn:
     """One ``ConversationTurn``: the user's message followed by the agent's events.
 
     The user event is synthesized because the engine's stream only returns the
@@ -168,7 +178,7 @@ def simulate_conversation(
     create_session_fn: Callable[..., str] | None = None,
     stream_fn: Callable[..., list[dict]] | None = None,
     token: str | None = None,
-) -> dict[str, Any]:
+) -> SimulatedConversation:
     """Drive one scenario to completion against the deployed engine.
 
     Returns ``{"turns", "transcript", "stopped", "turn_count", "tool_calls"}``.
@@ -188,7 +198,7 @@ def simulate_conversation(
 
     session_id = create_session_fn(resource_name, user_id, token=token)
 
-    turns: list[dict] = []
+    turns: list[ConversationTurn] = []
     transcript: list[tuple[str, str]] = []
     tool_calls: list[str] = []
     user_message = starting_prompt
@@ -247,7 +257,9 @@ def _tool_names(events: Sequence[dict]) -> list[str]:
     return names
 
 
-def conversations_to_dataframe(scenarios: Sequence[dict], conversations: Sequence[dict]):
+def conversations_to_dataframe(
+    scenarios: Sequence[dict], conversations: Sequence[SimulatedConversation]
+):
     """Assemble the rater-facing dataset: one row per conversation.
 
     Mirrors the columns ``run_inference`` produces on the simulated path
@@ -265,7 +277,7 @@ def conversations_to_dataframe(scenarios: Sequence[dict], conversations: Sequenc
     )
 
 
-def summarize(conversations: Sequence[dict]) -> dict[str, Any]:
+def summarize(conversations: Sequence[SimulatedConversation]) -> ConversationSummary:
     """Shape of what we produced — the thing the SDK path could never show."""
     counts = [c["turn_count"] for c in conversations]
     return {
@@ -387,11 +399,11 @@ def _generate_scenarios(agent_name: str, count: int) -> list[dict]:
 
 def _score(
     scenarios: Sequence[dict],
-    conversations: Sequence[dict],
+    conversations: Sequence[SimulatedConversation],
     resource_name: str,
     agent_name: str,
     threshold: float,
-) -> dict[str, Any]:
+) -> MultiTurnScore:
     """Hand the real multi-turn conversations to the managed MULTI_TURN_* raters."""
     import time
 
@@ -483,8 +495,8 @@ def _score(
 
 
 def partition_empty_conversations(
-    scenarios: Sequence[dict], conversations: Sequence[dict]
-) -> tuple[list[dict], list[dict], int]:
+    scenarios: Sequence[dict], conversations: Sequence[SimulatedConversation]
+) -> tuple[list[dict], list[SimulatedConversation], int]:
     """Drop conversations that died on an empty stream. Returns ``(scenarios, convos, n_empty)``.
 
     A conversation that ended because the engine returned zero characters has
@@ -514,7 +526,7 @@ def run_discrimination(
     scenario_count: int = DEFAULT_SCENARIOS,
     max_turns: int = DEFAULT_MAX_TURNS,
     score_threshold: float = 3.0,
-) -> dict[str, Any]:
+) -> DiscriminationResult:
     """Score real conversations against deliberately broken copies of them.
 
     The question this answers is not "how good is the agent" but "can this rubric
@@ -546,7 +558,7 @@ def run_discrimination(
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
     resource = _resolve_agent_resource_name(agent_id)
 
-    variants: dict[str, list[dict]] = {"real": real}
+    variants: dict[str, list[SimulatedConversation]] = {"real": real}
     for name in DEGRADATIONS:
         bad = [degrade(c, name) for c in real]
         # A degradation that changed nothing yields a variant identical to the
@@ -566,7 +578,7 @@ def run_discrimination(
         results[name] = _score(scenarios, convos, resource, agent_name, score_threshold)
 
     baseline = results.get("real", {}).get("metrics", {})
-    report = {"baseline": baseline, "variants": {}, "targets": TARGETS}
+    report: DiscriminationResult = {"baseline": baseline, "variants": {}, "targets": TARGETS}
     for name, res in results.items():
         if name == "real":
             continue
@@ -585,7 +597,7 @@ def run_discrimination(
     return report
 
 
-def render_discrimination(report: dict[str, Any]) -> str:
+def render_discrimination(report: DiscriminationResult) -> str:
     """A verdict per degradation: did the targeted rubric actually move?"""
     lines = ["", "=== DISCRIMINATION (does a known-bad conversation score lower?) ==="]
     baseline = report["baseline"]
