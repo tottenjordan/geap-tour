@@ -49,6 +49,8 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.eval.types import AnnotatorReliability, CalibrationMetrics
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -99,7 +101,7 @@ def calibration_metrics(
     *,
     tolerance: float = DEFAULT_TOLERANCE,
     floor: float = DEFAULT_MIN_WITHIN_TOLERANCE,
-) -> dict:
+) -> CalibrationMetrics:
     """Judge-vs-human agreement over aligned score lists (both on the 0-1 axis).
 
     ``judge`` entries that are ``None`` (unparseable verdict) are dropped from the
@@ -181,7 +183,7 @@ def scored_cases(cases: Sequence[dict]) -> list[dict]:
     return [c for c in cases if consensus_score(c) is not None]
 
 
-def annotator_reliability(cases: Sequence[dict]) -> dict:
+def annotator_reliability(cases: Sequence[dict]) -> AnnotatorReliability:
     """Human-vs-human agreement: Krippendorff's alpha over the annotator columns.
 
     This is the **ceiling** for judge agreement. Reuses
@@ -248,7 +250,7 @@ def score_judge_vs_gold(
     parse_fn: Callable[[str], float | None],
     *,
     tolerance: float = DEFAULT_TOLERANCE,
-) -> dict:
+) -> CalibrationMetrics:
     """Run a single judge over gold cases and report judge-vs-human agreement.
 
     Returns the :func:`calibration_metrics` keys plus ``per_case`` (each with the
@@ -275,7 +277,7 @@ def score_panel_vs_gold(
     parse_fn: Callable[[str], float | None],
     *,
     tolerance: float = DEFAULT_TOLERANCE,
-) -> dict:
+) -> CalibrationMetrics:
     """Run a judge *panel* over gold cases (median verdict) and report agreement.
 
     Adds a ``reliability`` block (panel inter-rater agreement over the gold set)

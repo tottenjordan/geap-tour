@@ -127,12 +127,14 @@ class PanelScore(JudgeScore):
 class PanelReliability(TypedDict):
     """Krippendorff alpha and spread across a judge panel.
 
-    ``alpha`` is ``None`` when it cannot be computed (fewer than two judges scored
-    an item), which is different from an alpha of 0 — no agreement measured versus
-    no agreement found.
+    ``alpha`` is ``float("nan")`` when it cannot be computed (fewer than two judges
+    scored an item) — **not** ``None``. That is this codebase's convention for an
+    undefined statistic, and it matters: readers guard with ``math.isnan``, which
+    raises on ``None``. Declaring it ``float | None`` here made ``ty`` flag those
+    guards as unsafe — a false alarm produced by the type, not found by it.
     """
 
-    alpha: float | None
+    alpha: float
     mean_spread: float
     n_items: int
     n_judges: int
@@ -448,3 +450,204 @@ class HealthCheckResult(TypedDict):
     results: list[dict]
     summary: RateSummary
     verdict: HealthVerdict
+
+
+# --------------------------------------------------------------------------- #
+# Multi-turn simulation
+# --------------------------------------------------------------------------- #
+class ConversationTurn(TypedDict):
+    """One turn of a simulated conversation, in the shape the raters read.
+
+    ``events`` must include the **user**-authored ones. The SDK's own runtime path
+    emitted zero of them, so the multi-turn rubrics graded a monologue and scored
+    0.00 by construction — a data-shape artifact read as agent quality until
+    :mod:`src.eval.multi_turn_sim` built the turns itself.
+    """
+
+    turn_id: str
+    turn_index: int
+    events: list[dict]
+
+
+class SimulatedConversation(TypedDict):
+    """A full simulated exchange and why it ended.
+
+    ``stopped`` is load-bearing, not bookkeeping: an ``empty_response`` stop is an
+    **infra failure** and must never be averaged in as a short conversation. Scoring
+    one as a low trajectory_quality is precisely the bug that made a degradation
+    experiment report a false BLIND.
+    """
+
+    turns: list[ConversationTurn]
+    # list[tuple[speaker, text]], not list[dict] — a flat ordered log for the
+    # simulator to read back, separate from the rater-shaped `turns`. Declared as
+    # dicts on the first pass here; ty rejected it against the producer.
+    transcript: list[tuple[str, str]]
+    turn_count: int
+    tool_calls: list[str]
+    stopped: str
+
+
+class ConversationSummary(TypedDict):
+    """Aggregate shape of a multi-turn run — how multi-turn was it, really.
+
+    ``multi_turn_conversations`` exists because "we ran a multi-turn eval" is a
+    claim about the data, not the intent: the SDK path returned one invocation per
+    scenario whatever ``max_turns`` said. ``empty_response_conversations`` is
+    counted apart so infra never lands in a quality mean.
+    """
+
+    conversations: int
+    multi_turn_conversations: int
+    empty_response_conversations: int
+    turns_total: int
+    turns_mean: float
+    turns_max: int
+    tool_calls: list[str]
+    stopped_reasons: dict[str, int]
+
+
+class MultiTurnScore(TypedDict):
+    """Rubric scores for a multi-turn run, or an honest reason there are none.
+
+    ``state`` may be ``SKIPPED`` — every conversation was empty — which is not a
+    zero. ``metrics``/``threshold`` are ``NotRequired`` because that branch has
+    neither, and ``reason`` says why.
+    """
+
+    state: str
+    all_passed: bool
+    empty_conversations: int
+    # Absent on the SKIPPED branch, which scored nothing. Left NotRequired rather
+    # than backfilling a 0 — this is a typing change, and nothing reads the key.
+    scored_conversations: NotRequired[int]
+    reason: NotRequired[str]
+    metrics: NotRequired[dict]
+    threshold: NotRequired[float]
+
+
+class ConversationShape(TypedDict):
+    """Structural census of a conversation — what a degradation actually changed.
+
+    Pure counting, deliberately: a degradation test needs ground truth about the
+    transform it applied, independent of any judge.
+    """
+
+    turns: int
+    events: int
+    user_events: int
+    agent_events: int
+    tool_calls: int
+    tool_responses: int
+    text_parts: int
+
+
+class DiscriminationResult(TypedDict):
+    """Real vs known-bad scores, and which rubric each variant targets.
+
+    ``targets`` is what makes this a signal test rather than a smoke test: a variant
+    that moves *some* rubric proves nothing, so each degradation names the one it is
+    supposed to move.
+    """
+
+    baseline: dict
+    variants: dict
+    targets: dict
+
+
+# --------------------------------------------------------------------------- #
+# Online monitoring
+# --------------------------------------------------------------------------- #
+class OnlineAggregate(TypedDict):
+    """Mean rubric scores over sampled live traffic, with their confidence.
+
+    ``low_confidence`` is set from the sample size rather than left to the reader:
+    a mean over three interactions renders identically to one over thirty, and this
+    repo has already retracted a published claim for exactly that reason.
+    """
+
+    scores: dict[str, float]
+    ci: dict[str, tuple[float, float]]
+    counts: dict[str, int]
+    n_interactions: int
+    # PER METRIC, not one flag for the batch: metrics are scored over different
+    # numbers of interactions, so a run can be trustworthy for helpfulness and not
+    # for safety. Declared as a bare bool on the first pass here; ty rejected it.
+    low_confidence: dict[str, bool]
+    # Added by `score_and_publish` after the fact, hence NotRequired.
+    reliability: NotRequired[dict[str, PanelReliability]]
+    n_infra_empty: NotRequired[int]
+    infra_empty_rate: NotRequired[float]
+
+
+class OnlinePublishResult(TypedDict):
+    """One online-monitor pass: what was captured, what was infra, what was written.
+
+    ``n_infra_empty`` and ``infra_empty_rate`` are partitioned OUT of the quality
+    aggregate. Before that split, empty-at-200 streams were scored as bad answers —
+    a 39% empty rate read as helpfulness 2.87 and looked like model regression.
+    """
+
+    n_captured: int
+    n_sampled: int
+    n_infra_empty: int
+    infra_empty_rate: float
+    infra_published: dict
+    aggregate: OnlineAggregate
+    published: dict
+
+
+class OnlineFaithfulnessResult(TypedDict):
+    """One online faithfulness pass. Distinct from :class:`OnlinePublishResult`.
+
+    Carries a :class:`FaithfulnessScores` under ``result`` rather than a rubric
+    aggregate — faithfulness asks "did the agent lie about what it did", which is a
+    different question from "was the answer good", and the two were briefly forced
+    into one type here until ``ty`` objected.
+    """
+
+    result: FaithfulnessScores
+    published: dict
+    n_captured: int
+    n_sampled: int
+    n_infra_empty: int
+
+
+# --------------------------------------------------------------------------- #
+# Calibration
+# --------------------------------------------------------------------------- #
+class CalibrationMetrics(TypedDict):
+    """Judge-vs-human agreement, with the power to interpret it.
+
+    ``power`` carries the three-valued verdict: an interval spanning the floor is
+    INCONCLUSIVE, not a pass. ``n_unparseable`` is reported rather than silently
+    dropped — a high count means the agreement number is over a biased subset.
+    """
+
+    n: int
+    n_unparseable: int
+    within_tolerance: float
+    within_tolerance_ci: tuple[float, float]
+    mae: float
+    bias: float
+    # nan, not None, when undefined — see PanelReliability.alpha.
+    pearson: float
+    power: PowerReport
+    # Attached by the CLI scorers after the core metrics are computed: the per-case
+    # rows behind the number, and (panel mode only) the inter-rater agreement.
+    per_case: NotRequired[list[dict]]
+    reliability: NotRequired[PanelReliability]
+
+
+class AnnotatorReliability(TypedDict):
+    """Human-vs-human agreement — the ceiling judge agreement is read against.
+
+    Without this, a judge alpha of 0.7 is uninterpretable: it could be near-perfect
+    or barely better than the humans disagreeing with each other.
+    """
+
+    alpha: float
+    mean_spread: float
+    n_annotators: int
+    n_pairable: int
+    annotators: list[str]
