@@ -35,6 +35,7 @@ import re
 from typing import TYPE_CHECKING
 
 from src.eval.batch_eval import EVAL_CASES, TOOL_USE_METRIC
+from src.eval.types import JudgeScore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -86,7 +87,7 @@ def build_tool_use_prompt(prompt: str, response: str) -> str:
 def score_pairs(
     pairs: Sequence[tuple[str, str]],
     generate_fn: Callable[[str], str],
-) -> dict:
+) -> JudgeScore:
     """Judge each ``(prompt, response)`` pair; return the mean 0-1 score.
 
     ``generate_fn`` takes the rendered judge prompt and returns the judge's raw
@@ -142,7 +143,7 @@ def run_tool_use_eval(
     project: str | None = None,
     location: str | None = None,
     warm: bool = True,
-) -> dict:
+) -> JudgeScore:
     """Score tool_use for the deployed coordinator over tool-expecting cases.
 
     Runs inference over the tool-expecting subset of the coordinator's eval cases,

@@ -28,6 +28,7 @@ from src.config import (
     disable_pyopenssl,
 )
 from src.observability.metrics import parse_labels
+from src.traffic.types import LoadResult, ScalingProfile
 
 
 def _extract_text(event) -> str:
@@ -569,7 +570,7 @@ def generate_load(
     extra_labels=None,
     session_pool=None,
     reuse_sessions: bool = True,
-) -> dict:
+) -> LoadResult:
     """Generate concurrent, ramped synthetic load against a deployed agent.
 
     Offered QPS rises linearly 0 -> ``target_qps`` over ``ramp_s`` seconds, then
@@ -666,7 +667,7 @@ def generate_load(
 
     actual_duration = max(monotonic() - start, 1e-9)
     latencies.sort()
-    summary = {
+    summary: LoadResult = {
         "offered": offered,
         "sent": sent,
         "errors": errors,
@@ -733,7 +734,7 @@ def generate_scaling_profile(
     extra_labels=None,
     on_stage=None,
     reuse_sessions: bool = True,
-) -> dict:
+) -> ScalingProfile:
     """Run a staircase of QPS stages back-to-back to illustrate scaling.
 
     Each stage is a dict ``{"qps": int, "duration_s": float, "ramp_s": float?}``
@@ -768,7 +769,7 @@ def generate_scaling_profile(
     # the whole staircase, not recreated per stage (create_session is the ceiling).
     pool = SessionPool(agent) if reuse_sessions else None
 
-    stage_summaries = []
+    stage_summaries: list[LoadResult] = []
     for i, spec in enumerate(stages):
         target_qps = spec["qps"]
         print(f"\n{'#' * 60}")
@@ -791,7 +792,7 @@ def generate_scaling_profile(
             emit_metrics=False,  # emit per-stage below with scaling labels
             session_pool=pool,
         )
-        summary = {**summary, "stage": i, "target_qps": target_qps}
+        summary = LoadResult(**{**summary, "stage": i, "target_qps": target_qps})
         stage_summaries.append(summary)
 
         if emit_metrics:
@@ -814,7 +815,7 @@ def generate_scaling_profile(
         if on_stage is not None:
             on_stage(i, summary)
 
-    result = {
+    result: ScalingProfile = {
         "stages": stage_summaries,
         "total_offered": sum(s["offered"] for s in stage_summaries),
         "total_sent": sum(s["sent"] for s in stage_summaries),

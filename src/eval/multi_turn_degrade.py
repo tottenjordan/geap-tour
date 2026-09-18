@@ -36,7 +36,9 @@ Usage::
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from src.eval.types import ConversationShape, SimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,7 +61,7 @@ def _is_user(event: dict) -> bool:
     return event.get("author") == "user"
 
 
-def drop_tool_calls(conversation: dict) -> dict:
+def drop_tool_calls(conversation: SimulatedConversation) -> SimulatedConversation:
     """Strip every tool call and response; keep the agent's claims intact.
 
     The resulting agent still says it searched flights and booked a room — it just
@@ -94,7 +96,7 @@ def drop_tool_calls(conversation: dict) -> dict:
     return out
 
 
-def stonewall(conversation: dict) -> dict:
+def stonewall(conversation: SimulatedConversation) -> SimulatedConversation:
     """Replace every agent answer with a polite request for more information.
 
     The user asks four times and is asked to clarify four times. Nothing is ever
@@ -116,7 +118,7 @@ def stonewall(conversation: dict) -> dict:
     return out
 
 
-def abandon_midway(conversation: dict) -> dict:
+def abandon_midway(conversation: SimulatedConversation) -> SimulatedConversation:
     """Keep the user's turns; delete every agent response after the first.
 
     Models an agent that stops responding partway through a multi-step request —
@@ -132,7 +134,7 @@ def abandon_midway(conversation: dict) -> dict:
     return out
 
 
-def scramble_turns(conversation: dict) -> dict:
+def scramble_turns(conversation: SimulatedConversation) -> SimulatedConversation:
     """Reverse the agent responses against the user turns.
 
     Every individual reply is well-formed and on-topic for the *conversation*; none
@@ -156,7 +158,7 @@ def scramble_turns(conversation: dict) -> dict:
     return out
 
 
-DEGRADATIONS: dict[str, Callable[[dict], dict]] = {
+DEGRADATIONS: dict[str, Callable[[SimulatedConversation], SimulatedConversation]] = {
     "drop_tool_calls": drop_tool_calls,
     "stonewall": stonewall,
     "abandon_midway": abandon_midway,
@@ -173,14 +175,14 @@ TARGETS: dict[str, str] = {
 }
 
 
-def degrade(conversation: dict, name: str) -> dict:
+def degrade(conversation: SimulatedConversation, name: str) -> SimulatedConversation:
     """Apply one named degradation. Raises on an unknown name rather than no-op."""
     if name not in DEGRADATIONS:
         raise KeyError(f"unknown degradation {name!r}; have {sorted(DEGRADATIONS)}")
     return DEGRADATIONS[name](conversation)
 
 
-def describe(conversation: dict) -> dict[str, Any]:
+def describe(conversation: SimulatedConversation) -> ConversationShape:
     """Countable facts about a conversation, for asserting a degradation bit.
 
     A degradation that silently did nothing is the worst outcome here: the variant

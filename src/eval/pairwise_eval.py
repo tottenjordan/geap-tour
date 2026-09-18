@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.eval.types import PairwiseAggregate, PairwiseResult
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -118,7 +120,7 @@ def judge_case(
     return BASELINE if votes[BASELINE] > votes[CANDIDATE] else CANDIDATE
 
 
-def aggregate_choices(choices: Sequence[str]) -> dict:
+def aggregate_choices(choices: Sequence[str]) -> PairwiseAggregate:
     """Aggregate per-case winners into win/tie rates + a sign-test significance block.
 
     ``significance`` (from :func:`src.eval.stats.win_rate_significance`) reports the
@@ -218,7 +220,7 @@ def run_pairwise_eval(
     project: str | None = None,
     location: str | None = None,
     warm: bool = True,
-) -> dict:
+) -> PairwiseResult:
     """Run a pairwise SxS eval: baseline (Gemini) vs candidate (Claude).
 
     Collects each engine's response per case via ``run_inference``, pairs them,
@@ -255,16 +257,21 @@ def run_pairwise_eval(
         choices.append(choice)
         per_case.append({"prompt": prompt, "choice": choice})
 
-    result = aggregate_choices(choices)
-    result["per_case"] = per_case
-    result["config"] = {
-        "sampling_count": config.sampling_count,
-        "flip_enabled": config.flip_enabled,
-        "judge_model": config.judge_model,
+    # Built as one record rather than mutating the aggregate with four more keys.
+    # Widening a returned dict in place is how a function ends up with a shape its
+    # own return type cannot describe — `ty` flagged exactly that here.
+    aggregate = aggregate_choices(choices)
+    return {
+        **aggregate,
+        "per_case": per_case,
+        "config": {
+            "sampling_count": config.sampling_count,
+            "flip_enabled": config.flip_enabled,
+            "judge_model": config.judge_model,
+        },
+        "baseline_engine": baseline_engine_id,
+        "candidate_engine": candidate_engine_id,
     }
-    result["baseline_engine"] = baseline_engine_id
-    result["candidate_engine"] = candidate_engine_id
-    return result
 
 
 # --------------------------------------------------------------------------- #

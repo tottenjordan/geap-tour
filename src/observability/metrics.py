@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from google.api import metric_pb2, monitored_resource_pb2
 from google.cloud import monitoring_v3
@@ -200,7 +200,7 @@ def _default_labels(extra_labels: Mapping[str, str] | None) -> dict[str, str]:
 
 
 def emit_traffic_metrics(
-    summary: Mapping[str, float],
+    summary: Mapping[str, Any],
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
 ) -> None:

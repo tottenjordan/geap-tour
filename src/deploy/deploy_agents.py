@@ -84,6 +84,7 @@ from src.config import (
     SONNET_MODEL,
     TRAVEL_MODEL,
 )
+from src.deploy.types import AgentDeployConfig
 
 # Runtime dependency subset for the served Agent Engine, and the SINGLE SOURCE for
 # every serving requirements file in the repo (src/deploy/serving_requirements.py
@@ -472,7 +473,7 @@ def _build_config(
     *,
     min_instances: int | None = None,
     memory: str | None = None,
-) -> dict:
+) -> AgentDeployConfig:
     """Build the deployment config dict used for both create and update.
 
     ``min_instances`` sets a keep-warm floor (Agent Engine ``min_instances``) so
@@ -579,7 +580,7 @@ def _build_config(
         if armor_val:
             env_vars[armor_var] = armor_val
 
-    config = {
+    config: AgentDeployConfig = {
         "staging_bucket": f"gs://{GCP_STAGING_BUCKET}",
         "requirements": REQUIREMENTS,
         "display_name": display_name or agent.name,

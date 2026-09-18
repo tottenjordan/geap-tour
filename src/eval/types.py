@@ -71,15 +71,91 @@ class RateSummary(TypedDict):
     three-valued verdict and the metric-noise retraction both came from. Keeping
     them in one type means a producer cannot emit the point estimate alone.
 
-    Keys beyond these four (``counts``, ``by_tier``, latency percentiles) are
-    produced by ``verify_router_health.summarize`` and are not declared here —
-    nothing outside that module reads them by key.
+    ``silent_empty`` and ``labelled_failure`` are separate on purpose. A labelled
+    throttle is a failed turn but not a *silent* one, and conflating them would make
+    the retry wrapper's entire contribution invisible.
+
+    **This type was decorative for its first two hours.** It shipped declaring four
+    keys, matched no producer (``_rates`` emits six), and had zero usages outside its
+    own declaration and a test that hand-built one — the exact failure the module
+    docstring warns about, committed alongside the warning. It is now what
+    ``verify_router_health._rates`` returns and what the verdict functions accept.
     """
 
     n: int
     silent_empty: int
+    labelled_failure: int
     empty_rate: float
     empty_rate_ci: tuple[float, float]
+    full_rate: float
+    # Added by `summarize` after `_rates` builds the base, hence NotRequired: the
+    # per-tier breakdown is a RateSummary of the same shape, one level down.
+    counts: NotRequired[dict[str, int]]
+    skipped: NotRequired[int]
+    p50_latency_s: NotRequired[float]
+    p95_latency_s: NotRequired[float]
+    by_tier: NotRequired[dict[str, RateSummary]]
+
+
+class JudgeScore(TypedDict):
+    """A pointwise judge's mean score over a set of pairs.
+
+    ``policy_judge.score_pairs`` and ``tool_use_judge.score_pairs`` returned this
+    exact shape independently; one type now says they are the same contract.
+
+    ``score`` is ``None``, never ``0.0``, when nothing parsed — an unparseable
+    verdict is dropped from the average rather than counted as a failure, so a run
+    where every verdict was garbage must not read as a perfect zero.
+    """
+
+    score: float | None
+    n_scored: int
+    n_total: int
+
+
+class PanelScore(JudgeScore):
+    """:class:`JudgeScore` plus the inter-rater agreement behind it.
+
+    Separate from ``JudgeScore`` rather than a ``NotRequired`` field on it: a panel
+    score without its reliability is not the same claim as a single judge's score,
+    and the type should not let one be passed where the other is read.
+    """
+
+    reliability: PanelReliability
+
+
+class PanelReliability(TypedDict):
+    """Krippendorff alpha and spread across a judge panel.
+
+    ``alpha`` is ``float("nan")`` when it cannot be computed (fewer than two judges
+    scored an item) — **not** ``None``. That is this codebase's convention for an
+    undefined statistic, and it matters: readers guard with ``math.isnan``, which
+    raises on ``None``. Declaring it ``float | None`` here made ``ty`` flag those
+    guards as unsafe — a false alarm produced by the type, not found by it.
+    """
+
+    alpha: float
+    mean_spread: float
+    n_items: int
+    n_judges: int
+
+
+class PanelVerdict(TypedDict):
+    """One item scored by the whole panel, before aggregation.
+
+    ``median`` rather than mean is the aggregation on purpose — it is what keeps a
+    single miscalibrated autorater from deciding a verdict.
+    """
+
+    median: float | None
+    # A LIST, positional by judge index — not a dict keyed by judge name. Krippendorff
+    # alpha reads these rows positionally, so judge i must stay column i; a dict would
+    # make that ordering implicit and reorderable. (Declared as a dict on the first
+    # pass of this conversion, from memory rather than from the code — caught by
+    # wiring it to the real producer, which is the whole argument for wiring.)
+    per_judge: list[float | None]
+    spread: float | None
+    n_valid: int
 
 
 class BatchResult(TypedDict):
@@ -115,3 +191,633 @@ class BatchResult(TypedDict):
 #: Metric name -> published value on the 1-5 axis. An alias rather than a
 #: ``TypedDict`` because the keys are metric names, not a fixed record.
 PublishedScores = dict[str, float]
+
+
+class WinRateSignificance(TypedDict):
+    """A pairwise win-rate with the sign test and interval that qualify it.
+
+    ``decisive`` is the denominator, not ``wins + losses + ties``: ties are excluded
+    upstream, and reporting a win-rate over all cases would dilute exactly the
+    effect the test is looking for. Every boundary decision in the router
+    (``flash beat lite 18-1``, ``sonnet beats pro 17-1``) is this record.
+    """
+
+    wins: int
+    losses: int
+    decisive: int
+    win_rate_decisive: float
+    p_value: float
+    significant: bool
+    ci_low: float
+    ci_high: float
+    alpha: float
+
+
+class PowerReport(TypedDict):
+    """Is a proportion verdict supported by its sample, and if not, what would be.
+
+    ``verdict`` is three-valued — ``"above"`` / ``"below"`` / ``"inconclusive"`` — and
+    ``needed_n`` names the sample size that would resolve it (``None`` when already
+    resolved or unreachable). Collapsing this to a bool is the false-precision
+    failure the three-valued gates and the n=3 noise retraction both came from.
+    """
+
+    n: int
+    rate: float
+    ci: tuple[float, float]
+    threshold: float
+    resolved: bool
+    needed_n: int | None
+    verdict: Literal["above", "below", "inconclusive"]
+
+
+class MeanPowerReport(TypedDict):
+    """The same question asked of a MEAN rather than a proportion.
+
+    Kept separate from :class:`PowerReport` on purpose: they answer different
+    questions and their ``verdict`` vocabularies differ
+    (``healthy``/``breached``/``inconclusive`` vs ``above``/``below``). A monitored
+    gauge alerts on its value, so the claim under test is about the mean; framing it
+    as a good-share also sets an unreachable bar, under which a perfectly healthy
+    24-point series reads as underpowered and every alert is suppressed.
+
+    ``needed_n`` is absent here — there is no closed form for the bootstrap.
+    """
+
+    n: int
+    mean: float
+    ci: tuple[float, float]
+    threshold: float
+    resolved: bool
+    verdict: Literal["healthy", "breached", "inconclusive"]
+
+
+class RegressionCheck(TypedDict):
+    """A rolling-baseline z-score verdict, with the reason it may not have one.
+
+    ``status`` carries why: ``insufficient_history`` (fewer than ``min_baseline``
+    points), ``no_variance`` (a flat baseline leaves z undefined), or ``ok``. The
+    statistical keys are ``NotRequired`` because the first two states genuinely have
+    none — and that is the point. ``is_anomaly=False`` alongside
+    ``status="insufficient_history"`` is *not* a clean bill of health, and a type
+    that forced a ``baseline_mean`` into that branch would invite reading one.
+    """
+
+    status: Literal["insufficient_history", "no_variance", "ok"]
+    is_anomaly: bool
+    n_baseline: int
+    min_baseline: NotRequired[int]
+    baseline_mean: NotRequired[float]
+    baseline_std: NotRequired[float]
+    z: NotRequired[float | None]
+    current: NotRequired[float]
+    direction: NotRequired[str]
+    z_threshold: NotRequired[float]
+
+
+class CostSummary(TypedDict):
+    """Measured spend for one model over its usage records.
+
+    ``mean_usd_per_request`` is 0.0 when ``n_requests`` is 0 — a zero that means "no
+    data", not "free". The bake-off reports an honest ``n/a`` rather than a fake $0
+    for exactly this reason; the two keys have to be read together.
+    """
+
+    model: str
+    n_requests: int
+    total_usd: float
+    mean_usd_per_request: float
+
+
+class ClassifierAccuracy(TypedDict):
+    """How well the complexity classifier bands prompts.
+
+    Graded against **fixed reference bands**, deliberately not the tunable
+    ``COMPLEXITY_LOW``/``COMPLEXITY_HIGH`` cut-points. That is the whole design:
+    bucketing by the boundaries made the score move whenever *routing* was retuned,
+    and it did — the same 40 prompts and the same classifier read 50% and then 82.5%
+    purely because ``COMPLEXITY_LOW`` went 0.44 -> 0.25.
+
+    **``accuracy_pct`` is a formatted STRING** — ``"82.5%"``, not ``82.5``. The
+    alerting series of almost the same name, ``agent_router/classifier_accuracy_pct``,
+    is computed from the ``accuracy`` float instead
+    (``publish_router_efficiency.py``), and ``pipelines/components.py`` strips the
+    ``%`` before logging it. Two keys, one obvious-looking name, different types and
+    different consumers — declaring the type is how that stops being something you
+    have to already know. (Typed as ``float`` on the first pass here, from the name;
+    ``ty`` rejected it against the real producer.)
+    """
+
+    accuracy: float
+    accuracy_pct: str
+    correct: int
+    total_cases: int
+    avg_latency_ms: float
+    confusion_matrix: dict
+    per_case: list[dict]
+
+
+class CostEfficiency(TypedDict):
+    """Routed spend against the all-Opus counterfactual.
+
+    ``savings_pct`` publishes to ``agent_router/cost_savings_pct``. Note it **rises**
+    when routing collapses onto the cheapest tier — 93.1% to ~99.6% — so this record
+    looks its best exactly when the router has stopped routing. That blind spot is
+    why ``lite_tier_pct``/``tiers_used`` exist; nothing in this type can see it.
+    """
+
+    routed_cost_usd: float
+    all_opus_cost_usd: float
+    savings_pct: float
+    total_prompts: int
+    per_case: list[dict]
+
+
+class PairwiseAggregate(TypedDict):
+    """Win/tie rates for a side-by-side, with the significance test attached.
+
+    ``significance`` is a required key, not an optional extra: a raw win-rate over a
+    handful of cases reads like a result, and the whole reason this repo hand-rolled
+    a pairwise judge was to be able to say ``18-1, p=0.0001`` rather than "candidate
+    looks better". The rates and the test travel together or neither is trustworthy.
+    """
+
+    n_cases: int
+    win_rate_candidate: float
+    win_rate_baseline: float
+    tie_rate: float
+    significance: WinRateSignificance
+
+
+class PairwiseResult(PairwiseAggregate):
+    """A full side-by-side run: the aggregate, plus what produced it.
+
+    Separate from :class:`PairwiseAggregate` because the aggregate is a pure
+    function of the choices while these four keys are run provenance. ``config`` and
+    the two engine ids are what make a win-rate reproducible — a 62% with no record
+    of the judge model, the flip setting or which engines were compared is a number
+    nobody can re-derive.
+    """
+
+    per_case: list[dict]
+    config: dict
+    baseline_engine: str | None
+    candidate_engine: str | None
+
+
+class TrajectoryCapture(TypedDict):
+    """One prompt, the visible answer, and the tools actually executed.
+
+    Both halves in one record is the point. ``tool_use_judge`` scores only
+    ``(prompt, response)`` because ``run_inference`` yields text and no trajectory,
+    which is precisely the gap that lets a reply claim "I booked FL001" with no
+    booking call behind it. Faithfulness needs the pair.
+    """
+
+    prompt: str
+    response: str
+    actual_trajectory: list[dict]
+
+
+class QueryResult(TypedDict):
+    """What the SDK's ``EvalTask`` runnable hands back for one prompt.
+
+    Distinct from :class:`TrajectoryCapture` by one key: the SDK already knows the
+    prompt it passed in, so echoing it would be the runnable asserting an input
+    rather than reporting an output.
+    """
+
+    response: str
+    predicted_trajectory: list[dict]
+
+
+class FaithfulnessScores(TypedDict):
+    """Whether the agent's claims about its actions match the tools it ran.
+
+    ``flagged`` names the fabricated actions rather than only counting them — a
+    score of 2.0 with no names is unactionable, and naming them is what let the
+    synthetic-fabrication validation confirm the judge catches
+    ``book_flight``/``submit_expense``/``book_hotel`` specifically. Each entry is a
+    ``{prompt, hallucinated, score}`` record, not a bare action name: which prompt
+    provoked the fabrication is half the diagnosis.
+
+    ``per_case_scores`` is a list of the parsed **scores**, despite the name — only
+    the cases that parsed, so it is shorter than ``n_total`` whenever a verdict was
+    unreadable. Both element types were guessed wrong on the first pass here and
+    corrected by wiring them to the producer.
+    """
+
+    score: float | None
+    n_scored: int
+    n_total: int
+    flagged: list[dict]
+    per_case_scores: list[float]
+
+
+class TrajectoryEvalResult(TypedDict):
+    """Deterministic trajectory scoring, with the turns it could not score.
+
+    ``empty_trajectories`` is separate from ``scored_cases`` because a turn that
+    called no tool is an infra or prompting outcome, not a bad trajectory. Averaging
+    it in as a zero is the same mistake the multi-turn rubrics made before
+    ``partition_empty_conversations``.
+    """
+
+    metrics: dict
+    scored_cases: int
+    empty_trajectories: int
+
+
+class DatasetDescription(TypedDict):
+    """A dataset's size and content hash.
+
+    An eval score only means something relative to its dataset, and ``checksum`` is
+    what makes "the score moved" distinguishable from "the questions changed".
+    """
+
+    n_cases: int
+    checksum: str
+
+
+class HealthCheckResult(TypedDict):
+    """A flakiness probe run: the raw probes, their rates, and the verdict.
+
+    All three are kept rather than just the verdict, because a verdict of
+    INCONCLUSIVE is only interpretable next to the n and interval that produced it.
+    """
+
+    engine: str
+    results: list[dict]
+    summary: RateSummary
+    verdict: HealthVerdict
+
+
+# --------------------------------------------------------------------------- #
+# Multi-turn simulation
+# --------------------------------------------------------------------------- #
+class ConversationTurn(TypedDict):
+    """One turn of a simulated conversation, in the shape the raters read.
+
+    ``events`` must include the **user**-authored ones. The SDK's own runtime path
+    emitted zero of them, so the multi-turn rubrics graded a monologue and scored
+    0.00 by construction — a data-shape artifact read as agent quality until
+    :mod:`src.eval.multi_turn_sim` built the turns itself.
+    """
+
+    turn_id: str
+    turn_index: int
+    events: list[dict]
+
+
+class SimulatedConversation(TypedDict):
+    """A full simulated exchange and why it ended.
+
+    ``stopped`` is load-bearing, not bookkeeping: an ``empty_response`` stop is an
+    **infra failure** and must never be averaged in as a short conversation. Scoring
+    one as a low trajectory_quality is precisely the bug that made a degradation
+    experiment report a false BLIND.
+    """
+
+    turns: list[ConversationTurn]
+    # list[tuple[speaker, text]], not list[dict] — a flat ordered log for the
+    # simulator to read back, separate from the rater-shaped `turns`. Declared as
+    # dicts on the first pass here; ty rejected it against the producer.
+    transcript: list[tuple[str, str]]
+    turn_count: int
+    tool_calls: list[str]
+    stopped: str
+
+
+class ConversationSummary(TypedDict):
+    """Aggregate shape of a multi-turn run — how multi-turn was it, really.
+
+    ``multi_turn_conversations`` exists because "we ran a multi-turn eval" is a
+    claim about the data, not the intent: the SDK path returned one invocation per
+    scenario whatever ``max_turns`` said. ``empty_response_conversations`` is
+    counted apart so infra never lands in a quality mean.
+    """
+
+    conversations: int
+    multi_turn_conversations: int
+    empty_response_conversations: int
+    turns_total: int
+    turns_mean: float
+    turns_max: int
+    tool_calls: list[str]
+    stopped_reasons: dict[str, int]
+
+
+class MultiTurnScore(TypedDict):
+    """Rubric scores for a multi-turn run, or an honest reason there are none.
+
+    ``state`` may be ``SKIPPED`` — every conversation was empty — which is not a
+    zero. ``metrics``/``threshold`` are ``NotRequired`` because that branch has
+    neither, and ``reason`` says why.
+    """
+
+    state: str
+    all_passed: bool
+    empty_conversations: int
+    # Absent on the SKIPPED branch, which scored nothing. Left NotRequired rather
+    # than backfilling a 0 — this is a typing change, and nothing reads the key.
+    scored_conversations: NotRequired[int]
+    reason: NotRequired[str]
+    metrics: NotRequired[dict]
+    threshold: NotRequired[float]
+
+
+class ConversationShape(TypedDict):
+    """Structural census of a conversation — what a degradation actually changed.
+
+    Pure counting, deliberately: a degradation test needs ground truth about the
+    transform it applied, independent of any judge.
+    """
+
+    turns: int
+    events: int
+    user_events: int
+    agent_events: int
+    tool_calls: int
+    tool_responses: int
+    text_parts: int
+
+
+class DiscriminationResult(TypedDict):
+    """Real vs known-bad scores, and which rubric each variant targets.
+
+    ``targets`` is what makes this a signal test rather than a smoke test: a variant
+    that moves *some* rubric proves nothing, so each degradation names the one it is
+    supposed to move.
+    """
+
+    baseline: dict
+    variants: dict
+    targets: dict
+
+
+# --------------------------------------------------------------------------- #
+# Online monitoring
+# --------------------------------------------------------------------------- #
+class OnlineAggregate(TypedDict):
+    """Mean rubric scores over sampled live traffic, with their confidence.
+
+    ``low_confidence`` is set from the sample size rather than left to the reader:
+    a mean over three interactions renders identically to one over thirty, and this
+    repo has already retracted a published claim for exactly that reason.
+    """
+
+    scores: dict[str, float]
+    ci: dict[str, tuple[float, float]]
+    counts: dict[str, int]
+    n_interactions: int
+    # PER METRIC, not one flag for the batch: metrics are scored over different
+    # numbers of interactions, so a run can be trustworthy for helpfulness and not
+    # for safety. Declared as a bare bool on the first pass here; ty rejected it.
+    low_confidence: dict[str, bool]
+    # Added by `score_and_publish` after the fact, hence NotRequired.
+    reliability: NotRequired[dict[str, PanelReliability]]
+    n_infra_empty: NotRequired[int]
+    infra_empty_rate: NotRequired[float]
+
+
+class OnlinePublishResult(TypedDict):
+    """One online-monitor pass: what was captured, what was infra, what was written.
+
+    ``n_infra_empty`` and ``infra_empty_rate`` are partitioned OUT of the quality
+    aggregate. Before that split, empty-at-200 streams were scored as bad answers —
+    a 39% empty rate read as helpfulness 2.87 and looked like model regression.
+    """
+
+    n_captured: int
+    n_sampled: int
+    n_infra_empty: int
+    infra_empty_rate: float
+    infra_published: dict
+    aggregate: OnlineAggregate
+    published: dict
+
+
+class OnlineFaithfulnessResult(TypedDict):
+    """One online faithfulness pass. Distinct from :class:`OnlinePublishResult`.
+
+    Carries a :class:`FaithfulnessScores` under ``result`` rather than a rubric
+    aggregate — faithfulness asks "did the agent lie about what it did", which is a
+    different question from "was the answer good", and the two were briefly forced
+    into one type here until ``ty`` objected.
+    """
+
+    result: FaithfulnessScores
+    published: dict
+    n_captured: int
+    n_sampled: int
+    n_infra_empty: int
+
+
+# --------------------------------------------------------------------------- #
+# Calibration
+# --------------------------------------------------------------------------- #
+class CalibrationMetrics(TypedDict):
+    """Judge-vs-human agreement, with the power to interpret it.
+
+    ``power`` carries the three-valued verdict: an interval spanning the floor is
+    INCONCLUSIVE, not a pass. ``n_unparseable`` is reported rather than silently
+    dropped — a high count means the agreement number is over a biased subset.
+    """
+
+    n: int
+    n_unparseable: int
+    within_tolerance: float
+    within_tolerance_ci: tuple[float, float]
+    mae: float
+    bias: float
+    # nan, not None, when undefined — see PanelReliability.alpha.
+    pearson: float
+    power: PowerReport
+    # Attached by the CLI scorers after the core metrics are computed: the per-case
+    # rows behind the number, and (panel mode only) the inter-rater agreement.
+    per_case: NotRequired[list[dict]]
+    reliability: NotRequired[PanelReliability]
+
+
+class AnnotatorReliability(TypedDict):
+    """Human-vs-human agreement — the ceiling judge agreement is read against.
+
+    Without this, a judge alpha of 0.7 is uninterpretable: it could be near-perfect
+    or barely better than the humans disagreeing with each other.
+    """
+
+    alpha: float
+    mean_spread: float
+    n_annotators: int
+    n_pairable: int
+    annotators: list[str]
+
+
+# --------------------------------------------------------------------------- #
+# Monitor verification
+# --------------------------------------------------------------------------- #
+class MetricSummary(TypedDict):
+    """One monitored metric over a lookback window, and three ways it can be wrong.
+
+    The static floor (``out_of_bounds``), the rolling baseline (``baseline``) and
+    the sample size (``underpowered`` / ``low_confidence``) are three independent
+    judgements, and all three are kept because each misses what the others catch:
+    a static floor misses drift that stays inside it, a z-score needs
+    ``MIN_BASELINE`` points before it says anything, and both are meaningless over
+    too few samples. Collapsing them to one boolean is how a monitor reports healthy
+    for the wrong reason.
+    """
+
+    current_score: float
+    avg_score: float
+    min_score: float
+    max_score: float
+    # None over an empty window — no percentile exists, which is not the same as 0.
+    p50_score: float | None
+    p90_score: float | None
+    eval_count: int
+    first_eval: str
+    last_eval: str
+    threshold: float
+    direction: str
+    # A COUNT of violating points, not a flag, despite reading like one. `if
+    # summary["out_of_bounds"]` happens to work; `== True` silently never does, and
+    # "3 of 24 points breached" is a different claim from "breached". Declared bool
+    # here from the name; ty read the producer.
+    out_of_bounds: int
+    low_confidence: bool
+    underpowered: bool
+    trend: dict
+    power: MeanPowerReport
+    baseline: RegressionCheck
+
+
+class BigQueryMetricSummary(TypedDict):
+    """A metric as the optional BigQuery export can describe it — a SUBSET.
+
+    Deliberately not :class:`MetricSummary`. The export has no rolling baseline, no
+    power report and no percentiles (``p50``/``p90`` are literal ``None``), so
+    presenting it as the same record would imply checks that path never ran. The
+    canonical source is Cloud Monitoring; this is a convenience read, and the type
+    is what stops the two being compared as equals.
+    """
+
+    eval_count: int
+    avg_score: float
+    min_score: float
+    max_score: float
+    p50_score: float | None
+    p90_score: float | None
+    out_of_bounds: bool
+    direction: str
+    trend: dict
+
+
+class BigQuerySurface(TypedDict):
+    """The BigQuery export's view of a surface. See :class:`BigQueryMetricSummary`."""
+
+    status: str
+    metrics: NotRequired[dict[str, BigQueryMetricSummary]]
+    total_evals: NotRequired[int]
+    error: NotRequired[str]
+    message: NotRequired[str]
+
+
+class SurfaceSummary(TypedDict):
+    """One monitored surface (coordinator quality, router efficiency, …).
+
+    ``missing`` is a first-class key: a metric with no data points is not a metric
+    that passed. An alert configured on a series nothing writes is the failure mode
+    this repo has fixed three separate times, and it is invisible unless absence is
+    reported as loudly as a breach.
+    """
+
+    status: str
+    # `--group-by` CHANGES THE SHAPE of this value. Ungrouped, each name maps to one
+    # MetricSummary. Grouped (the bake-off's `--group-by model`), each name maps to
+    # a dict of label value -> MetricSummary, so gemini and claude stay separate
+    # series instead of collapsing into one average. A reader who assumes the flat
+    # shape gets a dict where they expected a score.
+    #
+    # Required. These were briefly NotRequired to accommodate the BigQuery path's
+    # early exits, which made a dropped `missing` type-check clean — and `missing`
+    # is the key that reports the most dangerous state here. Splitting BigQuery into
+    # its own type let them go back to required, which a mutation test then
+    # confirmed catches the drop.
+    metrics: dict[str, MetricSummary | dict[str, MetricSummary]]
+    missing: list[str]
+    total_evals: int
+    # Present only in grouped mode, naming the label the metrics are split by. Its
+    # presence is how a reader knows which of the two `metrics` shapes they have.
+    group_by: NotRequired[str]
+    error: NotRequired[str]
+    message: NotRequired[str]
+
+
+# --------------------------------------------------------------------------- #
+# Verification probes
+# --------------------------------------------------------------------------- #
+class RecallVerdict(TypedDict):
+    """Did the agent actually recall the fact, per a grounded judge.
+
+    ``reason`` is required because the old substring check could not tell recall
+    from its opposite — *"I don't have a saved **window** seat preference"* contains
+    ``window`` and passed, on the precise symptom of memory being broken. The
+    judge's reason is what makes a PASS auditable.
+    """
+
+    recalled: bool
+    reason: str
+
+
+class CrossSessionRecall(RecallVerdict):
+    """The full two-session recall probe, with the evidence behind the verdict.
+
+    Both session ids are kept so a reader can confirm session B really was new —
+    same-session context would prove nothing. ``signals_found`` is diagnostic only;
+    it is deliberately NOT what decides ``recalled``.
+    """
+
+    session_a_id: str
+    session_b_id: str
+    facts: list[str]
+    probe_response: str
+    signals_found: list[str]
+
+
+class ToolsetCheck(TypedDict):
+    """Did one MCP toolset resolve its real tools.
+
+    ``missing`` turns a silently tool-less agent into something with a name. A
+    toolset that resolves to zero tools raises nothing — the agent simply cannot do
+    anything, and answers as if that were the question's fault.
+    """
+
+    domain: str
+    ok: bool
+    resolved: list[str]
+    missing: list[str]
+    # Present only when the toolset could not be reached at all — an unset server
+    # name, or an enumeration that raised. Distinct from `missing`, which means the
+    # toolset resolved and the tools were not in it. "Could not look" and "looked
+    # and they are gone" need different fixes.
+    error: NotRequired[str]
+
+
+class ProbeResult(TypedDict):
+    """A single engine probe: did it answer, how fast, and with what.
+
+    ``ok`` is about the transport; ``text_events`` is about whether anything was
+    actually said. Both are needed because the failure this repo chases most —
+    empty-at-200 — is exactly the combination ``ok=True`` with zero text.
+    """
+
+    ok: bool
+    elapsed_s: float
+    first_event_s: float | None
+    events: int
+    text_events: int
+    error: str | None
+    # Stamped by the CLI when probing several engines, so a result in a list can
+    # still name which engine produced it.
+    engine: NotRequired[str]

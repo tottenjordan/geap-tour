@@ -39,6 +39,8 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from src.eval.types import PanelReliability, PanelScore, PanelVerdict
+
 logger = logging.getLogger(__name__)
 
 # Cap on concurrent ITEMS scored at once. Bounded for the same reason
@@ -147,7 +149,7 @@ def score_with_panel(
     prompt: str,
     judges: Sequence[Callable[[str], str]],
     parse_fn: Callable[[str], float | None],
-) -> dict:
+) -> PanelVerdict:
     """Score one already-rendered ``prompt`` with every judge in the panel.
 
     Returns ``per_judge`` (the parsed score per judge, ``None`` where a judge's
@@ -186,7 +188,7 @@ def score_with_panel(
     }
 
 
-def panel_reliability(per_item_scores: Sequence[Sequence[float | None]]) -> dict:
+def panel_reliability(per_item_scores: Sequence[Sequence[float | None]]) -> PanelReliability:
     """Panel-level inter-rater reliability over a batch of per-item judge scores.
 
     ``per_item_scores`` is one row per item, each row the panel's per-judge
@@ -209,7 +211,7 @@ def score_pairs_with_panel(
     judges: Sequence[Callable[[str], str]],
     build_prompt: Callable[[str, str], str],
     parse_fn: Callable[[str], float | None],
-) -> dict:
+) -> PanelScore:
     """Score every ``(prompt, response)`` pair with the panel; mean of medians.
 
     ``build_prompt`` renders the judge rubric for a pair; ``parse_fn`` extracts a

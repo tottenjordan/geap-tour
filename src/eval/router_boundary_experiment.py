@@ -80,6 +80,7 @@ from typing import TYPE_CHECKING
 
 from src.eval.pairwise_eval import PairwiseConfig, run_pairwise_eval
 from src.eval.stats import min_n_for_threshold
+from src.eval.types import PairwiseResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -189,7 +190,7 @@ def select_cases(band: str) -> list[dict]:
     return out
 
 
-def verdict(result: dict) -> dict:
+def verdict(result: PairwiseResult) -> dict:
     """Apply the pre-registered rule to one comparison's pairwise result.
 
     Reads ``result["significance"]`` (the sign test + Wilson CI that
@@ -268,7 +269,7 @@ def annotate_per_case(per_case: list[dict], *, classify=None) -> list[dict]:
     return per_case
 
 
-def subband_split(result: dict, boundary: float) -> dict:
+def subband_split(result: PairwiseResult, boundary: float) -> dict:
     """Split one comparison's decisive cases at ``boundary`` and score each side.
 
     The high band is the motivating case: the pooled run said sonnet beats pro

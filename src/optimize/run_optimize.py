@@ -15,6 +15,8 @@ import logging
 import os
 import sys
 
+from src.optimize.types import GepaSummary
+
 log = logging.getLogger(__name__)
 
 SAMPLER_CONFIG = os.path.join(os.path.dirname(__file__), "sampler_config.json")
@@ -109,7 +111,7 @@ def _patch_adk():
     log.info("ADK patches applied (extra fields + None inference + None score guard)")
 
 
-def summarize_gepa_result(optimization_result) -> dict:
+def summarize_gepa_result(optimization_result) -> GepaSummary:
     """Extract a tidy, serializable summary from a GEPA optimization result.
 
     Uses the authoritative field names rather than guesses:

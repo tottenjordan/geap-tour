@@ -98,14 +98,56 @@ class TestTheProducersEmitTheDeclaredShapes:
         assert summary["empty_rate_ci"][0] < summary["empty_rate"]
 
 
-class TestScopeIsDeliberatelyNarrow:
-    def test_only_boundary_records_are_typed(self):
-        """~85 other dict returns are left alone on purpose. If this module grows
-        to cover all of them, the cost/evidence tradeoff has been forgotten."""
+class TestNoTypeIsDecorative:
+    """Replaces an earlier `len(exported) <= 8` scope cap.
+
+    That cap guarded the wrong thing. It was written when the conversion was
+    deliberately narrow, and it measured *how many* types exist — a number that
+    says nothing about whether any of them check anything. `RateSummary` shipped
+    inside that cap, declared four keys against a producer that emits six, and had
+    zero usages outside its own declaration and a test that hand-built one. It was
+    decoration, and the cap was satisfied.
+
+    Now that the conversion is repo-wide, the invariant worth enforcing is the one
+    the module docstring has always argued for: **a type nothing flows through
+    checks nothing.** Every exported type must appear in `src/` outside this module.
+    """
+
+    @staticmethod
+    def _exported():
         import src.eval.types as t
 
-        exported = [n for n in dir(t) if not n.startswith("_") and n[0].isupper()]
-        assert len(exported) <= 8, f"scope creep: {exported}"
+        return [n for n in dir(t) if not n.startswith("_") and n[0].isupper()]
+
+    def test_every_type_is_used_by_real_code(self):
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "src"
+        sources = {
+            p: p.read_text()
+            for p in root.rglob("*.py")
+            if p.name != "types.py" or "eval" not in str(p)
+        }
+        unused = []
+        for name in self._exported():
+            pattern = re.compile(rf"\b{re.escape(name)}\b")
+            if not any(pattern.search(txt) for txt in sources.values()):
+                unused.append(name)
+        assert not unused, (
+            f"declared but never used — decoration, not checking: {unused}. "
+            "Annotate a producer and a consumer, or delete the type."
+        )
+
+    def test_the_detector_would_catch_a_decorative_type(self):
+        """Guards the guard: the regex must not match so loosely that any name
+        passes."""
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "src"
+        invented = re.compile(r"\bNoSuchRecordShape\b")
+        assert not any(invented.search(p.read_text()) for p in root.rglob("*.py"))
 
     @pytest.mark.parametrize("name", ["MetricDetail", "HealthVerdict", "RateSummary"])
     def test_each_type_records_why_it_exists(self, name):

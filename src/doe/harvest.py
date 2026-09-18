@@ -24,6 +24,7 @@ import time
 import pandas as pd
 
 from src.config import GCP_STAGING_BUCKET
+from src.doe.types import DoeManifest
 
 DEFAULT_AGENT = "coordinator_agent"
 
@@ -161,7 +162,7 @@ def _results_exist(gcs_uri: str, *, client=None) -> bool:
 
 
 def poll_jobs(
-    manifest: dict,
+    manifest: DoeManifest,
     *,
     interval_s: int = 30,
     timeout_s: int = 3600,
@@ -181,14 +182,19 @@ def poll_jobs(
         so a working long poll is distinguishable from a hang even when stdout
         is buffered by a background runner.
     """
-    pending = {
-        e["design_point"]: {
-            "resource": e["job_resource"],
+    # A loop rather than a comprehension purely so the filter and the narrowing are
+    # the same statement: `job_resource` is `str | None`, the comprehension's
+    # trailing `if` already guaranteed it non-None, and a type checker cannot see
+    # that. Same semantics, one less thing taken on trust.
+    pending: dict[str, dict[str, str]] = {}
+    for e in manifest["points"]:
+        resource = e.get("job_resource")
+        if not resource:
+            continue
+        pending[e["design_point"]] = {
+            "resource": resource,
             "gcs_results": e.get("gcs_results", ""),
         }
-        for e in manifest["points"]
-        if e.get("job_resource")
-    }
     states: dict[str, str] = {}
     waited = 0
     while pending and waited <= timeout_s:
@@ -222,7 +228,7 @@ def poll_jobs(
 
 
 def build_dataframe(
-    manifest: dict,
+    manifest: DoeManifest,
     results_by_point: dict[str, dict],
     agent: str = DEFAULT_AGENT,
 ) -> pd.DataFrame:
@@ -240,7 +246,7 @@ def build_dataframe(
 
 
 def harvest(
-    manifest: dict,
+    manifest: DoeManifest,
     *,
     agent: str = DEFAULT_AGENT,
     out_dir: str = ".",

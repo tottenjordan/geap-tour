@@ -22,6 +22,8 @@ filtered out of the predicted trajectory by default.
 
 from __future__ import annotations
 
+from src.eval.types import QueryResult, TrajectoryEvalResult
+
 # Deterministic (non-LLM) trajectory metrics, by their EvalTask literal names.
 # These are the string values of vertexai.preview.evaluation.constants.Metric
 # .TRAJECTORY_{EXACT_MATCH,PRECISION,RECALL}; spelled out here so the EvalTask
@@ -182,7 +184,7 @@ class CoordinatorRunnable:
                 resource, message=prompt, user_id=self._user_id, session_id=sid
             )
 
-    def query(self, input: str = "", **kwargs) -> dict:  # SDK invokes query(input=<prompt>)
+    def query(self, input: str = "", **kwargs) -> QueryResult:  # SDK invokes query(input=<prompt>)
         trajectory: list[dict] = []
         events: list[dict] = []
         for _ in range(self._empty_retries):
@@ -207,7 +209,7 @@ def run_trajectory_eval(
     eval_task_cls=None,
     runnable=None,
     experiment: str | None = None,
-) -> dict:
+) -> TrajectoryEvalResult:
     """Score the coordinator's tool-call trajectories deterministically.
 
     Filters ``cases`` to those carrying a ``reference_trajectory``, generates each
