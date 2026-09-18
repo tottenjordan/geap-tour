@@ -17,6 +17,11 @@ existing verifiers (does NOT reimplement them):
   ``docs/notes/online-quality-monitor.md``. *critical*
 * **memory_store** — the Memory Bank has persisted persona facts
   (:func:`src.eval.verify_memory.fetch_memories`). *critical*
+* the engine answers RELIABLY, not merely once — the silent-empty RATE with a
+  Wilson interval (:func:`src.eval.verify_coordinator_health.check_health`).
+  *critical*, and distinct from liveness above: at the 8-19% rate measured
+  2026-09-18 a pass-on-first-success check goes green 99.3% of the time while a
+  10-turn demo fails ~88% of the time.
 * **gateway_callouts** — the Agent Gateway's authorization callouts are not failing
   open (:func:`src.observability.gateway_callouts.read_callout_health`). *advisory* —
   and note ``no_data`` reports as ok with the verdict in the detail, because nothing is
@@ -163,6 +168,42 @@ def check_engine_live(
     return False, f"empty-at-200 on all {attempts} attempts (cold-start / wedged){suffix}"
 
 
+def check_engine_flakiness(
+    *,
+    engine_id: str,
+    repeat: int = 1,
+    threshold: float | None = None,
+    check_fn: Callable[..., dict] | None = None,
+) -> tuple[bool, str]:
+    """The engine answers RELIABLY — a rate, not a single success.
+
+    :func:`check_engine_live` above retries three times and passes on the first
+    success, which is the right question for a *wedged* engine and the wrong one
+    for a *flaky* one. At the rates measured 2026-09-18 (8-19% empty on both live
+    coordinator engines) that check passes **99.3%** of the time, while a 10-turn
+    demo has an **~88%** chance of at least one blank response. The gate went
+    green on an engine that will visibly fail on stage.
+
+    Deliberately `repeat=1` here: eight probes is enough to catch a badly broken
+    engine inside a readiness run that has to finish quickly. Run
+    ``verify_coordinator_health --repeat 5`` directly for a tighter interval
+    before anything that matters.
+    """
+    if check_fn is None:
+        from src.eval.verify_coordinator_health import check_health as check_fn
+    from src.eval.verify_coordinator_health import COORDINATOR_THRESHOLD
+
+    limit = COORDINATOR_THRESHOLD if threshold is None else threshold
+    report = check_fn(engine_id, repeat=repeat, threshold=limit, verbose=False)
+    summary, decision = report["summary"], report["verdict"]
+    lo, hi = summary["empty_rate_ci"]
+    detail = (
+        f"{summary['silent_empty']}/{summary['n']} silent empty "
+        f"({summary['empty_rate']:.0%}, 95% CI [{lo:.0%}, {hi:.0%}]) vs {limit:.0%} ceiling"
+    )
+    return decision["passed"], detail
+
+
 def check_recall(
     *, engine_id: str, user_id: str, recall_fn: Callable[..., dict] | None = None
 ) -> tuple[bool, str]:
@@ -217,6 +258,14 @@ def build_default_checks(*, engine_id: str, user_id: str, deep: bool = False) ->
             "name": "engine_live",
             "critical": True,
             "run": lambda: check_engine_live(engine_id=engine_id),
+        },
+        # CRITICAL, and the newest of these. engine_live answers "is it up";
+        # this answers "will it get through a demo", and only the second question
+        # catches the 8-19% empty rate both live engines carry.
+        {
+            "name": "engine_flakiness",
+            "critical": True,
+            "run": lambda: check_engine_flakiness(engine_id=engine_id),
         },
         {
             "name": "memory_store",
