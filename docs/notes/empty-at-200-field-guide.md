@@ -20,6 +20,22 @@ and they are indistinguishable from the client. Each needed a different response
 | 3 | OOM `SIGKILL` at the default 4Gi on a LiteLlm/Claude tier | missing enclosing span **plus** a fresh worker booting ~5.6s *into* the LiteLLM call, no traceback; litellm is +140MB resident / +334MB peak per worker | `resource_limits` 16Gi (now derived by `deploy_agents._auto_memory()`) | [router-claude-tier-oom.md](./router-claude-tier-oom.md) |
 | 4 | ADK strips the `adk-*` tool-call ids Anthropic pairs results by | Claude tier **only**, **multi-step** turns only, **mixed-tier** session only; `AnthropicError: 'tool_call_id'` | `restore_tool_call_ids()` in `RetryingLlm` | [router-empty-stream-retry.md](./router-empty-stream-retry.md) |
 
+## STILL PRESENT as of 2026-09-18 — and none of the five explains it
+
+A measured **8-19%** on both live coordinator engines (`4380…` 5/26, `3639…` 2/26),
+with every cause in the table above ruled out on its own signature: both engines are
+16Gi, `min_instances` 4, `gemini-2.5-flash`, capped tool payloads, 0 critical on
+`verify_engine_config`. It is also **not prompt- or tool-specific** — a control
+prompt that calls no tool fails too.
+
+`4380…` trends worse than `3639…` and differs mainly by carrying ADK 2.9.1, but
+Fisher p=0.42 at n=26/arm: that is a hypothesis, not a cause. See
+[empty-at-200-still-present-2026-09.md](./empty-at-200-still-present-2026-09.md)
+for the measurement, what it rules out, and the ~150-per-arm A/B needed to settle it.
+
+**So the count is five *explained* causes, not five causes.** Do not read the table
+below as exhaustive.
+
 ## A missing enclosing span does NOT prove a container kill
 
 This inference is the single biggest trap here, and we fell into it once. The

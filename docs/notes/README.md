@@ -56,7 +56,7 @@ file; keep this index short (< 200 lines).
   managed runtime; rearchitected to one direct-tools agent that swaps its model per
   tier via a stateless `TierRoutingLlm` dispatcher. (Its "residual empties are
   platform-wide" claim is falsified — see the note below.)
-- [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) — **start here** for
+- [Empty-at-200: which one is it?](./empty-at-200-field-guide.md) (+ [still present 2026-09](./empty-at-200-still-present-2026-09.md)) — **start here** for
   any zero-character HTTP 200. Five causes and the signature separating each. Cause 5:
   the 4Gi default OOM-kills **Gemini-only** engines too — 15% empty → **0%** at 16Gi,
   after concurrency, recycling, the SDK parser, sessions, Model Armor and the preload
