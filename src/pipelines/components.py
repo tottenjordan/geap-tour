@@ -180,6 +180,9 @@ def report(
     from src.eval.run_all_evals import build_report
 
     def _load(path: str) -> dict:
+        # Not a TypedDict: this reads an arbitrary JSON artifact off disk, whose
+        # shape varies by which upstream step wrote it. A declared shape here would
+        # be an assertion about a file, not about code.
         try:
             with open(path) as f:
                 return json.load(f)

@@ -43,9 +43,9 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from src.config import GCP_PROJECT_ID
+from src.observability.types import CalloutHealth
 
 # Bare metric ids under the networkservices prefix. These are emitted by Google for
 # Service Extensions callouts; we never write them.
@@ -115,7 +115,7 @@ def _by_status(series: list) -> dict[str, float]:
     return {k: v for k, v in out.items() if v}
 
 
-def read_callout_health(hours: int = DEFAULT_HOURS, *, client=None) -> dict[str, Any]:
+def read_callout_health(hours: int = DEFAULT_HOURS, *, client=None) -> CalloutHealth:
     """Three-valued verdict on whether the gateway's security callouts are running."""
     client = client or _client()
 
@@ -153,7 +153,7 @@ def read_callout_health(hours: int = DEFAULT_HOURS, *, client=None) -> dict[str,
     }
 
 
-def render(result: dict[str, Any]) -> str:
+def render(result: CalloutHealth) -> str:
     mark = {"ok": "ok", "failing": "XX", "no_data": "--"}[result["verdict"]]
     lines = [
         f"  {mark} gateway callouts [{result['verdict']}] over {result['window_hours']}h",
