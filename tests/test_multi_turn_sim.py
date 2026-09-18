@@ -243,3 +243,53 @@ class TestTheCliDoesNotSpendByAccident:
         out = capsys.readouterr().out
         assert "~15 engine calls" in out
         assert "~12 simulator calls" in out
+
+
+class TestEmptyStreamsAreNotScoredAsQuality:
+    """A dead stream has nothing for a rubric to grade — and the raters grade it.
+
+    This module labelled `stopped=empty_response` correctly from day one and then
+    handed those conversations to the scorer anyway, so one empty stream dragged a
+    run's mean down and an INFRA failure was published as QUALITY. The exact
+    conflation `multi_agent_batch_eval.partition_empty_responses` prevents.
+
+    Not caught by review — caught by a discrimination run whose baseline came back
+    0.25/1.00/0.17 against 1.00/1.00/1.00 the day before. Worse, it made
+    `trajectory_quality` read BLIND to a defect it actually catches at -0.83: an
+    already-floored metric cannot fall further, so infra contamination looks
+    exactly like rubric failure.
+    """
+
+    def test_empty_conversations_are_dropped_with_their_scenarios(self):
+        """Scenarios and conversations are positional; dropping one without the
+        other silently mislabels every remaining row."""
+        scenarios = [{"starting_prompt": "a"}, {"starting_prompt": "b"}, {"starting_prompt": "c"}]
+        convos = [
+            {"stopped": "plan_complete"},
+            {"stopped": "empty_response"},
+            {"stopped": "max_turns"},
+        ]
+        sc, cv, n_empty = mts.partition_empty_conversations(scenarios, convos)
+
+        assert n_empty == 1
+        assert [s["starting_prompt"] for s in sc] == ["a", "c"]
+        assert [c["stopped"] for c in cv] == ["plan_complete", "max_turns"]
+
+    def test_a_healthy_run_is_untouched(self):
+        scenarios = [{"starting_prompt": "a"}]
+        convos = [{"stopped": "plan_complete"}]
+        assert mts.partition_empty_conversations(scenarios, convos) == (scenarios, convos, 0)
+
+    def test_an_all_empty_run_leaves_nothing_to_score(self):
+        """The caller must report this as infra, not publish a mean over zero items,
+        which would render as catastrophic quality."""
+        convos = [{"stopped": "empty_response"}] * 2
+        sc, cv, n_empty = mts.partition_empty_conversations([{}, {}], convos)
+        assert (sc, cv, n_empty) == ([], [], 2)
+
+    def test_only_empty_response_is_dropped(self):
+        """`max_turns` and `plan_complete` are normal endings; dropping them would
+        silently shrink every run."""
+        convos = [{"stopped": s} for s in ("plan_complete", "max_turns", "empty_response")]
+        _, cv, _ = mts.partition_empty_conversations([{}] * 3, convos)
+        assert {c["stopped"] for c in cv} == {"plan_complete", "max_turns"}
