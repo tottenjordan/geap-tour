@@ -51,6 +51,7 @@ from src.doe.bakeoff_report import (
     online_from_grouped_monitors,
 )
 from src.doe.factors import get_factors
+from src.doe.types import BakeoffManifest, BakeoffResult
 from src.eval.artifacts import write_json_atomic
 
 # The DOE main-effect direction fixes the roles: gemini (coded -1) = baseline,
@@ -278,9 +279,9 @@ def _write_manifest(
     candidate_model: str,
     baseline_engine: str,
     candidate_engine: str,
-) -> dict:
+) -> BakeoffManifest:
     """Record both deployed engines in a manifest (also usable by pairwise --from-manifest)."""
-    manifest = {
+    manifest: BakeoffManifest = {
         "experiment_id": experiment_id or "bakeoff",
         "kind": "bakeoff",
         "factors": ["model_backend"],
@@ -344,7 +345,7 @@ def run_bakeoff(
     traffic_runner=None,
     teardown_fn=None,
     log_run_fn=None,
-) -> dict:
+) -> BakeoffResult:
     """Run (or plan) the full Gemini-vs-Claude coordinator bake-off.
 
     With ``dry_run=True`` (default) nothing is deployed or spent: returns a plan
