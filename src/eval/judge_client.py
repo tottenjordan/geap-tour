@@ -21,6 +21,7 @@ the mean", so behavior degrades exactly as before, only after retrying first.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import TYPE_CHECKING
 
@@ -54,19 +55,39 @@ def resolve_judge_location(judge_model: str, location: str | None = None) -> str
     return GCP_REGION
 
 
+def _default_jitter() -> float:
+    """Additive jitter in [0, 1) seconds. Separate so tests can pin it to 0."""
+    return random.random()
+
+
 def generate_with_retry(
     call: Callable[[], object],
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     backoff_s: float = DEFAULT_BACKOFF_S,
     sleep: Callable[[float], None] = time.sleep,
+    jitter: Callable[[], float] = _default_jitter,
 ) -> str:
     """Run a judge ``call`` (returns an object with ``.text``); retry on empty/error.
 
-    Retries on both a raised exception and empty/whitespace text, sleeping
-    ``backoff_s * attempt`` (linear) between tries. Returns the stripped judge
-    text, or ``""`` once ``max_attempts`` are exhausted (the callers drop empty
-    verdicts from the average). ``sleep`` is injectable so tests incur no delay.
+    Retries on both a raised exception and empty/whitespace text. Returns the
+    stripped judge text, or ``""`` once ``max_attempts`` are exhausted (the callers
+    drop empty verdicts from the average).
+
+    **Exponential with jitter**, ``backoff_s * 2**(attempt-1) + jitter()``. This was
+    linear (``backoff_s * attempt``) until 2026-09-18, which was the wrong way round
+    for two reasons:
+
+    * :mod:`src.models.quota_retry` already backs off exponentially (2s/4s) for the
+      same failure — a rate-limited Vertex call. Two retry policies for one failure
+      class, and the weaker one was on the busier path.
+    * This is the path that **fans out**. :mod:`src.eval.judge_panel` runs its
+      judges through a ``ThreadPoolExecutor``, so several workers hit the same
+      quota at once; with no jitter they sleep for identical durations, wake
+      together and collide again.
+
+    ``sleep`` and ``jitter`` are injectable so tests incur no delay and can assert
+    the exact sequence.
     """
     last_err: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -79,7 +100,7 @@ def generate_with_retry(
         except Exception as err:  # judge transport is best-effort; retry then drop
             last_err = err
         if attempt < max_attempts:
-            sleep(backoff_s * attempt)
+            sleep(backoff_s * (2 ** (attempt - 1)) + jitter())
     if last_err is not None:
         log.warning("judge call failed after %d attempts: %s", max_attempts, last_err)
     else:
