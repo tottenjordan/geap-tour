@@ -43,6 +43,8 @@ import argparse
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
+from typing import Any
 
 from src.doe.bakeoff_report import (
     build_bakeoff_report,
@@ -209,7 +211,7 @@ def _experiment_run_name(model_id: str) -> str:
 def _experiment_metrics(
     model_id: str,
     quality: dict[str, float],
-    pairwise: dict,
+    pairwise: Mapping[str, Any],
     online: dict[str, float],
     cost: float | None,
     *,

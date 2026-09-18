@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from src.eval.types import TrajectoryCapture
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
@@ -192,7 +194,7 @@ def capture_triples(
     include_transfers: bool = False,
     token: str | None = None,
     post=None,
-) -> list[dict]:
+) -> list[TrajectoryCapture]:
     """Like :func:`capture_pairs` but retains the executed trajectory.
 
     Returns ``[{"prompt", "response", "actual_trajectory"}, ...]`` — the shape
@@ -203,7 +205,7 @@ def capture_triples(
     from src.traffic.generate_traffic import _extract_text
 
     token = token or _default_token()
-    out: list[dict] = []
+    out: list[TrajectoryCapture] = []
     for prompt in prompts:
         sid = create_session(resource_name, user_id, token=token, post=post)
         events = stream_query_events(

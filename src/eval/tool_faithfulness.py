@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 
 from src.eval.judge_client import build_judge_generate_fn
 from src.eval.trajectory_eval import capture_trajectory
+from src.eval.types import FaithfulnessScores, TrajectoryCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -102,7 +103,7 @@ def capture_interaction(
     *,
     user_id: str = DEFAULT_USER_ID,
     include_transfers: bool = False,
-) -> dict:
+) -> TrajectoryCapture:
     """One ``stream_query`` pass → ``{"prompt", "response", "actual_trajectory"}``.
 
     ``response`` is the joined visible text (via the traffic generator's
@@ -198,7 +199,9 @@ Score: <1-5>"""
 # --------------------------------------------------------------------------- #
 # Scoring
 # --------------------------------------------------------------------------- #
-def score_cases(io_cases: Sequence[dict], generate_fn: Callable[[str], str]) -> dict:
+def score_cases(
+    io_cases: Sequence[TrajectoryCapture], generate_fn: Callable[[str], str]
+) -> FaithfulnessScores:
     """Judge each captured ``{prompt, response, actual_trajectory}``; aggregate.
 
     Returns ``{"score": mean 0-1 | None, "n_scored", "n_total", "flagged": [...],
@@ -257,7 +260,7 @@ def run_tool_faithfulness_eval(
     warm: bool = True,
     project: str | None = None,
     location: str | None = None,
-) -> dict:
+) -> FaithfulnessScores:
     """Capture (response, trajectory) per case over the deployed engine, then score.
 
     Defaults ``cases`` to the tool-expecting subset of ``EVAL_CASES``. ``engine``
@@ -307,13 +310,13 @@ def _to_monitored_scale(score: float) -> float:
     return round(float(score) * 5.0, 3)
 
 
-def _load_io_cases(path: str) -> list[dict]:
+def _load_io_cases(path: str) -> list[TrajectoryCapture]:
     """Load pre-captured ``[{prompt, response, actual_trajectory}, ...]`` from JSON."""
     with open(path) as f:
         return list(json.load(f))
 
 
-def _print_report(result: dict) -> None:
+def _print_report(result: FaithfulnessScores) -> None:
     """Print the mean + a per-case flagged-hallucination table."""
     score = result.get("score")
     scaled = f"{_to_monitored_scale(score):.2f}/5" if score is not None else "n/a"

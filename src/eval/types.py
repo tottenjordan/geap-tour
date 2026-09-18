@@ -285,3 +285,166 @@ class CostSummary(TypedDict):
     n_requests: int
     total_usd: float
     mean_usd_per_request: float
+
+
+class ClassifierAccuracy(TypedDict):
+    """How well the complexity classifier bands prompts.
+
+    Graded against **fixed reference bands**, deliberately not the tunable
+    ``COMPLEXITY_LOW``/``COMPLEXITY_HIGH`` cut-points. That is the whole design:
+    bucketing by the boundaries made the score move whenever *routing* was retuned,
+    and it did — the same 40 prompts and the same classifier read 50% and then 82.5%
+    purely because ``COMPLEXITY_LOW`` went 0.44 -> 0.25.
+
+    **``accuracy_pct`` is a formatted STRING** — ``"82.5%"``, not ``82.5``. The
+    alerting series of almost the same name, ``agent_router/classifier_accuracy_pct``,
+    is computed from the ``accuracy`` float instead
+    (``publish_router_efficiency.py``), and ``pipelines/components.py`` strips the
+    ``%`` before logging it. Two keys, one obvious-looking name, different types and
+    different consumers — declaring the type is how that stops being something you
+    have to already know. (Typed as ``float`` on the first pass here, from the name;
+    ``ty`` rejected it against the real producer.)
+    """
+
+    accuracy: float
+    accuracy_pct: str
+    correct: int
+    total_cases: int
+    avg_latency_ms: float
+    confusion_matrix: dict
+    per_case: list[dict]
+
+
+class CostEfficiency(TypedDict):
+    """Routed spend against the all-Opus counterfactual.
+
+    ``savings_pct`` publishes to ``agent_router/cost_savings_pct``. Note it **rises**
+    when routing collapses onto the cheapest tier — 93.1% to ~99.6% — so this record
+    looks its best exactly when the router has stopped routing. That blind spot is
+    why ``lite_tier_pct``/``tiers_used`` exist; nothing in this type can see it.
+    """
+
+    routed_cost_usd: float
+    all_opus_cost_usd: float
+    savings_pct: float
+    total_prompts: int
+    per_case: list[dict]
+
+
+class PairwiseAggregate(TypedDict):
+    """Win/tie rates for a side-by-side, with the significance test attached.
+
+    ``significance`` is a required key, not an optional extra: a raw win-rate over a
+    handful of cases reads like a result, and the whole reason this repo hand-rolled
+    a pairwise judge was to be able to say ``18-1, p=0.0001`` rather than "candidate
+    looks better". The rates and the test travel together or neither is trustworthy.
+    """
+
+    n_cases: int
+    win_rate_candidate: float
+    win_rate_baseline: float
+    tie_rate: float
+    significance: WinRateSignificance
+
+
+class PairwiseResult(PairwiseAggregate):
+    """A full side-by-side run: the aggregate, plus what produced it.
+
+    Separate from :class:`PairwiseAggregate` because the aggregate is a pure
+    function of the choices while these four keys are run provenance. ``config`` and
+    the two engine ids are what make a win-rate reproducible — a 62% with no record
+    of the judge model, the flip setting or which engines were compared is a number
+    nobody can re-derive.
+    """
+
+    per_case: list[dict]
+    config: dict
+    baseline_engine: str | None
+    candidate_engine: str | None
+
+
+class TrajectoryCapture(TypedDict):
+    """One prompt, the visible answer, and the tools actually executed.
+
+    Both halves in one record is the point. ``tool_use_judge`` scores only
+    ``(prompt, response)`` because ``run_inference`` yields text and no trajectory,
+    which is precisely the gap that lets a reply claim "I booked FL001" with no
+    booking call behind it. Faithfulness needs the pair.
+    """
+
+    prompt: str
+    response: str
+    actual_trajectory: list[dict]
+
+
+class QueryResult(TypedDict):
+    """What the SDK's ``EvalTask`` runnable hands back for one prompt.
+
+    Distinct from :class:`TrajectoryCapture` by one key: the SDK already knows the
+    prompt it passed in, so echoing it would be the runnable asserting an input
+    rather than reporting an output.
+    """
+
+    response: str
+    predicted_trajectory: list[dict]
+
+
+class FaithfulnessScores(TypedDict):
+    """Whether the agent's claims about its actions match the tools it ran.
+
+    ``flagged`` names the fabricated actions rather than only counting them — a
+    score of 2.0 with no names is unactionable, and naming them is what let the
+    synthetic-fabrication validation confirm the judge catches
+    ``book_flight``/``submit_expense``/``book_hotel`` specifically. Each entry is a
+    ``{prompt, hallucinated, score}`` record, not a bare action name: which prompt
+    provoked the fabrication is half the diagnosis.
+
+    ``per_case_scores`` is a list of the parsed **scores**, despite the name — only
+    the cases that parsed, so it is shorter than ``n_total`` whenever a verdict was
+    unreadable. Both element types were guessed wrong on the first pass here and
+    corrected by wiring them to the producer.
+    """
+
+    score: float | None
+    n_scored: int
+    n_total: int
+    flagged: list[dict]
+    per_case_scores: list[float]
+
+
+class TrajectoryEvalResult(TypedDict):
+    """Deterministic trajectory scoring, with the turns it could not score.
+
+    ``empty_trajectories`` is separate from ``scored_cases`` because a turn that
+    called no tool is an infra or prompting outcome, not a bad trajectory. Averaging
+    it in as a zero is the same mistake the multi-turn rubrics made before
+    ``partition_empty_conversations``.
+    """
+
+    metrics: dict
+    scored_cases: int
+    empty_trajectories: int
+
+
+class DatasetDescription(TypedDict):
+    """A dataset's size and content hash.
+
+    An eval score only means something relative to its dataset, and ``checksum`` is
+    what makes "the score moved" distinguishable from "the questions changed".
+    """
+
+    n_cases: int
+    checksum: str
+
+
+class HealthCheckResult(TypedDict):
+    """A flakiness probe run: the raw probes, their rates, and the verdict.
+
+    All three are kept rather than just the verdict, because a verdict of
+    INCONCLUSIVE is only interpretable next to the n and interval that produced it.
+    """
+
+    engine: str
+    results: list[dict]
+    summary: RateSummary
+    verdict: HealthVerdict

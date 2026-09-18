@@ -44,6 +44,7 @@ from src.eval import raw_stream
 from src.eval.policy_judge import build_policy_prompt
 from src.eval.quality_alerts import ONLINE_MONITORED_METRICS
 from src.eval.tool_use_judge import build_tool_use_prompt
+from src.eval.types import TrajectoryCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -433,7 +434,7 @@ def capture_live_faithfulness(
     user_id: str = "online-monitor-user",
     *,
     include_transfers: bool = False,
-) -> list[dict]:
+) -> list[TrajectoryCapture]:
     """Like :func:`capture_live_interactions`, but RETAIN the executed trajectory.
 
     Tool-call faithfulness needs the real ``function_call`` trajectory, which the
@@ -452,7 +453,7 @@ def capture_live_faithfulness(
     from src.eval.trajectory_eval import capture_trajectory
     from src.traffic.generate_traffic import _extract_text
 
-    triples: list[dict] = []
+    triples: list[TrajectoryCapture] = []
     for prompt in prompts:
         try:
             session = agent.create_session(user_id=user_id)
@@ -483,7 +484,7 @@ def capture_live_faithfulness(
 
 
 def score_and_publish_faithfulness(
-    triples: Sequence[dict],
+    triples: Sequence[TrajectoryCapture],
     *,
     generate_fn: Callable[[str], str],
     sample_rate: float = 1.0,

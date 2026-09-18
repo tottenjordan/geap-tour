@@ -89,7 +89,7 @@ class TestTheTypesSurviveTheContainerImportPath:
     def test_mock_db_imports_flat_with_no_parent_package(self, server):
         d = _REPO / "src" / "mcp_servers" / server
         code = "import mock_db; print('ok')"
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             [sys.executable, "-c", code],
             cwd=d,
             capture_output=True,

@@ -5,6 +5,7 @@ import time
 
 from agentplatform import types as vtx_types
 
+from src.eval.types import ClassifierAccuracy, CostEfficiency
 from src.router.complexity import (
     classify_complexity,
     score_to_model_tier,
@@ -114,7 +115,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Standalone complexity accuracy scorer
 # ---------------------------------------------------------------------------
-async def run_complexity_accuracy_eval(cases: list[dict]) -> dict:
+async def run_complexity_accuracy_eval(cases: list[dict]) -> ClassifierAccuracy:
     """Grade the CLASSIFIER: does it score each prompt into the right band?
 
     Graded with :func:`score_to_reference_band` — fixed thirds of the 0-1 range —
@@ -208,7 +209,7 @@ AVG_INPUT_TOKENS = 200
 AVG_OUTPUT_TOKENS = 500
 
 
-async def run_cost_efficiency_eval(cases: list[dict]) -> dict:
+async def run_cost_efficiency_eval(cases: list[dict]) -> CostEfficiency:
     """Compare smart-router cost vs all-Opus baseline.
 
     Uses the full 5-tier router (``score_to_model_tier``), so both the tier
