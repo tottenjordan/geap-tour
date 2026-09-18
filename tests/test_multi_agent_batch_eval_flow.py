@@ -627,3 +627,116 @@ class TestAFailedRubricVerdictIsNotNone:
         assert len(failed) == 2, "the failures must be countable"
         passed = len(got["rubric_verdicts"]) - len(failed)
         assert passed / len(got["rubric_verdicts"]) == pytest.approx(got["score"])
+
+
+class TestAResultSaysWhichEngineProducedIt:
+    """A scored record that cannot name what it measured.
+
+    `_run_single_agent_eval` takes `agent_resource_name`, runs inference against it,
+    and returns a result with no trace of it. The run-level wrapper keeps an
+    `agent_engines` map, so a *full* `run_multi_agent_batch_eval` artifact is
+    recoverable — but the per-agent block is what publishers actually consume, and
+    `publish_router_quality.run_batch()` calls `_run_single_agent_eval` DIRECTLY,
+    bypassing the wrapper entirely. That is the daily `router_quality.yaml` path
+    feeding `agent_router_quality/*`.
+
+    The repo already knows this hurts. The workflow runs
+    `verify_engine_config --role router` first specifically so it "fails loudly
+    rather than publishing another engine's scores into this series" — a pre-flight
+    check standing in for provenance the record could simply carry. Engine ids here
+    drift for real: `AGENT_ENGINE_ID` held a stale, unrelated engine for nine days.
+
+    It also makes a live mislabelling invisible. `travel_agent` and `expense_agent`
+    have no deployment — `deploy_agents.AGENT_SETS` has no entry for them and no
+    TRAVEL/EXPENSE engine id exists — so both fall through to `AGENT_ENGINE_ID` and
+    are scored against the **coordinator**. That is the only thing they *can* be
+    scored against, so the behaviour is right; reporting it as `travel_agent`
+    quality with nothing saying so is not.
+    """
+
+    def test_the_per_agent_result_records_its_engine(self, offline):
+        evals = _FakeEvals(_df(["a"]), {"runtime_0/safety_v1/AVERAGE": 0.9})
+        result = mabe._run_single_agent_eval(
+            client=_FakeClient(evals),
+            agent_name="coordinator_agent",
+            agent_resource_name="projects/p/locations/l/reasoningEngines/1234",
+            score_threshold=3.0,
+        )
+        assert result.get("engine") == "projects/p/locations/l/reasoningEngines/1234"
+
+    def test_a_skipped_run_still_records_its_engine(self, offline):
+        """The branch where it matters MOST. Every response came back empty, which
+        is an infra question — and the first thing you need to know about an infra
+        failure is which engine produced it. Found missing by mutation: dropping the
+        key from this branch alone passed the other two tests."""
+        evals = _FakeEvals(_df(["", ""]), {"runtime_0/safety_v1/AVERAGE": 0.9})
+        result = mabe._run_single_agent_eval(
+            client=_FakeClient(evals),
+            agent_name="coordinator_agent",
+            agent_resource_name="projects/p/locations/l/reasoningEngines/5555",
+            score_threshold=3.0,
+        )
+        assert result["status"] == "SKIPPED"
+        assert result.get("engine") == "projects/p/locations/l/reasoningEngines/5555"
+
+    def test_a_failed_run_still_records_its_engine(self, offline):
+        """The branch that matters most: 'which engine refused to grade' is the
+        first question anyone asks about a FAILED run."""
+        evals = _FakeEvals(_df(["a"]), {}, state="EvaluationRunState.FAILED")
+        result = mabe._run_single_agent_eval(
+            client=_FakeClient(evals),
+            agent_name="coordinator_agent",
+            agent_resource_name="projects/p/locations/l/reasoningEngines/9999",
+            score_threshold=3.0,
+        )
+        assert result["status"] == "FAILED"
+        assert result.get("engine") == "projects/p/locations/l/reasoningEngines/9999"
+
+
+class TestTheSubAgentsScoreAgainstTheCoordinator:
+    """Pins the mislabelling so it is a documented fact, not a discovery.
+
+    Not a bug to fix by changing behaviour — there is nowhere else to score them.
+    A test, so that the day a travel deployment appears, this fails and someone
+    points the eval at it instead of quietly continuing to grade the coordinator.
+    """
+
+    @pytest.mark.parametrize("agent", ["travel_agent", "expense_agent"])
+    def test_they_resolve_to_the_coordinator_engine(self, agent):
+        from src.config import AGENT_ENGINE_ID
+
+        assert mabe._DEFAULT_ENGINE_BY_AGENT.get(agent) is None, (
+            f"{agent} now has its own engine — point the eval at it and delete this test"
+        )
+        assert AGENT_ENGINE_ID in mabe._engine_for_agent(agent, None)
+
+    def test_neither_is_deployable_which_is_why(self):
+        """The reason the fallback is correct rather than lazy."""
+        from src.deploy.deploy_agents import AGENT_SETS
+
+        assert "travel" not in AGENT_SETS and "expense" not in AGENT_SETS
+
+
+class TestTheRunSaysSoOutLoud:
+    """Provenance in the record is for machines; the printed line is for people.
+
+    A saved JSON nobody opens does not stop someone reading "travel_agent: 4.2" off
+    a terminal and concluding the travel agent is healthy.
+    """
+
+    @pytest.mark.parametrize("agent", ["travel_agent", "expense_agent"])
+    def test_a_sub_agent_run_names_the_coordinator(self, agent):
+        assert "COORDINATOR" in mabe._engine_note(agent)
+
+    def test_an_agent_with_its_own_engine_gets_no_note(self):
+        """The note must stay rare, or it becomes furniture nobody reads."""
+        assert mabe._engine_note("coordinator_agent") == ""
+        assert mabe._engine_note("router_agent") == ""
+
+    def test_the_note_list_matches_the_engine_map(self):
+        """The two facts must not drift: an agent gets the note exactly when it has
+        no entry of its own in the engine map."""
+        for agent in mabe._NO_OWN_DEPLOYMENT:
+            assert agent not in mabe._DEFAULT_ENGINE_BY_AGENT, (
+                f"{agent} has its own engine now — drop it from _NO_OWN_DEPLOYMENT"
+            )

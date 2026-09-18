@@ -421,6 +421,22 @@ def _extract_item_results(evaluation_run) -> list[dict]:
     return items
 
 
+#: Agents with no deployment of their own. Both export ``root_agent`` and have their
+#: own evalsets, but ``deploy_agents.AGENT_SETS`` has no entry for either and no
+#: TRAVEL/EXPENSE engine id exists — so both fall through to ``AGENT_ENGINE_ID`` and
+#: are scored against the **coordinator**. That is the only engine they can be scored
+#: against, so the behaviour is right. Reporting it as travel/expense quality with
+#: nothing saying so was not.
+_NO_OWN_DEPLOYMENT = ("travel_agent", "expense_agent")
+
+
+def _engine_note(agent_name: str) -> str:
+    """Name the mismatch between the evalset run and the deployment that answered."""
+    if agent_name in _NO_OWN_DEPLOYMENT:
+        return "  ← the COORDINATOR engine; there is no separate deployment for this agent"
+    return ""
+
+
 def _run_single_agent_eval(
     client: Client,
     agent_name: str,
@@ -434,6 +450,7 @@ def _run_single_agent_eval(
 
     print(f"\n{'─' * 60}")
     print(f"  Agent: {agent_name} ({len(cases)} test cases)")
+    print(f"  Engine: {agent_resource_name.rsplit('/', 1)[-1]}{_engine_note(agent_name)}")
     print(f"  Metrics: {', '.join(getattr(m, 'name', str(m)) for m in metrics)}")
     print(f"  {_contamination_line(agent_name)}")
     print(f"{'─' * 60}")
@@ -490,6 +507,7 @@ def _run_single_agent_eval(
         print("  SKIPPED: every response was empty — this run measures infra, not quality.")
         return {
             "agent": agent_name,
+            "engine": agent_resource_name,
             "status": "SKIPPED",
             "reason": "all responses empty (infra failure, not a quality result)",
             "test_cases": len(cases),
@@ -566,6 +584,7 @@ def _run_single_agent_eval(
         print(f"  ERROR: {err}")
         return {
             "agent": agent_name,
+            "engine": agent_resource_name,
             "status": "FAILED",
             "error": str(err),
             "test_cases": len(cases),
@@ -635,6 +654,12 @@ def _run_single_agent_eval(
 
     return {
         "agent": agent_name,
+        # WHAT WAS MEASURED, as opposed to what it is labelled. `agent_name`
+        # names an evalset; `engine` names the deployment that answered. For
+        # travel_agent and expense_agent those differ — neither is deployable
+        # (deploy_agents.AGENT_SETS has no entry) so both are scored against the
+        # coordinator, which is correct and was previously invisible.
+        "engine": agent_resource_name,
         "status": "PASSED" if all_pass else "FAILED",
         "test_cases": len(cases),
         "inference_seconds": round(elapsed, 1),
