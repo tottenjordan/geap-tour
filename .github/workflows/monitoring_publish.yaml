@@ -116,7 +116,8 @@ jobs:
         continue-on-error: true
         run: |
           uv run python -m src.eval.online_monitor \
-            --agent-id "${{ vars.AGENT_ENGINE_ID }}"
+            --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
+            --label engine=pinned
 
       # agent_online_eval/tool_faithfulness is in ONLINE_MONITORED_METRICS (alert
       # < 3.0) but had NO scheduled writer — the online step above runs without
@@ -135,6 +136,32 @@ jobs:
           uv run python -m src.eval.online_monitor \
             --agent-id "${{ vars.AGENT_ENGINE_ID }}" \
             --faithfulness --samples 6
+
+      # SECOND ARM OF AN EMPTY-RATE A/B, and the reason it is here rather than in a
+      # one-off script: as of 2026-09-18 both live coordinator engines return
+      # empty-at-200 at a measured 8-19%, with all five documented causes ruled out
+      # on their own signatures (docs/empty_at_200_analysis.md). Probe `4380…`
+      # trends worse than the pinned engine and is the one carrying ADK 2.9.1 —
+      # but at n=26/arm that is Fisher p=0.42, i.e. nothing. Separating 19% from 8%
+      # at 80% power needs ~150 samples per arm.
+      #
+      # Firing ~300 requests in an afternoon to get them would also confound the
+      # comparison with time-of-day load. Sampling both engines on the SAME hourly
+      # tick, with the same client code, accumulates a properly powered and
+      # naturally interleaved comparison for free. Read it back with:
+      #
+      #   verify_monitors --format json --group-by engine
+      #
+      # DELETE THIS STEP once the question is answered — it doubles the online
+      # sampling cost, and an A/B that has served its purpose is just spend.
+      - name: Publish online quality for the probe engine (A/B arm)
+        id: online_probe
+        if: ${{ inputs.skip_online != 'true' && vars.PROBE_ENGINE_ID != '' }}
+        continue-on-error: true
+        run: |
+          uv run python -m src.eval.online_monitor \
+            --agent-id "${{ vars.PROBE_ENGINE_ID }}" \
+            --label engine=probe
 
       # agent_router/* was the one monitored surface with no scheduled writer: it
       # only moved when someone ran the full eval by hand, so the series sat at a
