@@ -127,6 +127,11 @@ def serialize_agent_card(card: AgentCard) -> dict:
 
     a2a-sdk 1.x cards are protobuf (``MessageToDict``); older releases expose a
     pydantic ``model_dump``.
+
+    **Deliberately not a TypedDict.** The shape is whatever the installed a2a-sdk
+    emits — that is the entire reason this function has two branches — so declaring
+    one would assert a contract this code exists precisely because we do not
+    control. The repo-wide conversion of dict returns skipped this on purpose.
     """
     if hasattr(card, "model_dump"):
         return card.model_dump(mode="json", exclude_none=True)  # ty: ignore[call-non-callable]
