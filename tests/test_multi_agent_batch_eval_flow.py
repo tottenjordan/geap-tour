@@ -740,3 +740,131 @@ class TestTheRunSaysSoOutLoud:
             assert agent not in mabe._DEFAULT_ENGINE_BY_AGENT, (
                 f"{agent} has its own engine now — drop it from _NO_OWN_DEPLOYMENT"
             )
+
+
+class TestAPartialItemSetSaysSo:
+    """`item_count: 5` cannot be distinguished from "there were only 5".
+
+    The SDK loads per-item results from GCS and **silently drops** any it cannot
+    parse. Measured live on run `8422690077322248192`: `total_items` is 8 and
+    `eval_case_results` is 5, with three `Failed to load evaluation result from
+    GCS ... extra_forbidden` messages on stdout. The three dropped cases are the
+    ones the service refused to grade — their result carries an `error` field the
+    SDK's own model forbids, so the record of *why* a case failed is exactly the
+    record that cannot be loaded.
+
+    Two reasons this needs recording rather than reading off stdout:
+
+    * A print is not a value. Nothing downstream can branch on it, and a scheduled
+      run's stdout is not where anyone looks.
+    * **The count is not stable.** Earlier in the same session this run returned all
+      8 cases; it now returns 5 across ~15 fetches in several processes. Whatever
+      causes that, a consumer comparing item counts between runs is comparing
+      something that moves on its own unless the shortfall travels with it.
+    """
+
+    class _PartialItems(_FakeEvals):
+        """3 of 8 cases dropped, exactly as the live SDK does it."""
+
+        def get_evaluation_run(self, name=None, include_evaluation_items=False):
+            run = super().get_evaluation_run(name=name)
+            case = SimpleNamespace(
+                eval_case_index=0,
+                response_candidate_results=[
+                    SimpleNamespace(
+                        metric_results={
+                            "safety_v1": SimpleNamespace(
+                                score=1.0,
+                                explanation=None,
+                                rubric_verdicts=[],
+                                error_message=None,
+                            )
+                        }
+                    )
+                ],
+            )
+            return SimpleNamespace(
+                **{
+                    **run.__dict__,
+                    "evaluation_item_results": SimpleNamespace(eval_case_results=[case] * 5),
+                }
+            )
+
+    def _run(self, evals):
+        return mabe._run_single_agent_eval(
+            client=_FakeClient(evals),
+            agent_name="coordinator_agent",
+            agent_resource_name="projects/p/locations/l/reasoningEngines/1",
+            score_threshold=3.0,
+        )
+
+    def test_the_shortfall_is_recorded(self):
+        evals = self._PartialItems(
+            _df(["a"] * 8), {"runtime_0/safety_v1/AVERAGE": 0.9}, total_items=8
+        )
+        result = self._run(evals)
+        assert result["item_count"] == 5
+        assert result["items_missing"] == 3, "5 of 8 must not read as 5 of 5"
+
+    def test_a_complete_item_set_records_zero(self):
+        """The flag must stay meaningful — always-nonzero would make it furniture."""
+        evals = self._PartialItems(
+            _df(["a"] * 5), {"runtime_0/safety_v1/AVERAGE": 0.9}, total_items=5
+        )
+        assert self._run(evals)["items_missing"] == 0
+
+    def test_it_never_goes_negative(self):
+        """`total_items` is the service's count and item rows are ours; if the two
+        ever disagree the other way, a negative 'missing' is nonsense that would
+        propagate into a report."""
+        evals = self._PartialItems(
+            _df(["a"] * 2), {"runtime_0/safety_v1/AVERAGE": 0.9}, total_items=2
+        )
+        assert self._run(evals)["items_missing"] == 0
+
+
+class TestThePerItemFlagIsOnlyWhereItIsRead:
+    """`include_evaluation_items=True` is not free and was set in five places.
+
+    It makes the service load every per-item result from GCS. Four of the five call
+    sites read only `summary_metrics` and never touched the items — verified live
+    that the summaries are byte-identical with and without it. What the flag added
+    there was N GCS reads per call and a burst of
+
+        Failed to load evaluation result from GCS: ... extra_forbidden
+
+    on stdout, one per case the service refused to grade. Alarming output about data
+    nothing in those functions consumes, which is its own cost: a reader who
+    investigates it finds nothing wrong, and next time does not investigate.
+
+    `batch_eval`'s call even carried the comment "Retrieve full results with
+    per-item scores". It does not; `_build_results` reads `summary_metrics` alone.
+    """
+
+    @staticmethod
+    def _sites():
+        import ast
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "src"
+        out = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and any(
+                    kw.arg == "include_evaluation_items" for kw in node.keywords
+                ):
+                    out.append(path.name)
+        return out
+
+    def test_only_the_module_that_reads_items_requests_them(self):
+        assert self._sites() == ["multi_agent_batch_eval.py"], (
+            f"include_evaluation_items is set in {self._sites()}; only the module "
+            "calling _extract_item_results should pay for the GCS loads"
+        )
+
+    def test_that_module_does_read_them(self):
+        """The other half — a flag nobody passes is as wrong as one nobody reads."""
+        import inspect
+
+        assert "evaluation_item_results" in inspect.getsource(mabe._extract_item_results)
