@@ -189,3 +189,99 @@ class BatchResult(TypedDict):
 #: Metric name -> published value on the 1-5 axis. An alias rather than a
 #: ``TypedDict`` because the keys are metric names, not a fixed record.
 PublishedScores = dict[str, float]
+
+
+class WinRateSignificance(TypedDict):
+    """A pairwise win-rate with the sign test and interval that qualify it.
+
+    ``decisive`` is the denominator, not ``wins + losses + ties``: ties are excluded
+    upstream, and reporting a win-rate over all cases would dilute exactly the
+    effect the test is looking for. Every boundary decision in the router
+    (``flash beat lite 18-1``, ``sonnet beats pro 17-1``) is this record.
+    """
+
+    wins: int
+    losses: int
+    decisive: int
+    win_rate_decisive: float
+    p_value: float
+    significant: bool
+    ci_low: float
+    ci_high: float
+    alpha: float
+
+
+class PowerReport(TypedDict):
+    """Is a proportion verdict supported by its sample, and if not, what would be.
+
+    ``verdict`` is three-valued — ``"above"`` / ``"below"`` / ``"inconclusive"`` — and
+    ``needed_n`` names the sample size that would resolve it (``None`` when already
+    resolved or unreachable). Collapsing this to a bool is the false-precision
+    failure the three-valued gates and the n=3 noise retraction both came from.
+    """
+
+    n: int
+    rate: float
+    ci: tuple[float, float]
+    threshold: float
+    resolved: bool
+    needed_n: int | None
+    verdict: Literal["above", "below", "inconclusive"]
+
+
+class MeanPowerReport(TypedDict):
+    """The same question asked of a MEAN rather than a proportion.
+
+    Kept separate from :class:`PowerReport` on purpose: they answer different
+    questions and their ``verdict`` vocabularies differ
+    (``healthy``/``breached``/``inconclusive`` vs ``above``/``below``). A monitored
+    gauge alerts on its value, so the claim under test is about the mean; framing it
+    as a good-share also sets an unreachable bar, under which a perfectly healthy
+    24-point series reads as underpowered and every alert is suppressed.
+
+    ``needed_n`` is absent here — there is no closed form for the bootstrap.
+    """
+
+    n: int
+    mean: float
+    ci: tuple[float, float]
+    threshold: float
+    resolved: bool
+    verdict: Literal["healthy", "breached", "inconclusive"]
+
+
+class RegressionCheck(TypedDict):
+    """A rolling-baseline z-score verdict, with the reason it may not have one.
+
+    ``status`` carries why: ``insufficient_history`` (fewer than ``min_baseline``
+    points), ``no_variance`` (a flat baseline leaves z undefined), or ``ok``. The
+    statistical keys are ``NotRequired`` because the first two states genuinely have
+    none — and that is the point. ``is_anomaly=False`` alongside
+    ``status="insufficient_history"`` is *not* a clean bill of health, and a type
+    that forced a ``baseline_mean`` into that branch would invite reading one.
+    """
+
+    status: Literal["insufficient_history", "no_variance", "ok"]
+    is_anomaly: bool
+    n_baseline: int
+    min_baseline: NotRequired[int]
+    baseline_mean: NotRequired[float]
+    baseline_std: NotRequired[float]
+    z: NotRequired[float | None]
+    current: NotRequired[float]
+    direction: NotRequired[str]
+    z_threshold: NotRequired[float]
+
+
+class CostSummary(TypedDict):
+    """Measured spend for one model over its usage records.
+
+    ``mean_usd_per_request`` is 0.0 when ``n_requests`` is 0 — a zero that means "no
+    data", not "free". The bake-off reports an honest ``n/a`` rather than a fake $0
+    for exactly this reason; the two keys have to be read together.
+    """
+
+    model: str
+    n_requests: int
+    total_usd: float
+    mean_usd_per_request: float
