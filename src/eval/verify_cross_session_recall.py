@@ -38,6 +38,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
+from src.eval.types import CrossSessionRecall, RecallVerdict
 from src.eval.verify_memory import (
     _default_engine_id,
     fetch_memories,
@@ -143,7 +144,7 @@ Reason: <one sentence>
 Recalled: <yes|no>"""
 
 
-def parse_recall_verdict(text: str | None) -> dict:
+def parse_recall_verdict(text: str | None) -> RecallVerdict:
     """Parse ``Recalled: yes|no`` (+ optional ``Reason:``) → a verdict dict.
 
     An absent or unparseable verdict is **not** recall: this gate should fail
@@ -165,7 +166,7 @@ def evaluate_recall(
     facts: Sequence[str],
     *,
     generate_fn: Callable[[str], str],
-) -> dict:
+) -> RecallVerdict:
     """Judge whether ``probe_response`` demonstrates recall of ``facts``.
 
     Replaces ``any(signal in response)``, which could not distinguish recall from
@@ -236,7 +237,7 @@ def run_cross_session_recall(
     probe_attempts: int = 3,
     sleep_fn: Callable[[float], None] = time.sleep,
     generate_fn: Callable[[str], str] | None = None,
-) -> dict:
+) -> CrossSessionRecall:
     """Drive session A → persistence → session B and report whether recall worked.
 
     Args:

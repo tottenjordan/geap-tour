@@ -651,3 +651,173 @@ class AnnotatorReliability(TypedDict):
     n_annotators: int
     n_pairable: int
     annotators: list[str]
+
+
+# --------------------------------------------------------------------------- #
+# Monitor verification
+# --------------------------------------------------------------------------- #
+class MetricSummary(TypedDict):
+    """One monitored metric over a lookback window, and three ways it can be wrong.
+
+    The static floor (``out_of_bounds``), the rolling baseline (``baseline``) and
+    the sample size (``underpowered`` / ``low_confidence``) are three independent
+    judgements, and all three are kept because each misses what the others catch:
+    a static floor misses drift that stays inside it, a z-score needs
+    ``MIN_BASELINE`` points before it says anything, and both are meaningless over
+    too few samples. Collapsing them to one boolean is how a monitor reports healthy
+    for the wrong reason.
+    """
+
+    current_score: float
+    avg_score: float
+    min_score: float
+    max_score: float
+    # None over an empty window — no percentile exists, which is not the same as 0.
+    p50_score: float | None
+    p90_score: float | None
+    eval_count: int
+    first_eval: str
+    last_eval: str
+    threshold: float
+    direction: str
+    # A COUNT of violating points, not a flag, despite reading like one. `if
+    # summary["out_of_bounds"]` happens to work; `== True` silently never does, and
+    # "3 of 24 points breached" is a different claim from "breached". Declared bool
+    # here from the name; ty read the producer.
+    out_of_bounds: int
+    low_confidence: bool
+    underpowered: bool
+    trend: dict
+    power: MeanPowerReport
+    baseline: RegressionCheck
+
+
+class BigQueryMetricSummary(TypedDict):
+    """A metric as the optional BigQuery export can describe it — a SUBSET.
+
+    Deliberately not :class:`MetricSummary`. The export has no rolling baseline, no
+    power report and no percentiles (``p50``/``p90`` are literal ``None``), so
+    presenting it as the same record would imply checks that path never ran. The
+    canonical source is Cloud Monitoring; this is a convenience read, and the type
+    is what stops the two being compared as equals.
+    """
+
+    eval_count: int
+    avg_score: float
+    min_score: float
+    max_score: float
+    p50_score: float | None
+    p90_score: float | None
+    out_of_bounds: bool
+    direction: str
+    trend: dict
+
+
+class BigQuerySurface(TypedDict):
+    """The BigQuery export's view of a surface. See :class:`BigQueryMetricSummary`."""
+
+    status: str
+    metrics: NotRequired[dict[str, BigQueryMetricSummary]]
+    total_evals: NotRequired[int]
+    error: NotRequired[str]
+    message: NotRequired[str]
+
+
+class SurfaceSummary(TypedDict):
+    """One monitored surface (coordinator quality, router efficiency, …).
+
+    ``missing`` is a first-class key: a metric with no data points is not a metric
+    that passed. An alert configured on a series nothing writes is the failure mode
+    this repo has fixed three separate times, and it is invisible unless absence is
+    reported as loudly as a breach.
+    """
+
+    status: str
+    # `--group-by` CHANGES THE SHAPE of this value. Ungrouped, each name maps to one
+    # MetricSummary. Grouped (the bake-off's `--group-by model`), each name maps to
+    # a dict of label value -> MetricSummary, so gemini and claude stay separate
+    # series instead of collapsing into one average. A reader who assumes the flat
+    # shape gets a dict where they expected a score.
+    #
+    # Required. These were briefly NotRequired to accommodate the BigQuery path's
+    # early exits, which made a dropped `missing` type-check clean — and `missing`
+    # is the key that reports the most dangerous state here. Splitting BigQuery into
+    # its own type let them go back to required, which a mutation test then
+    # confirmed catches the drop.
+    metrics: dict[str, MetricSummary | dict[str, MetricSummary]]
+    missing: list[str]
+    total_evals: int
+    # Present only in grouped mode, naming the label the metrics are split by. Its
+    # presence is how a reader knows which of the two `metrics` shapes they have.
+    group_by: NotRequired[str]
+    error: NotRequired[str]
+    message: NotRequired[str]
+
+
+# --------------------------------------------------------------------------- #
+# Verification probes
+# --------------------------------------------------------------------------- #
+class RecallVerdict(TypedDict):
+    """Did the agent actually recall the fact, per a grounded judge.
+
+    ``reason`` is required because the old substring check could not tell recall
+    from its opposite — *"I don't have a saved **window** seat preference"* contains
+    ``window`` and passed, on the precise symptom of memory being broken. The
+    judge's reason is what makes a PASS auditable.
+    """
+
+    recalled: bool
+    reason: str
+
+
+class CrossSessionRecall(RecallVerdict):
+    """The full two-session recall probe, with the evidence behind the verdict.
+
+    Both session ids are kept so a reader can confirm session B really was new —
+    same-session context would prove nothing. ``signals_found`` is diagnostic only;
+    it is deliberately NOT what decides ``recalled``.
+    """
+
+    session_a_id: str
+    session_b_id: str
+    facts: list[str]
+    probe_response: str
+    signals_found: list[str]
+
+
+class ToolsetCheck(TypedDict):
+    """Did one MCP toolset resolve its real tools.
+
+    ``missing`` turns a silently tool-less agent into something with a name. A
+    toolset that resolves to zero tools raises nothing — the agent simply cannot do
+    anything, and answers as if that were the question's fault.
+    """
+
+    domain: str
+    ok: bool
+    resolved: list[str]
+    missing: list[str]
+    # Present only when the toolset could not be reached at all — an unset server
+    # name, or an enumeration that raised. Distinct from `missing`, which means the
+    # toolset resolved and the tools were not in it. "Could not look" and "looked
+    # and they are gone" need different fixes.
+    error: NotRequired[str]
+
+
+class ProbeResult(TypedDict):
+    """A single engine probe: did it answer, how fast, and with what.
+
+    ``ok`` is about the transport; ``text_events`` is about whether anything was
+    actually said. Both are needed because the failure this repo chases most —
+    empty-at-200 — is exactly the combination ``ok=True`` with zero text.
+    """
+
+    ok: bool
+    elapsed_s: float
+    first_event_s: float | None
+    events: int
+    text_events: int
+    error: str | None
+    # Stamped by the CLI when probing several engines, so a result in a list can
+    # still name which engine produced it.
+    engine: NotRequired[str]

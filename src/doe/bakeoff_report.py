@@ -234,7 +234,7 @@ def quality_from_results_frame(df, level_to_model: dict[str, str]) -> dict[str, 
     return out
 
 
-def online_from_grouped_monitors(grouped: dict) -> dict[str, dict[str, float]]:
+def online_from_grouped_monitors(grouped: Mapping[str, Any]) -> dict[str, dict[str, float]]:
     """Per-model latency/error stats from a grouped ``verify_monitors`` result.
 
     Reads any surface with ``group_by`` set: its ``metrics`` map is
