@@ -347,6 +347,7 @@ def run_multi_turn_sim(
         conversations.append(convo)
 
     result: dict[str, Any] = {
+        "_scenarios": list(scenarios),
         "agent_id": agent_id,
         "agent_name": agent_name,
         "max_turns": max_turns,
@@ -407,6 +408,35 @@ def _score(
 
     _patch_evals_extra_fields()
     client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
+
+    # PARTITION INFRA OUT BEFORE SCORING. A conversation that ended because the
+    # engine returned zero characters has nothing for a rubric to grade, and the
+    # raters grade it anyway — so one dead stream drags the whole run's mean down
+    # and an INFRA failure is published as a QUALITY score. Exactly what
+    # `multi_agent_batch_eval.partition_empty_responses` and
+    # `online_monitor.infra_empty_rate` exist to stop, missed here when this module
+    # shipped: it labels `stopped=empty_response` correctly and then scored it.
+    #
+    # Found by the discrimination run, whose baseline came back 0.25/1.00/0.17
+    # against 1.00/1.00/1.00 a day earlier — one of two conversations was a dead
+    # stream.
+    scenarios, conversations, n_empty = partition_empty_conversations(scenarios, conversations)
+    if n_empty:
+        print(
+            f"  {n_empty}/{len(conversations)} conversation(s) ended EMPTY — excluded from scoring (infra, not quality)"
+        )
+    if not conversations:
+        # Scoring nothing would publish a mean over zero items, which renders as
+        # catastrophic quality. Say what happened instead.
+        return {
+            "state": "SKIPPED",
+            "reason": "every conversation ended on an empty stream (infra failure)",
+            "threshold": threshold / 5.0,
+            "metrics": {},
+            "empty_conversations": n_empty,
+            "all_passed": False,
+        }
+
     dataset = types.EvaluationDataset(
         eval_dataset_df=conversations_to_dataframe(scenarios, conversations)
     )
@@ -445,9 +475,147 @@ def _score(
         "state": state,
         "threshold": floor,
         "metrics": metrics,
+        "empty_conversations": n_empty,
+        "scored_conversations": len(conversations),
         # No metrics is NOT a pass — the failure mode PR #138 had to fix.
         "all_passed": bool(metrics) and all(v >= floor for v in metrics.values()),
     }
+
+
+def partition_empty_conversations(
+    scenarios: Sequence[dict], conversations: Sequence[dict]
+) -> tuple[list[dict], list[dict], int]:
+    """Drop conversations that died on an empty stream. Returns ``(scenarios, convos, n_empty)``.
+
+    A conversation that ended because the engine returned zero characters has
+    nothing for a rubric to grade — and the raters grade it anyway, so one dead
+    stream drags the run's mean down and an INFRA failure is published as a QUALITY
+    score. The same separation ``multi_agent_batch_eval.partition_empty_responses``
+    and ``online_monitor.infra_empty_rate`` make.
+
+    This module labelled ``stopped=empty_response`` correctly from the start and
+    then scored it anyway. Found by a discrimination run whose baseline came back
+    0.25/1.00/0.17 against 1.00/1.00/1.00 the day before — and which, worse, made
+    ``trajectory_quality`` look BLIND to a defect it catches at -0.83, because an
+    already-floored metric cannot fall further.
+    """
+    pairs = [
+        (sc, cv)
+        for sc, cv in zip(scenarios, conversations, strict=False)
+        if cv.get("stopped") != "empty_response"
+    ]
+    return [sc for sc, _ in pairs], [cv for _, cv in pairs], len(conversations) - len(pairs)
+
+
+def run_discrimination(
+    agent_id: str,
+    *,
+    agent_name: str = "coordinator_agent",
+    scenario_count: int = DEFAULT_SCENARIOS,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    score_threshold: float = 3.0,
+) -> dict[str, Any]:
+    """Score real conversations against deliberately broken copies of them.
+
+    The question this answers is not "how good is the agent" but "can this rubric
+    tell good from bad at all". A first live run scored 1.00/1.00/1.00, which is
+    consistent with a working metric AND with a metric that returns 1.00 for
+    everything — and those need to be distinguished before anything is gated on it.
+
+    Cheap by construction: the conversations are captured ONCE and every variant is
+    a pure transform (:mod:`src.eval.multi_turn_degrade`), so the cost is one
+    inference pass plus one scoring pass per variant. No extra agent calls.
+    """
+    from src.eval.multi_turn_degrade import DEGRADATIONS, TARGETS, degrade, describe
+
+    base = run_multi_turn_sim(
+        agent_id,
+        agent_name=agent_name,
+        scenario_count=scenario_count,
+        max_turns=max_turns,
+        score=False,
+    )
+    scenarios = base["_scenarios"]
+    real = base["conversations"]
+
+    import vertexai
+
+    from src.config import GCP_PROJECT_ID, GCP_REGION
+    from src.eval.batch_eval import _resolve_agent_resource_name
+
+    vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+    resource = _resolve_agent_resource_name(agent_id)
+
+    variants: dict[str, list[dict]] = {"real": real}
+    for name in DEGRADATIONS:
+        bad = [degrade(c, name) for c in real]
+        # A degradation that changed nothing yields a variant identical to the
+        # original, and a flat score would then be read as rubric blindness when it
+        # is really a no-op mutation. Say so instead of scoring it.
+        if all(b == c for b, c in zip(bad, real, strict=False)):
+            print(f"  SKIP {name}: no-op on these conversations (nothing to degrade)")
+            continue
+        variants[name] = bad
+
+    results: dict[str, Any] = {}
+    for name, convos in variants.items():
+        print(f"\nScoring variant: {name}")
+        if name != "real":
+            before, after = describe(real[0]), describe(convos[0])
+            print(f"  injected: {before} -> {after}")
+        results[name] = _score(scenarios, convos, resource, agent_name, score_threshold)
+
+    baseline = results.get("real", {}).get("metrics", {})
+    report = {"baseline": baseline, "variants": {}, "targets": TARGETS}
+    for name, res in results.items():
+        if name == "real":
+            continue
+        deltas = {
+            metric: round(res["metrics"].get(metric, 0.0) - value, 3)
+            for metric, value in baseline.items()
+        }
+        target = TARGETS.get(name, "")
+        hit = next((v for k, v in deltas.items() if target and target in k), None)
+        report["variants"][name] = {
+            "scores": res["metrics"],
+            "deltas": deltas,
+            "target": target,
+            "target_delta": hit,
+        }
+    return report
+
+
+def render_discrimination(report: dict[str, Any]) -> str:
+    """A verdict per degradation: did the targeted rubric actually move?"""
+    lines = ["", "=== DISCRIMINATION (does a known-bad conversation score lower?) ==="]
+    baseline = report["baseline"]
+    if not baseline:
+        return "\n".join([*lines, "  no baseline scores — nothing to compare against."])
+
+    lines.append(
+        "  baseline: "
+        + "  ".join(f"{k.rsplit('/', 1)[-1]}={v:.2f}" for k, v in sorted(baseline.items()))
+    )
+    for name, info in sorted(report["variants"].items()):
+        delta = info["target_delta"]
+        if delta is None:
+            verdict = "NO TARGET METRIC"
+        elif delta <= -0.5:
+            verdict = "DISCRIMINATES"
+        elif delta <= -0.2:
+            verdict = "weak"
+        else:
+            verdict = "BLIND"
+        lines.append(
+            f"  {name:<18} target={info['target']:<32} delta={delta if delta is None else f'{delta:+.2f}'}  [{verdict}]"
+        )
+    lines += [
+        "",
+        "  BLIND means the rubric scored a conversation with an injected defect the",
+        "  same as the real one. Until every row reads DISCRIMINATES, this metric is",
+        "  a capability demo and must not gate anything.",
+    ]
+    return "\n".join(lines)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -458,6 +626,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     parser.add_argument(
         "--score", action="store_true", help="Also score with the managed MULTI_TURN_* raters."
+    )
+    parser.add_argument(
+        "--discriminate",
+        action="store_true",
+        help="Score the real conversations against deliberately broken copies, and "
+        "report whether each rubric can tell them apart. Costs one scoring pass per "
+        "variant; the conversations are captured once.",
     )
     parser.add_argument("--threshold", type=float, default=3.0, help="1-5 floor (scaled by /5).")
     parser.add_argument("--json", metavar="PATH", help="Write the full result JSON here.")
@@ -479,6 +654,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"  scoring: {'on' if args.score else 'off'}"
         )
         return 0
+
+    if args.discriminate:
+        report = run_discrimination(
+            args.agent_id,
+            agent_name=args.agent_name,
+            scenario_count=args.scenario_count,
+            max_turns=args.max_turns,
+            score_threshold=args.threshold,
+        )
+        print(render_discrimination(report))
+        if args.json:
+            import pathlib
+
+            pathlib.Path(args.json).write_text(json.dumps(report, indent=2, default=str))
+            print(f"  wrote {args.json}")
+        # Non-zero when any targeted rubric failed to move: the metric is not yet
+        # a signal, and a green exit would say otherwise.
+        blind = [
+            n
+            for n, i in report["variants"].items()
+            if i["target_delta"] is None or i["target_delta"] > -0.2
+        ]
+        if blind:
+            print(f"\n  NOT A SIGNAL YET — blind to: {', '.join(sorted(blind))}")
+        return 1 if blind else 0
 
     result = run_multi_turn_sim(
         args.agent_id,

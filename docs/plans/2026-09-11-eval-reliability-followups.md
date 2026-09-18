@@ -149,7 +149,10 @@ and picking one is the remaining work:
 * **Local-`LlmAgent` path** — supported upstream today and genuinely multi-turn, but
   it measures local code, not the deployed engine. A different claim from the one the
   gate currently makes.
-* **Our own `stream_query` loop** — DONE 2026-09-17: `src/eval/multi_turn_sim.py`.
+* **Our own `stream_query` loop** — DONE 2026-09-17, and **validated as a signal 2026-09-18**: known-bad
+  variants (`multi_turn_degrade`) show all four rubrics discriminate (-0.80 to -1.00). The validation also
+  found that empty-stream conversations were being scored as quality; now partitioned out.
+  Original entry: `src/eval/multi_turn_sim.py`.
   Drives the deployed engine, one session per scenario, simulator model reading
   `conversation_plan`. Live: 2/2 genuinely multi-turn, six tools exercised, and
   **1.00/1.00/1.00** on the same managed `MULTI_TURN_*` rubrics that scored
