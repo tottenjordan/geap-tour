@@ -1133,11 +1133,13 @@ def run_batch_eval(
         print(f"  ERROR: Evaluation failed: {err}")
         sys.exit(2)
 
-    # Retrieve full results with per-item scores
-    evaluation_run = client.evals.get_evaluation_run(
-        name=evaluation_run.name,
-        include_evaluation_items=True,
-    )
+    # Retrieve the summary. NOT per-item scores, despite what this comment said
+    # until 2026-09-18: `_build_results` reads only `summary_metrics`, and its
+    # `failed_items` comes from there too (and is `None` on this SDK, so the key is
+    # always 0). The flag made the service load every per-item result from GCS and
+    # print a load failure for each ungradeable case — noise about data nothing here
+    # reads. `multi_agent_batch_eval` is the one that genuinely needs it.
+    evaluation_run = client.evals.get_evaluation_run(name=evaluation_run.name)
 
     # --- Build structured output ---
     results = _build_results(

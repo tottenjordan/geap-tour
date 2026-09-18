@@ -636,6 +636,19 @@ def _run_single_agent_eval(
 
     # Per-item details — the per-metric score AND the judge's rationale.
     items = _extract_item_results(evaluation_run)
+    # The SDK loads these from GCS and silently DROPS any it cannot parse, so
+    # `len(items)` alone cannot tell "5 of 8" from "there were only 5". Measured
+    # live: a case the service refused to grade writes an `error` field the SDK's
+    # own model forbids (`extra_forbidden`), so the record of *why* a case failed is
+    # precisely the record that fails to load. It prints and returns short.
+    # max(0, ...) because `total_items` is the service's count and the rows are
+    # ours; a negative "missing" would be nonsense propagating into a report.
+    items_missing = max(0, total_items - len(items))
+    if items_missing:
+        print(
+            f"  Per-item results: {len(items)}/{total_items} retrievable "
+            f"({items_missing} dropped by the SDK — scores above are unaffected)"
+        )
 
     # Print agent summary
     print(f"\n  Results for {agent_name} ({total_items} items):")
@@ -672,6 +685,7 @@ def _run_single_agent_eval(
         "summary_raw": raw_metrics,
         "evaluation_run_name": getattr(evaluation_run, "name", None),
         "item_count": len(items),
+        "items_missing": items_missing,
         "items": items,
     }
 
