@@ -197,10 +197,20 @@ def check_engine_flakiness(
     report = check_fn(engine_id, repeat=repeat, threshold=limit, verbose=False)
     summary, decision = report["summary"], report["verdict"]
     lo, hi = summary["empty_rate_ci"]
+
+    # LEAD WITH THE STATUS. This row's interface is boolean (ok, detail), and an
+    # INCONCLUSIVE verdict deliberately does not block the gate — so without the
+    # word, the line renders as "[PASS] engine_flakiness: 1/8 silent empty (12%...)"
+    # and an operator reads a green tick next to a 12% failure rate. A gate that
+    # says PASS when it means "I don't know" is the exact thing the three-valued
+    # verdict exists to avoid; collapsing it at the display layer would undo it.
+    status = decision.get("status", "PASS" if decision["passed"] else "FAIL")
     detail = (
-        f"{summary['silent_empty']}/{summary['n']} silent empty "
+        f"{status} — {summary['silent_empty']}/{summary['n']} silent empty "
         f"({summary['empty_rate']:.0%}, 95% CI [{lo:.0%}, {hi:.0%}]) vs {limit:.0%} ceiling"
     )
+    if status == "INCONCLUSIVE":
+        detail += " — NOT a clean bill of health; run verify_coordinator_health --repeat 5"
     return decision["passed"], detail
 
 

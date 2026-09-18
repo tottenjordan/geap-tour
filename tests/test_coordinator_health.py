@@ -283,6 +283,53 @@ class TestItIsCriticalInDemoReadiness:
         assert ok is False
         assert "2/8" in detail and "25%" in detail
 
+    def test_an_inconclusive_row_does_not_read_as_a_clean_pass(self):
+        """The row interface is boolean and INCONCLUSIVE deliberately does not block
+        the gate, so without the word the line renders as '[PASS] engine_flakiness:
+        1/8 silent empty (12%...)' — a green tick beside a 12% failure rate. Caught
+        by actually running demo_readiness, not by review."""
+        from src.eval.demo_readiness import check_engine_flakiness
+
+        ok, detail = check_engine_flakiness(
+            engine_id="x",
+            check_fn=lambda *a, **k: {
+                "summary": {
+                    "n": 8,
+                    "silent_empty": 1,
+                    "empty_rate": 0.12,
+                    "empty_rate_ci": (0.02, 0.47),
+                },
+                "verdict": {
+                    "passed": True,
+                    "status": "INCONCLUSIVE",
+                    "threshold": 0.05,
+                    "reason": "r",
+                },
+            },
+        )
+        assert ok is True, "inconclusive must not block the gate"
+        assert detail.startswith("INCONCLUSIVE"), "the status must lead, not hide"
+        assert "NOT a clean bill of health" in detail
+
+    def test_a_genuine_pass_is_not_hedged(self):
+        """The warning belongs on INCONCLUSIVE only; on every row it is noise."""
+        from src.eval.demo_readiness import check_engine_flakiness
+
+        _, detail = check_engine_flakiness(
+            engine_id="x",
+            check_fn=lambda *a, **k: {
+                "summary": {
+                    "n": 200,
+                    "silent_empty": 1,
+                    "empty_rate": 0.005,
+                    "empty_rate_ci": (0.0, 0.03),
+                },
+                "verdict": {"passed": True, "status": "PASS", "threshold": 0.05, "reason": "r"},
+            },
+        )
+        assert detail.startswith("PASS")
+        assert "NOT a clean bill" not in detail
+
     def test_the_detail_reports_the_interval_not_just_the_point(self):
         """At n=8 the point estimate alone invites a decision the data cannot
         support — the same lesson as the n=3 metric-noise retraction."""
