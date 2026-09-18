@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any
 
 from src.config import AGENT_ENGINE_ID, GCP_PROJECT_ID, GCP_REGION, ROUTER_ENGINE_ID
 from src.deploy.engine_baseline import evaluate, has_critical_drift, infer_role
+from src.deploy.types import EngineCheckResult, EngineSpec
 
 _API_VERSION = "v1beta1"
 
@@ -99,7 +99,7 @@ def modelarmor_grantees() -> set[str]:
     }
 
 
-def normalize(resource: dict) -> dict[str, Any]:
+def normalize(resource: dict) -> EngineSpec:
     """Flatten the API resource into the shape :func:`evaluate` expects.
 
     The interesting fields sit at three different depths and the env arrives as
@@ -127,7 +127,7 @@ def normalize(resource: dict) -> dict[str, Any]:
 
 def check_engine(
     engine_id: str, role: str | None = None, *, fetch=None, armor_grantees=None
-) -> dict[str, Any]:
+) -> EngineCheckResult:
     """Fetch one engine and evaluate it. Never raises — a fetch error is a result.
 
     ``armor_grantees`` is the set from :func:`modelarmor_grantees`, injected rather
@@ -195,7 +195,7 @@ def default_targets() -> list[tuple[str, str]]:
     return targets
 
 
-def render(results: list[dict], *, show_why: bool = False) -> str:
+def render(results: list[EngineCheckResult], *, show_why: bool = False) -> str:
     lines = ["=" * 74, "DEPLOYED ENGINE CONFIG", "=" * 74]
     for res in results:
         lines.append("")
@@ -230,7 +230,7 @@ def render(results: list[dict], *, show_why: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _jsonable(results: list[dict]) -> list[dict]:
+def _jsonable(results: list[EngineCheckResult]) -> list[dict]:
     return [{**r, "findings": [f.as_dict() for f in r["findings"]]} for r in results]
 
 

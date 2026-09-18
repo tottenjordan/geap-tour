@@ -488,3 +488,77 @@ class TestGatewayAttachedCheck:
         ok, observed = self._run({"env": {}, "agent_gateway_config": {}})
         assert ok, "a local flag must not make an unattached engine look like drift"
         assert "not requested" in observed
+
+
+class TestSpecKeysAreReal:
+    """Closes the hole `ty` leaves in a TypedDict read via `.get()`.
+
+    `EngineSpec` makes `spec["resourceLimits"]` a type error. It does **not** make
+    `spec.get("resourceLimits")` one — `.get()` accepts any `str`, so a misspelled
+    key type-checks clean and silently returns `None`. In this module that is the
+    worst possible failure: the baseline check reads nothing, concludes nothing is
+    wrong, and reports green on an engine that has drifted. Verified by mutation —
+    swapping one `.get("resource_limits")` for `.get("resourceLimits")` left both
+    `ruff` and `ty` completely silent.
+
+    Subscripts would be checked, but callers pass partial specs where `.get()`
+    yields `None` and `[...]` raises, so switching is a behaviour change rather than
+    a typing one. This guard buys the checking without the change.
+    """
+
+    @staticmethod
+    def _declared_keys():
+        from typing import get_type_hints
+
+        from src.deploy.types import EngineSpec
+
+        return set(get_type_hints(EngineSpec))
+
+    def test_every_spec_get_names_a_declared_field(self):
+        """Scans the AST, not the text.
+
+        A regex over the source matched the module's own comments — which spell the
+        misspelling out as the example — and reported them as violations. A comment
+        explaining a trap must not trip the guard against that trap.
+        """
+        import ast
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1] / "src/deploy/engine_baseline.py"
+        ).read_text()
+        declared = self._declared_keys()
+        bogus = [
+            n.args[0].value
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "get"
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == "spec"
+            and n.args
+            and isinstance(n.args[0], ast.Constant)
+            and isinstance(n.args[0].value, str)
+            and n.args[0].value not in declared
+        ]
+        assert not bogus, (
+            f"spec.get() reads keys EngineSpec does not declare: {bogus}. "
+            "ty cannot catch this — a misspelled key returns None and the check "
+            "passes green on a drifted engine."
+        )
+
+    def test_the_guard_would_reject_a_typo(self):
+        """Guards the guard: the key set must be specific enough to reject one."""
+        assert "resourceLimits" not in self._declared_keys()
+        assert "resource_limits" in self._declared_keys()
+
+    def test_comments_naming_the_typo_do_not_trip_the_guard(self):
+        """`engine_baseline` documents the trap using the misspelling itself, and a
+        text-scanning guard flagged that comment. This pins the AST approach."""
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1] / "src/deploy/engine_baseline.py"
+        ).read_text()
+        assert 'spec.get("resourceLimits")' in src, "the explanatory comment is gone"
+        self.test_every_spec_get_names_a_declared_field()

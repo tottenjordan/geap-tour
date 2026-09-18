@@ -30,11 +30,12 @@ are left to the deploy path.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from src.armor.config import server_side_armor_enabled
 from src.config import COMPLEXITY_HIGH, COMPLEXITY_LOW
 from src.deploy.deploy_agents import LITELLM_CPU, LITELLM_MEMORY
+from src.deploy.types import EngineSpec, FindingDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,7 +68,7 @@ class Finding:
     observed: str
     why: str
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> FindingDict:
         return {
             "name": self.name,
             "ok": self.ok,
@@ -84,19 +85,28 @@ class Check:
     severity: Severity
     expected: str
     why: str
-    predicate: Callable[[dict], tuple[bool, str]]
+    predicate: Callable[[EngineSpec], tuple[bool, str]]
     """``spec -> (ok, observed)``. Observed is rendered verbatim in the report."""
 
 
-def _env(spec: dict, key: str) -> str:
+def _env(spec: EngineSpec, key: str) -> str:
+    # WHY `.get()` AND NOT `spec["x"]`, given spec is now a TypedDict: ty key-checks
+    # a subscript and does NOT key-check `.get()`, so a misspelled
+    # `spec.get("resourceLimits")` type-checks clean and silently returns None — the
+    # check passes, the drift goes unreported, and this file's purpose is defeated.
+    # Subscripts would catch it, but callers (tests, and anything building a spec by
+    # hand) pass PARTIAL specs where `.get()` yields None and `[...]` raises. Changing
+    # that is a behaviour change, not a typing one. The gap is closed instead by
+    # tests/test_engine_baseline.py::TestSpecKeysAreReal, which fails on any
+    # `spec.get("<key>")` naming a field EngineSpec does not declare.
     return (spec.get("env") or {}).get(key) or ""
 
 
-def _limits(spec: dict) -> dict:
+def _limits(spec: EngineSpec) -> dict:
     return spec.get("resource_limits") or {}
 
 
-def _gateway_attached(spec: dict) -> tuple[bool, str]:
+def _gateway_attached(spec: EngineSpec) -> tuple[bool, str]:
     """Gateway binding must be present *iff* the engine was deployed with the flag.
 
     Reads the engine's own baked ``ENABLE_AGENT_GATEWAY``, not the local
@@ -265,7 +275,7 @@ SHARED_CHECKS: tuple[Check, ...] = (
 )
 
 
-def _all_set(spec: dict, keys: tuple[str, ...]) -> tuple[bool, str]:
+def _all_set(spec: EngineSpec, keys: tuple[str, ...]) -> tuple[bool, str]:
     missing = [k for k in keys if not _env(spec, k)]
     return (not missing, "all set" if not missing else f"missing {', '.join(missing)}")
 
@@ -381,7 +391,7 @@ def _armor_observation(spec) -> tuple[bool, str]:
 # --------------------------------------------------------------------- router
 
 
-def _tier_models_are_regional(spec: dict) -> tuple[bool, str]:
+def _tier_models_are_regional(spec: EngineSpec) -> tuple[bool, str]:
     """The router's Gemini tiers must be pinned to 2.x.
 
     This is the repo's single nastiest deploy trap: a plain
@@ -467,7 +477,7 @@ def checks_for(role: str) -> tuple[Check, ...]:
     return SHARED_CHECKS + extra
 
 
-def infer_role(spec: dict) -> str:
+def infer_role(spec: EngineSpec) -> str:
     """Best-effort role from the display name (``--role`` overrides).
 
     Deliberately conservative: an unrecognised name gets the shared checks only,
@@ -480,7 +490,7 @@ def infer_role(spec: dict) -> str:
     return "unknown"
 
 
-def evaluate(spec: dict, role: str | None = None) -> list[Finding]:
+def evaluate(spec: EngineSpec, role: str | None = None) -> list[Finding]:
     """Run the rule set for ``role`` against a normalized engine ``spec``.
 
     ``spec`` keys: ``engine_id``, ``display_name``, ``identity_type``,
