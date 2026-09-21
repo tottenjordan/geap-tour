@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.eval.types import CostSummary
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
@@ -90,7 +92,7 @@ def aggregate_cost_usd(model_id: str, usages: Iterable[Mapping]) -> float:
     return sum(per_request_cost_usd(model_id, *_tokens(u)) for u in usages)
 
 
-def cost_summary(model_id: str, usages: Iterable[Mapping]) -> dict:
+def cost_summary(model_id: str, usages: Iterable[Mapping]) -> CostSummary:
     """Total + mean per-request USD for a model over its usage records."""
     usages = list(usages)
     n = len(usages)

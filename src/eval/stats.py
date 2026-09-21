@@ -27,6 +27,8 @@ import random
 import statistics
 from collections.abc import Iterable, Sequence
 
+from src.eval.types import MeanPowerReport, PowerReport, WinRateSignificance
+
 # Below this many observations an aggregate is flagged low-confidence. Chosen to
 # match the demo-scale evalsets (~8-25 cases); override per call site as needed.
 MIN_SAMPLES = 8
@@ -160,7 +162,7 @@ def wilson_ci(k: int, n: int, *, confidence: float = DEFAULT_CONFIDENCE) -> tupl
 
 def win_rate_significance(
     wins: int, losses: int, *, alpha: float = 0.05, confidence: float = DEFAULT_CONFIDENCE
-) -> dict:
+) -> WinRateSignificance:
     """Sign test + Wilson CI on a pairwise win-rate (ties excluded upstream).
 
     ``wins``/``losses`` are the decisive counts; the denominator is their sum.
@@ -253,7 +255,7 @@ def min_n_for_threshold(
 
 def power_report(
     k: int, n: int, threshold: float, *, confidence: float = DEFAULT_CONFIDENCE
-) -> dict:
+) -> PowerReport:
     """One shape every caller can report: is this verdict supported, and if not, what would be.
 
     Keys: ``n``, ``rate``, ``ci`` (low, high), ``threshold``, ``resolved``,
@@ -291,7 +293,7 @@ def mean_power_report(
     comparison: str = "LT",
     *,
     confidence: float = DEFAULT_CONFIDENCE,
-) -> dict:
+) -> MeanPowerReport:
     """Can this sample resolve whether its MEAN sits past ``threshold``?
 
     The proportion-based :func:`power_report` answers "what share of points are

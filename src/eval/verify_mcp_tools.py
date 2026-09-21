@@ -29,6 +29,7 @@ import argparse
 import json
 
 from src.config import BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER, SEARCH_MCP_SERVER
+from src.eval.types import ToolsetCheck
 
 # The real tools each MCP server defines (src/mcp_servers/*/server.py). A toolset
 # that resolves fewer than these has silently lost tools.
@@ -56,7 +57,7 @@ def evaluate_toolset(
     domain: str,
     resolved_tools,
     expected: dict[str, set[str]] = EXPECTED_TOOLS,
-) -> dict:
+) -> ToolsetCheck:
     """Pure check: are all of ``domain``'s expected tools present in what resolved?
 
     A toolset is OK only when it resolved at least one tool AND every expected
@@ -90,7 +91,9 @@ def _enumerate_tools(server_name: str) -> list[str]:
     return asyncio.run(_go())
 
 
-def run_checks(*, server_names: dict[str, str] | None = None, enumerate_fn=None) -> list[dict]:
+def run_checks(
+    *, server_names: dict[str, str] | None = None, enumerate_fn=None
+) -> list[ToolsetCheck]:
     """Check every configured MCP server; return one result dict per domain.
 
     ``enumerate_fn(server_name) -> list[str]`` and ``server_names`` are injectable
@@ -99,7 +102,7 @@ def run_checks(*, server_names: dict[str, str] | None = None, enumerate_fn=None)
     server_names = server_names if server_names is not None else SERVER_NAMES
     enumerate_fn = enumerate_fn or _enumerate_tools
 
-    results: list[dict] = []
+    results: list[ToolsetCheck] = []
     for domain, name in server_names.items():
         if not name:
             results.append(
@@ -129,7 +132,7 @@ def run_checks(*, server_names: dict[str, str] | None = None, enumerate_fn=None)
     return results
 
 
-def render(results: list[dict]) -> str:
+def render(results: list[ToolsetCheck]) -> str:
     """Human-readable PASS/FAIL lines, one per domain plus an overall verdict."""
     lines: list[str] = []
     for r in results:

@@ -20,6 +20,7 @@ import sys
 from src.config import GCP_STAGING_BUCKET
 from src.doe.design import DesignPoint
 from src.doe.factors import Factor, requires_fresh_deploy
+from src.doe.types import DoeManifest, PointParams
 from src.eval.artifacts import write_json_atomic
 
 _JOB_PREFIX = "Submitted PipelineJob: "
@@ -68,7 +69,7 @@ def submit_point(
     spec_dir: str = "build/pipeline_specs",
     dry_run: bool = False,
     runner=subprocess.run,
-) -> dict:
+) -> PointParams:
     """Submit one design point; return its manifest entry.
 
     When any active factor is engine_env (or no reuse engine is given) a fresh
@@ -98,7 +99,7 @@ def submit_point(
     else:
         cmd += ["--agent-id", reuse_agent_id]
 
-    entry = {
+    entry: PointParams = {
         "design_point": point.design_point,
         "is_baseline": point.is_baseline,
         "assignments": dict(point.assignments),
@@ -133,9 +134,9 @@ def build_manifest(
     design: list[DesignPoint],
     factors: list[Factor],
     experiment_id: str,
-    entries: list[dict],
+    entries: list[PointParams],
     kind: str,
-) -> dict:
+) -> DoeManifest:
     return {
         "experiment_id": experiment_id,
         "kind": kind,
@@ -146,7 +147,7 @@ def build_manifest(
     }
 
 
-def write_manifest(manifest: dict, out_dir: str, upload_gcs: bool = True) -> str:
+def write_manifest(manifest: DoeManifest, out_dir: str, upload_gcs: bool = True) -> str:
     """Write the manifest locally and (best-effort) to GCS. Returns local path.
 
     ``upload_gcs=False`` keeps the manifest local-only. A dry run uses this so it
@@ -187,7 +188,7 @@ def launch(
     out_dir: str | None = None,
     dry_run: bool = False,
     runner=subprocess.run,
-) -> dict:
+) -> DoeManifest:
     """Submit every design point and write the run manifest."""
     out_dir = out_dir or os.path.join("doe_runs", experiment_id)
     # Compile targets must exist before each submit subprocess writes its spec.

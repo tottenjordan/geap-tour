@@ -23,6 +23,7 @@ import json
 import time
 
 from src.config import GCP_PROJECT_ID, GCP_REGION
+from src.eval.types import ProbeResult
 from src.traffic.generate_traffic import _extract_text
 
 # A multi-intent prompt that exercises both sub-agents (travel + expense), so a
@@ -38,7 +39,7 @@ def probe_engine(
     *,
     user_id: str = "probe",
     session_id: str | None = None,
-) -> dict:
+) -> ProbeResult:
     """Stream one query at a deployed engine; count events. Never raises.
 
     Returns ``{events, text_events, ok, error, elapsed_s, first_event_s}``.
@@ -77,7 +78,7 @@ def probe_engine(
     }
 
 
-def format_result(result: dict) -> str:
+def format_result(result: ProbeResult) -> str:
     """One-line human summary of a probe result (contains PASS/FAIL)."""
     verdict = "PASS" if result.get("ok") else "FAIL"
     parts = [

@@ -44,6 +44,12 @@ from src.eval import raw_stream
 from src.eval.policy_judge import build_policy_prompt
 from src.eval.quality_alerts import ONLINE_MONITORED_METRICS
 from src.eval.tool_use_judge import build_tool_use_prompt
+from src.eval.types import (
+    OnlineAggregate,
+    OnlineFaithfulnessResult,
+    OnlinePublishResult,
+    TrajectoryCapture,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -213,7 +219,9 @@ def sample_interactions(interactions: Sequence, sample_rate: float) -> list:
     return items[::stride]
 
 
-def aggregate_scores(interaction_scores: Sequence[Mapping[str, float]]) -> dict:
+def aggregate_scores(
+    interaction_scores: Sequence[Mapping[str, float]],
+) -> OnlineAggregate:
     """Mean each metric over the interactions that produced it, with uncertainty.
 
     Returns ``{"scores": {name: mean 0-1}, "counts": {name: n},
@@ -305,7 +313,7 @@ def score_and_publish(
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
     dry_run: bool = False,
-) -> dict:
+) -> OnlinePublishResult:
     """Sample → partition → score → aggregate → publish a batch of interactions.
 
     The shared core of both CLI paths (live ``stream_query`` and ``--from-json``).
@@ -433,7 +441,7 @@ def capture_live_faithfulness(
     user_id: str = "online-monitor-user",
     *,
     include_transfers: bool = False,
-) -> list[dict]:
+) -> list[TrajectoryCapture]:
     """Like :func:`capture_live_interactions`, but RETAIN the executed trajectory.
 
     Tool-call faithfulness needs the real ``function_call`` trajectory, which the
@@ -452,7 +460,7 @@ def capture_live_faithfulness(
     from src.eval.trajectory_eval import capture_trajectory
     from src.traffic.generate_traffic import _extract_text
 
-    triples: list[dict] = []
+    triples: list[TrajectoryCapture] = []
     for prompt in prompts:
         try:
             session = agent.create_session(user_id=user_id)
@@ -483,14 +491,14 @@ def capture_live_faithfulness(
 
 
 def score_and_publish_faithfulness(
-    triples: Sequence[dict],
+    triples: Sequence[TrajectoryCapture],
     *,
     generate_fn: Callable[[str], str],
     sample_rate: float = 1.0,
     writer: MetricsWriter | None = None,
     extra_labels: Mapping[str, str] | None = None,
     dry_run: bool = False,
-) -> dict:
+) -> OnlineFaithfulnessResult:
     """Sample → drop infra-empty → grounded-judge faithfulness → publish online.
 
     Reuses :func:`src.eval.tool_faithfulness.score_cases` (same judge + parser as
@@ -537,7 +545,7 @@ def run_online_faithfulness(
     dry_run: bool = False,
     agent=None,
     generate_fn: Callable[[str], str] | None = None,
-) -> dict:
+) -> OnlineFaithfulnessResult:
     """Drive live traffic, capture trajectories, and publish online faithfulness.
 
     The faithfulness analogue of :func:`run_online_monitor`: it captures
@@ -587,7 +595,7 @@ def run_online_monitor(
     generate_fn: Callable[[str], str] | None = None,
     panel: bool = False,
     judges: Sequence[Callable[[str], str]] | None = None,
-) -> dict:
+) -> OnlinePublishResult:
     """Sample live coordinator traffic, score it, and publish ``agent_online_eval/*``.
 
     Drives the probe prompts (or ``prompts``, capped at ``n_interactions``)
@@ -660,7 +668,7 @@ def _load_pairs(path: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _print_summary(result: dict, *, dry_run: bool) -> None:
+def _print_summary(result: OnlinePublishResult, *, dry_run: bool) -> None:
     agg = result["aggregate"]
     n_empty = result.get("n_infra_empty", 0)
     empty_rate = result.get("infra_empty_rate", 0.0)
@@ -701,7 +709,7 @@ def _print_summary(result: dict, *, dry_run: bool) -> None:
     print(f"{prefix}: {json.dumps(result['published'], indent=2, sort_keys=True)}")
 
 
-def _print_faithfulness_summary(result: dict, *, dry_run: bool) -> None:
+def _print_faithfulness_summary(result: OnlineFaithfulnessResult, *, dry_run: bool) -> None:
     inner = result["result"]
     score = inner.get("score")
     scaled = f"{_to_monitored_scale(score)} (1-5)" if score is not None else "n/a"

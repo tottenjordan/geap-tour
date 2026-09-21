@@ -46,7 +46,7 @@ import argparse
 import json
 from typing import TYPE_CHECKING, Any
 
-from src.eval.types import HealthVerdict
+from src.eval.types import HealthCheckResult, HealthVerdict, RateSummary
 from src.eval.verify_router_health import (
     DEFAULT_THRESHOLD,
     run_probes,
@@ -86,7 +86,7 @@ def check_health(
     probes: Sequence[tuple[str, str]] | None = None,
     verbose: bool = True,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> HealthCheckResult:
     """Probe the coordinator ``repeat`` times per prompt; return summary + verdict.
 
     ``kwargs`` forwards the router check's injectable seams (``stream_fn``,
@@ -110,7 +110,7 @@ def check_health(
     }
 
 
-def three_valued_verdict(summary: dict, *, threshold: float) -> HealthVerdict:
+def three_valued_verdict(summary: RateSummary, *, threshold: float) -> HealthVerdict:
     """PASS / FAIL / INCONCLUSIVE on the silent-empty rate.
 
     The router's binary :func:`~src.eval.verify_router_health.verdict` compares a
@@ -178,7 +178,7 @@ def _n_needed(rate: float, threshold: float) -> str:
     return f"~{rounded} turns would settle it"
 
 
-def format_report(report: dict[str, Any]) -> str:
+def format_report(report: HealthCheckResult) -> str:
     """Report the RATE and its interval, never a bare count.
 
     "1 empty in 8" is not 12.5% in any useful sense — at demo sample sizes the

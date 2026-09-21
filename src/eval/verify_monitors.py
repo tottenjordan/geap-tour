@@ -31,8 +31,9 @@ Usage:
 import json
 import sys
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from src.config import BQ_EVAL_DATASET, GCP_PROJECT_ID
 from src.eval.quality_alerts import (
@@ -42,6 +43,12 @@ from src.eval.quality_alerts import (
     ONLINE_MONITORED_METRICS,
     ROUTER_MONITORED_METRICS,
     ROUTER_QUALITY_MONITORED_METRICS,
+)
+from src.eval.types import (
+    BigQueryMetricSummary,
+    BigQuerySurface,
+    MetricSummary,
+    SurfaceSummary,
 )
 
 DEFAULT_THRESHOLD = 3.0
@@ -180,7 +187,7 @@ def _out_of_bounds(scores: list[float], threshold: float, comparison: str) -> in
 
 def _summarize(
     scores: list[float], epochs: list[float], threshold: float, comparison: str, now: float
-) -> dict:
+) -> MetricSummary:
     """Build the per-metric summary dict for one score/epoch bucket."""
     from src.eval.baseline import detect_regression
     from src.eval.stats import is_low_confidence, mean_power_report
@@ -231,7 +238,7 @@ def _summarize(
 
 def _aggregate_surface(
     series_iter, metric_specs, now: float | None = None, group_by_label: str | None = None
-) -> dict:
+) -> SurfaceSummary:
     """Collapse a surface's TimeSeries into the per-metric summary dict shape.
 
     Ungrouped (default), ``metrics[name]`` is a flat summary. When
@@ -259,7 +266,7 @@ def _aggregate_surface(
             bucket["scores"].append(float(point.value.double_value))
             bucket["epochs"].append(_point_epoch(point))
 
-    metrics: dict[str, dict] = {}
+    metrics: dict[str, MetricSummary | dict[str, MetricSummary]] = {}
     total = 0
     for (name, label_value), bucket in sorted(buckets.items()):
         scores = bucket["scores"]
@@ -271,7 +278,14 @@ def _aggregate_surface(
         if group_by_label is None:
             metrics[name] = summary
         else:
-            metrics.setdefault(name, {})[label_value] = summary
+            # `metrics[name]` is the label->summary dict in grouped mode. Built
+            # explicitly rather than via setdefault so the union narrows: the value
+            # is either a MetricSummary or a dict of them, never both.
+            grouped = metrics.get(name)
+            if not isinstance(grouped, dict) or "eval_count" in grouped:
+                grouped = {}
+                metrics[name] = grouped
+            grouped[label_value] = summary
 
     # A metric that is ALERTED but has no points is the most dangerous state this
     # module can encounter, and until now it was the one state it could not report:
@@ -285,7 +299,7 @@ def _aggregate_surface(
     # state means the next one is found by the tooling.
     missing = sorted({name for name, _t, _c in metric_specs} - set(metrics))
 
-    surface = {
+    surface: SurfaceSummary = {
         "status": _surface_status(metrics),
         "metrics": metrics,
         "total_evals": total,
@@ -440,7 +454,7 @@ def _bq_table_ref() -> str:
     return f"{GCP_PROJECT_ID}.{BQ_EVAL_DATASET}.online_eval_results"
 
 
-def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> dict:
+def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> BigQuerySurface:
     if bq_client is None:
         from google.cloud import bigquery
 
@@ -479,7 +493,7 @@ def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> dict:
     if not rows:
         return {"status": "empty", "message": "No rows in the export table for the window."}
 
-    metrics = {
+    metrics: dict[str, BigQueryMetricSummary] = {
         row.metric_name: {
             "eval_count": row.eval_count,
             "avg_score": row.avg_score,
@@ -511,7 +525,7 @@ def verify_monitor_results(
     client=None,
     bq_client=None,
     group_by: str | None = None,
-) -> dict | None:
+) -> BigQuerySurface | Mapping[str, Any] | None:
     """Summarize periodic-snapshot quality/efficiency scores.
 
     Args:
@@ -611,7 +625,7 @@ def _print_surface(title: str, surface: dict) -> None:
             print()
 
 
-def _print_report(data: dict, hours: int) -> None:
+def _print_report(data: Mapping[str, Any], hours: int) -> None:
     # BigQuery / non-surfaced shapes: single message.
     if "coordinator_quality" not in data and data.get("status") != "ok":
         print(data.get("message", data.get("error", "Unknown status")))
@@ -637,7 +651,7 @@ def _print_report(data: dict, hours: int) -> None:
     print("=" * 60)
 
 
-def generate_markdown_report(data: dict) -> str:
+def generate_markdown_report(data: BigQuerySurface | Mapping[str, Any]) -> str:
     """Generate a markdown summary report from verify results (both surfaces)."""
     if "coordinator_quality" not in data and data.get("status") != "ok":
         return f"## Monitor Status\n\n{data.get('message', data.get('error', 'Unknown'))}\n"

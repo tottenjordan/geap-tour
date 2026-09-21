@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.config import (
     BOOKING_MCP_SERVER,
@@ -64,6 +64,7 @@ from src.config import (
     LABEL_VALUE,
     SEARCH_MCP_SERVER,
 )
+from src.deploy.types import EngineSpec, OrphanScan
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -118,7 +119,7 @@ def our_mcp_servers() -> set[str]:
     return {s for s in (SEARCH_MCP_SERVER, BOOKING_MCP_SERVER, EXPENSE_MCP_SERVER) if s}
 
 
-def is_ours(spec: dict) -> bool:
+def is_ours(spec: EngineSpec) -> bool:
     """True when the engine's env carries one of our MCP registry resource names.
 
     Deliberately NOT the label. The engine this module exists for had none.
@@ -130,7 +131,7 @@ def is_ours(spec: dict) -> bool:
     return any(env.get(k) in ours for k in _FINGERPRINT_KEYS)
 
 
-def is_labelled(spec: dict) -> bool:
+def is_labelled(spec: EngineSpec) -> bool:
     """True when the engine carries our `solution=geap-tour` resource label."""
     return (spec.get("labels") or {}).get(LABEL_KEY) == LABEL_VALUE
 
@@ -145,7 +146,7 @@ def referenced_engine_ids() -> dict[str, str]:
     return out
 
 
-def find_orphans(specs: Iterable[dict], referenced: dict[str, str]) -> dict[str, Any]:
+def find_orphans(specs: Iterable[EngineSpec], referenced: dict[str, str]) -> OrphanScan:
     """The whole verdict, pure. ``specs`` are :func:`normalize`-shaped dicts.
 
     Three findings are reported **separately** rather than as one "problem" list,
@@ -200,7 +201,7 @@ def find_orphans(specs: Iterable[dict], referenced: dict[str, str]) -> dict[str,
     }
 
 
-def _default_list_engines() -> list[dict]:
+def _default_list_engines() -> list[EngineSpec]:
     """List the project's engines and normalize them. Injected in tests."""
     import requests
 
@@ -211,7 +212,7 @@ def _default_list_engines() -> list[dict]:
         f"https://{GCP_REGION}-aiplatform.googleapis.com/{_API_VERSION}"
         f"/projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines?pageSize=100"
     )
-    out: list[dict] = []
+    out: list[EngineSpec] = []
     token = adc_bearer_token()
     while url:
         resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=90)
@@ -223,7 +224,7 @@ def _default_list_engines() -> list[dict]:
     return out
 
 
-def render(result: dict) -> str:
+def render(result: OrphanScan) -> str:
     """Human-readable report. Never names an engine that is not ours."""
     lines = [
         "=" * 74,

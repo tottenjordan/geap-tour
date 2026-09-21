@@ -20,6 +20,9 @@ as ``n/a`` rather than crashing.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 # Level label (DOE coded factor) -> the online/verify latency+error metric names
 # we surface, mapped to the friendlier report keys. The verify_monitors traffic
 # surface names p95 latency and error rate; p50 is optional.
@@ -55,7 +58,7 @@ def _cost_ratio(cost: dict[str, float], *, baseline: str, candidate: str) -> flo
 
 def build_verdict(
     quality: dict[str, dict[str, float]],
-    pairwise: dict,
+    pairwise: Mapping[str, Any],
     online: dict[str, dict[str, float]],
     cost: dict[str, float],
     *,
@@ -133,7 +136,7 @@ def _two_col_table(
 
 def build_bakeoff_report(
     quality: dict[str, dict[str, float]],
-    pairwise: dict,
+    pairwise: Mapping[str, Any],
     online: dict[str, dict[str, float]],
     cost: dict[str, float],
     *,
@@ -231,7 +234,7 @@ def quality_from_results_frame(df, level_to_model: dict[str, str]) -> dict[str, 
     return out
 
 
-def online_from_grouped_monitors(grouped: dict) -> dict[str, dict[str, float]]:
+def online_from_grouped_monitors(grouped: Mapping[str, Any]) -> dict[str, dict[str, float]]:
     """Per-model latency/error stats from a grouped ``verify_monitors`` result.
 
     Reads any surface with ``group_by`` set: its ``metrics`` map is

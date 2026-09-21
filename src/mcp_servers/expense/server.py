@@ -14,10 +14,12 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 try:
+    from .mock_db import ExpenseList, ExpenseRecord, PolicyCheck
     from .mock_db import check_policy as _check
     from .mock_db import get_expenses as _get
     from .mock_db import submit_expense as _submit
 except ImportError:
+    from mock_db import ExpenseList, ExpenseRecord, PolicyCheck  # ty: ignore[unresolved-import]
     from mock_db import check_policy as _check  # ty: ignore[unresolved-import]
     from mock_db import get_expenses as _get  # ty: ignore[unresolved-import]
     from mock_db import submit_expense as _submit  # ty: ignore[unresolved-import]
@@ -54,7 +56,7 @@ ADDITIVE_TOOL = ToolAnnotations(
 
 
 @mcp.tool(annotations=ADDITIVE_TOOL)
-def submit_expense(amount: float, category: str, description: str, user_id: str) -> dict:
+def submit_expense(amount: float, category: str, description: str, user_id: str) -> ExpenseRecord:
     """Submit an expense report for reimbursement.
 
     Args:
@@ -67,7 +69,7 @@ def submit_expense(amount: float, category: str, description: str, user_id: str)
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
-def check_expense_policy(amount: float, category: str) -> dict:
+def check_expense_policy(amount: float, category: str) -> PolicyCheck:
     """Check if an expense amount is within corporate policy limits.
 
     Args:
@@ -78,7 +80,7 @@ def check_expense_policy(amount: float, category: str) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
-def get_user_expenses(user_id: str, limit: int = 20) -> dict:
+def get_user_expenses(user_id: str, limit: int = 20) -> ExpenseList:
     """Get a user's most recent expenses, newest first.
 
     Returns ``total_count`` and ``total_amount`` over the user's ENTIRE history
