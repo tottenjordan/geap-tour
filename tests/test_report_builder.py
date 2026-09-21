@@ -1,5 +1,29 @@
+import pytest
+
 from src.eval import run_all_evals as rae
 from src.eval.run_all_evals import build_report
+
+
+@pytest.fixture(autouse=True)
+def _stub_router_publish(monkeypatch):
+    """`_run_publish_phase` publishes TWO surfaces; these tests only ever cared
+    about the coordinator one.
+
+    Four tests patched `publish_offline_scores` and left `publish_router_efficiency`
+    alone, so the router half ran for real — against whatever ADC the developer
+    had. Locally that succeeded and wrote 60.0 (the fixture value from
+    `_minimal_results`) into `agent_router/cost_savings_pct`, a series with a live
+    alert on it; the junk points dragged its rolling baseline to z=-3.33 and
+    `verify_monitors` reported an anomaly nobody had caused. In CI there are no
+    credentials, the write fails, and the failure is swallowed because publishing
+    is guarded telemetry — so the suite was green either way.
+
+    Stubbed by default here rather than in each test: the next test to call
+    `_run_publish_phase` would otherwise inherit the same trap. Tests that
+    genuinely assert the router publish (`test_publish_phase_populates_router_metrics`)
+    monkeypatch over this, and the later patch wins.
+    """
+    monkeypatch.setattr(rae, "publish_router_efficiency", lambda *a, **k: {})
 
 
 def _minimal_results():
