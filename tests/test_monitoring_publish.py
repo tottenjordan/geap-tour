@@ -462,58 +462,60 @@ class TestTheEvalGateReportsItsOwnBreakage:
         assert "always()" in steps[score_i]["if"]
 
 
-class TestTheEmptyRateABArm:
-    """Both online arms must be labelled, or the A/B is unreadable.
+class TestTheEmptyRateABIsRetired:
+    """The A/B ran, answered its question, and was removed — but its LABEL stays.
 
-    As of 2026-09-18 both live coordinator engines return empty-at-200 at a measured
-    8-19%, with all five documented causes ruled out (docs/empty_at_200_analysis.md).
-    The probe engine trends worse and carries ADK 2.9.1, but Fisher p=0.42 at n=26 —
-    separating the rates needs ~150 samples per arm.
+    The second arm (`PROBE_ENGINE_ID`, `--label engine=probe`) sampled a second
+    engine on the same hourly tick to see whether the two differed on empty-at-200.
+    They do not: pinned 11.4% vs probe 11.4% at n=114 each, interleaved. The step
+    carried its own exit condition ("DELETE THIS STEP once the question is
+    answered") and was removed on 2026-09-21.
 
-    Sampling both on the same hourly tick accumulates that for free AND interleaved,
-    so time-of-day load cannot masquerade as an engine difference. It only works if
-    the two arms are distinguishable in the series.
+    **`--label engine=pinned` on the surviving arm is deliberately kept.** Dropping
+    it would end the `engine=pinned` series and start a fresh unlabelled one — a
+    third seam in the only long-running record of this rate. Adding the labels split
+    the series once already, and reading across that split is precisely what
+    produced a retracted "20x step change on 09-17". One redundant label costs
+    nothing; a discontinuity costs hours.
     """
 
-    def test_both_online_quality_steps_exist(self):
-        steps = _load_steps()
+    def test_only_one_online_quality_arm_remains(self):
         online = [
             s
-            for s in steps
+            for s in _load_steps()
             if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
         ]
-        assert len(online) == 2, "expected a pinned arm and a probe arm"
+        assert len(online) == 1, f"expected the A/B to be retired, found {len(online)} arms"
 
-    def test_each_arm_is_labelled(self):
-        """Unlabelled, the two engines' points land in one indistinguishable series
-        and the comparison is lost — silently, since the numbers still look fine."""
+    def test_no_step_still_drives_the_probe_engine(self):
+        """Scoped to the STEPS, not the file text.
+
+        The first version asserted `"PROBE_ENGINE_ID" not in WORKFLOW.read_text()`
+        and failed on the comment that explains the removal — a guard tripped by its
+        own documentation, the same way a `spec.get("resourceLimits")` example once
+        tripped the guard against that typo. What must be gone is the execution, not
+        the history.
+        """
+        for step in _load_steps():
+            blob = step.get("run", "") + str(step.get("if", ""))
+            assert "PROBE_ENGINE_ID" not in blob, f"step {step.get('name')!r} still runs the A/B"
+            assert "engine=probe" not in blob
+
+    def test_the_surviving_arm_keeps_its_label(self):
+        """THE property. Removing the label is the tempting tidy-up and it would
+        silently break series continuity — the failure this repo just spent a day
+        misreading."""
         runs = [
             s.get("run", "")
             for s in _load_steps()
             if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
         ]
-        assert any("engine=pinned" in r for r in runs)
-        assert any("engine=probe" in r for r in runs)
+        assert any("engine=pinned" in r for r in runs), (
+            "the surviving arm lost --label engine=pinned; that ends the existing "
+            "series and starts an unlabelled one in its place"
+        )
 
-    def test_the_arms_target_different_engines(self):
-        """Both arms pointing at one engine would produce a confident null result."""
-        runs = [
-            s.get("run", "")
-            for s in _load_steps()
-            if "online_monitor" in s.get("run", "") and "--faithfulness" not in s.get("run", "")
-        ]
-        pinned = next(r for r in runs if "engine=pinned" in r)
-        probe = next(r for r in runs if "engine=probe" in r)
-        assert "vars.AGENT_ENGINE_ID" in pinned
-        assert "vars.PROBE_ENGINE_ID" in probe
-
-    def test_the_probe_arm_skips_cleanly_when_unset(self):
-        """A repo without PROBE_ENGINE_ID (a fork) must skip, not fail."""
-        step = _step(_load_steps(), "probe engine (A/B arm)")
-        assert "vars.PROBE_ENGINE_ID != ''" in step["if"]
-
-    def test_the_arm_carries_its_own_exit_condition(self):
-        """An A/B with no stated end is permanent extra spend. The comment has to
-        say when to delete it, because nothing else will."""
+    def test_the_reason_the_label_survives_is_written_down(self):
+        """A label with no stated purpose is the next reader's cleanup."""
         text = WORKFLOW.read_text()
-        assert "DELETE THIS STEP" in text
+        assert "OUTLIVES" in text and "engine=pinned" in text
