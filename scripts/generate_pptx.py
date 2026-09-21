@@ -728,7 +728,8 @@ def build_deck():
         "so a delegated turn (transfer_to_agent, or a nested AgentTool MCP call) never streamed "
         "the specialist's answer. A trace census over 10 invocations also recorded ZERO AgentTool "
         "calls, so the delegation the old design advertised was not even happening. "
-        "travel_agent and expense_agent remain as independently deployed and evaluated agents. "
+        "travel_agent and expense_agent remain as independently evaluated agents, scored against "
+        "the coordinator engine (they have no separate deployment). "
         "OTel tracing is built in — every agent call automatically generates spans.",
     )
 
@@ -1862,7 +1863,7 @@ def build_deck():
         "Based on the score the router SWAPS ITS OWN MODEL for the turn — it does not delegate to "
         "lite_agent/flash_agent/opus_agent. Like the coordinator, it is ONE direct-tools agent; a "
         "TierRoutingLlm dispatcher picks the backbone per request. The five standalone tier agents "
-        "still exist, but as independently deployed and evaluated engines, not as sub-agents. "
+        "still exist, but as independently evaluated agents, not as sub-agents. "
         "Cut-points: below 0.25 lite, to 0.60 flash, to 0.925 sonnet, to 0.95 pro, above that opus. "
         "Two of those were moved off their DOE-tuned values by paired side-by-side tests, and on "
         "this workload pro and opus receive no traffic — five tiers are wired, three actually serve. "
