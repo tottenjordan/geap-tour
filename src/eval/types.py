@@ -763,6 +763,12 @@ class SurfaceSummary(TypedDict):
     # Present only in grouped mode, naming the label the metrics are split by. Its
     # presence is how a reader knows which of the two `metrics` shapes they have.
     group_by: NotRequired[str]
+    #: The trailing window this surface was read over. Per-surface, because a window
+    #: is only meaningful against a write cadence: a daily series read over 48h
+    #: yields 2 points where the rolling baseline needs 5, which is how
+    #: `agent_router_quality/*` shipped with a detector that could never fire.
+    #: Reported so the number is visible rather than assumed to be the global default.
+    lookback_hours: NotRequired[int]
     error: NotRequired[str]
     message: NotRequired[str]
 

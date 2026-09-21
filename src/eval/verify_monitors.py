@@ -71,10 +71,23 @@ class Surface(NamedTuple):
     """A monitored surface: metric-type prefix + per-metric (name, threshold, comparison).
 
     ``comparison`` is "LT" (out of bounds below the floor) or "GT" (above ceiling).
+
+    ``writes_per_day`` and ``lookback_hours`` exist together because a window is only
+    meaningful against a cadence. One shared 48h window across surfaces silently
+    broke the daily one: ``agent_router_quality/*`` yielded 2 points where
+    :data:`src.eval.baseline.MIN_BASELINE` needs 5, so its z-score detector reported
+    ``insufficient_history`` on every run and always would have. The points were
+    being written and the cron was healthy — the reader's window discarded them
+    before counting. ``tests/test_baseline_window_reachability.py`` now fails on any
+    surface whose window cannot accumulate a baseline at its own cadence.
     """
 
     prefix: str
     metrics: list[tuple[str, float, str]]
+    #: Measured, not nominal. The hourly cron is scheduled `23 * * * *` but GitHub
+    #: DROPS scheduled runs under load — 99 successes over two weeks, ~7/day.
+    writes_per_day: float = 7.0
+    lookback_hours: int = DEFAULT_LOOKBACK_HOURS
 
 
 # The two monitored surfaces the coordinator (quality) and router (efficiency) map to.
@@ -106,6 +119,17 @@ SURFACES = {
     "router_quality": Surface(
         prefix="custom.googleapis.com/agent_router_quality/",
         metrics=[(name, threshold, "LT") for name, threshold in ROUTER_QUALITY_MONITORED_METRICS],
+        # DAILY, because scoring the router costs engine calls
+        # (.github/workflows/router_quality.yaml, `37 4 * * *`) — unlike the
+        # classifier-only efficiency publisher that rides the hourly tick.
+        writes_per_day=1.0,
+        # 10 days, so the baseline survives dropped runs. At 1/day a 48h window
+        # holds 2 points against MIN_BASELINE's 5: the detector could never fire.
+        # 6 days would just reach MIN_BASELINE+1; 10 keeps it reachable with four
+        # days missed. The daily cron has not dropped a run yet (5/5 since
+        # 2026-09-17), but the hourly one drops ~70% of its ticks, so budgeting
+        # zero misses for this one would be optimism rather than measurement.
+        lookback_hours=240,
     ),
 }
 
@@ -424,13 +448,18 @@ def unpublished(data: dict) -> list[dict]:
     ]
 
 
-def _verify_from_monitoring(hours: int, client=None, group_by: str | None = None) -> dict:
+def _verify_from_monitoring(hours: int | None, client=None, group_by: str | None = None) -> dict:
     client = client or _monitoring_client()
     data: dict[str, object] = {}
     statuses = []
     for surface_key, spec in SURFACES.items():
-        series = list(_query_surface_series(client, spec.prefix, spec.metrics, hours))
+        # `hours` is an explicit override (`--hours`); otherwise each surface uses
+        # the window its own write cadence needs. A single shared window is what
+        # made router_quality's rolling baseline unreachable.
+        window = spec.lookback_hours if hours is None else hours
+        series = list(_query_surface_series(client, spec.prefix, spec.metrics, window))
         surface = _aggregate_surface(series, spec.metrics, group_by_label=group_by)
+        surface["lookback_hours"] = window
         data[surface_key] = surface
         statuses.append(surface["status"])
     if "ok" in statuses:
@@ -520,7 +549,7 @@ def _verify_from_bigquery(hours: int, threshold: float, bq_client=None) -> BigQu
 def verify_monitor_results(
     output_format: str = "text",
     source: str = "monitoring",
-    hours: int = DEFAULT_LOOKBACK_HOURS,
+    hours: int | None = None,
     threshold: float = DEFAULT_THRESHOLD,
     client=None,
     bq_client=None,
@@ -532,7 +561,11 @@ def verify_monitor_results(
         output_format: ``"text"`` (human-readable) or ``"json"`` (return dict).
         source: ``"monitoring"`` (canonical Cloud Monitoring surfaces) or
             ``"bigquery"`` (optional, guarded export sink — coordinator only).
-        hours: trailing window.
+        hours: trailing window OVERRIDE. ``None`` (the default) lets each surface
+            use the window its own write cadence needs — see :class:`Surface`.
+            An explicit value applies to every surface, which can put a daily
+            series back below ``MIN_BASELINE``; the report prints the window in
+            use per surface so that is visible rather than inferred.
         threshold: below-this counts out-of-bounds for the BigQuery path.
         client / bq_client: injectable clients for tests.
         group_by: optional metric-label name (e.g. ``"model"``) to split each
@@ -545,7 +578,9 @@ def verify_monitor_results(
         ``online_quality``, ``router_efficiency``) plus a top-level ``status``.
     """
     if source == "bigquery":
-        data = _verify_from_bigquery(hours, threshold, bq_client=bq_client)
+        data = _verify_from_bigquery(
+            hours or DEFAULT_LOOKBACK_HOURS, threshold, bq_client=bq_client
+        )
     else:
         data = _verify_from_monitoring(hours, client=client, group_by=group_by)
 
@@ -625,18 +660,24 @@ def _print_surface(title: str, surface: dict) -> None:
             print()
 
 
-def _print_report(data: Mapping[str, Any], hours: int) -> None:
+def _print_report(data: Mapping[str, Any], hours: int | None) -> None:
     # BigQuery / non-surfaced shapes: single message.
     if "coordinator_quality" not in data and data.get("status") != "ok":
         print(data.get("message", data.get("error", "Unknown status")))
         return
 
     print("=" * 60)
-    print(f"MONITOR RESULTS (last {hours}h)")
+    # No single window any more. Naming the override when there is one, and the
+    # per-surface window on each block otherwise, so a reader never has to assume
+    # which window produced an `n` — that assumption is what hid the daily
+    # surface's unreachable baseline.
+    print("MONITOR RESULTS" + (f" (last {hours}h, overridden)" if hours else ""))
     print("=" * 60)
     for surface_key, title in _SURFACE_TITLES.items():
         if surface_key in data:
-            _print_surface(title, data[surface_key])
+            window = data[surface_key].get("lookback_hours")
+            label = f"{title} (last {window}h)" if window else title
+            _print_surface(label, data[surface_key])
     suppressed = data.get("insufficient_power") or []
     if suppressed:
         print()
@@ -716,7 +757,12 @@ if __name__ == "__main__":
         if idx + 1 < len(sys.argv):
             group_by = sys.argv[idx + 1]
 
-    hours = DEFAULT_LOOKBACK_HOURS
+    # None, NOT the default: passing a number here is indistinguishable from an
+    # explicit `--hours`, which would override every surface's own window and put
+    # the daily one straight back below MIN_BASELINE. The per-surface fix was
+    # inert through the CLI until this line changed — caught by running it, not
+    # by the unit tests, which call the query loop directly.
+    hours = None
     if "--hours" in sys.argv:
         idx = sys.argv.index("--hours")
         if idx + 1 < len(sys.argv):
