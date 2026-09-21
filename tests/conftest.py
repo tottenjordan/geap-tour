@@ -146,3 +146,47 @@ _TEST_ENV_DEFAULTS = {
 # resolve the same names.
 for _key, _value in _TEST_ENV_DEFAULTS.items():
     os.environ.setdefault(_key, _value)
+
+
+# ---------------------------------------------------------------------------
+# No test may write to LIVE Cloud Monitoring.
+# ---------------------------------------------------------------------------
+# Found by running the suite and then reading the series it is supposed to only
+# observe: `uv run pytest tests/ -n 8 --dist loadfile` — the command CLAUDE.md
+# recommends — published two junk points into
+# `custom.googleapis.com/agent_router/cost_savings_pct`, a series with a live
+# alert policy on it. They were the 60.0 test fixture value, they dragged the
+# rolling baseline to z=-3.33, and `verify_monitors` duly reported an anomaly
+# nobody had caused.
+#
+# Two tests in test_report_builder.py called `run_all_evals._run_publish_phase`
+# having patched `publish_offline_scores` but not `publish_router_efficiency`, so
+# the router half published for real against whatever ADC the developer had.
+#
+# WHY IT SURVIVED: publishing is guarded telemetry — every publish path swallows
+# its exceptions so a metrics failure can never abort an eval run. In CI there are
+# no credentials, the client construction fails, the failure is swallowed, and the
+# tests pass. Locally there ARE credentials, so it succeeds and writes. The suite
+# was green in both cases. A first attempt at this guard patched the client to
+# RAISE and the suite still reported 2273 passed — swallowed too.
+#
+# Hence record-and-assert rather than raise: the stub cannot be swallowed because
+# nothing is thrown, and the check happens after the test body has finished.
+@pytest.fixture(autouse=True)
+def _no_live_metric_writes(monkeypatch):
+    """Replace the Cloud Monitoring client so a real write is impossible, and fail
+    the test that attempted one.
+
+    The stub lives in ``tests/_metric_guard.py`` so it can be tested directly; see
+    ``tests/test_no_live_metric_writes.py`` for why it records instead of raising.
+    """
+    from google.cloud import monitoring_v3
+
+    from tests._metric_guard import ForbiddenMetricClient, failure_message
+
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        monitoring_v3, "MetricServiceClient", lambda *a, **k: ForbiddenMetricClient(attempts)
+    )
+    yield
+    assert not attempts, failure_message(attempts)
