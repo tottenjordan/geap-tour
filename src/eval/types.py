@@ -192,6 +192,12 @@ class BatchResult(TypedDict):
     summary_raw: NotRequired[dict]
     evaluation_run_name: NotRequired[str | None]
     item_count: NotRequired[int]
+    #: ``total_items`` minus the per-item rows actually retrieved. The SDK loads
+    #: these from GCS and silently drops any it cannot parse — and the ones it
+    #: cannot parse are the cases the service refused to grade, whose result carries
+    #: an ``error`` field the SDK's own model forbids. Without this key,
+    #: ``item_count: 5`` is indistinguishable from "there were only 5".
+    items_missing: NotRequired[int]
     items: NotRequired[list[dict]]
 
 

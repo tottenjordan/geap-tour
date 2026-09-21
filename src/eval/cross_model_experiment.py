@@ -146,10 +146,8 @@ def run_single_eval(
     if "FAILED" in state:
         return {"agent": agent_name, "tier": tier, "status": "FAILED", "metrics": {}}
 
-    evaluation_run = client.evals.get_evaluation_run(
-        name=evaluation_run.name,
-        include_evaluation_items=True,
-    )
+    # Summary metrics only — see simulated_eval for why the per-item flag is off.
+    evaluation_run = client.evals.get_evaluation_run(name=evaluation_run.name)
 
     raw_metrics = {}
     try:

@@ -139,7 +139,8 @@ def _score_once(client, inference, agent_resource, metrics, agent_info, label: s
             break
         time.sleep(15)
 
-    run = client.evals.get_evaluation_run(name=run.name, include_evaluation_items=True)
+    # Summary metrics only — see simulated_eval for why the per-item flag is off.
+    run = client.evals.get_evaluation_run(name=run.name)
     summary = getattr(getattr(run, "evaluation_run_results", None), "summary_metrics", None)
     raw = dict(getattr(summary, "metrics", {}) or {})
     return {
