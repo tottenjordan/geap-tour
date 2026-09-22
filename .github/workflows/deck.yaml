@@ -64,7 +64,17 @@ jobs:
         run: uv sync --group deck
 
       - name: Generate the deck
-        run: uv run --no-sync python scripts/generate_pptx.py
+        # Tee so the log keeps the output AND we can assert on it. The generator is
+        # deliberately tolerant of a missing image (a partial deck beats a traceback
+        # when iterating locally) — but in CI, an incomplete deck is a failure. The
+        # seven architecture diagrams live in `diagrams/outputs/`, which a badly
+        # scoped ignore rule would hide from this checkout without anything noticing.
+        run: |
+          uv run --no-sync python scripts/generate_pptx.py 2>&1 | tee /tmp/deck.log
+          if grep -q "IMAGE(S) MISSING" /tmp/deck.log; then
+            echo "::error::the deck built with missing images — see the list above"
+            exit 1
+          fi
 
       - name: Fail if the deck was not produced
         # `generate_pptx.py` prints its slide count and exits 0; a silent no-write

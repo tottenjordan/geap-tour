@@ -131,3 +131,75 @@ class TestTheEvalGateClaimMatchesTheWorkflow:
             "eval_gate.yaml no longer describes itself as advisory — if it is now a "
             "required check, the deck may once again say it blocks merges"
         )
+
+
+class TestTheDiagramsReachAFreshCheckout:
+    """The deck embeds seven generated diagrams. CI builds from a clean clone.
+
+    `diagrams/outputs/` was covered by an unanchored `outputs/` rule. The eight PNGs
+    there survived only because they had been committed BEFORE the rule existed —
+    tracked files beat `.gitignore`. A ninth would have been silently ignored, absent
+    from CI's checkout, and dropped from the deck without complaint, because
+    `add_image_safe` returns False and not one of its 17 call sites checks it.
+
+    Verified at the time: `git check-ignore` matched a newly created
+    `diagrams/outputs/09_test.png` against `.gitignore:66:outputs/`.
+    """
+
+    def test_every_diagram_the_deck_embeds_is_tracked(self):
+        import re
+        import subprocess
+
+        src = (_REPO / "scripts" / "generate_pptx.py").read_text()
+        wanted = set(re.findall(r'DIAGRAMS,\s*"([^"]+\.png)"', src))
+        assert wanted, "the deck no longer embeds any diagram — has DIAGRAMS moved?"
+        tracked = set(
+            subprocess.run(
+                ["git", "ls-files", "diagrams/outputs"],
+                cwd=_REPO,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+        )
+        missing = {w for w in wanted if f"diagrams/outputs/{w}" not in tracked}
+        assert not missing, (
+            f"the deck embeds {sorted(missing)} but git does not track them — a clean "
+            "CI checkout builds a deck with blank slides"
+        )
+
+    def test_a_new_diagram_would_not_be_silently_ignored(self):
+        """The actual trap. Anchoring the rule is what fixes it; this proves it stays
+        fixed for a diagram that does not exist yet."""
+        import subprocess
+
+        probe = "diagrams/outputs/99_a_diagram_added_tomorrow.png"
+        ignored = subprocess.run(["git", "check-ignore", "-q", probe], cwd=_REPO).returncode == 0
+        assert not ignored, (
+            f"{probe} would be gitignored, so a newly added diagram could never be "
+            "committed and the deck would lose it silently"
+        )
+
+    def test_the_run_scaffolding_is_still_ignored(self):
+        """The other half: narrowing the rule must not start committing paperbanana's
+        per-run intermediates (132MB at the repo root alone)."""
+        import subprocess
+
+        for probe in ("outputs/run_x/y.png", "diagrams/outputs/batch_20260101_x/z.png"):
+            ignored = (
+                subprocess.run(["git", "check-ignore", "-q", probe], cwd=_REPO).returncode == 0
+            )
+            assert ignored, f"{probe} is no longer ignored — run scaffolding would be committed"
+
+
+class TestAMissingImageIsLoud:
+    def test_the_generator_reports_missing_images(self):
+        src = (_REPO / "scripts" / "generate_pptx.py").read_text()
+        assert "MISSING_IMAGES" in src
+        assert "IMAGE(S) MISSING" in src, "the summary line CI greps for is gone"
+
+    def test_ci_fails_on_an_incomplete_deck(self):
+        wf = (_REPO / ".github/workflows/deck.yaml").read_text()
+        assert "IMAGE(S) MISSING" in wf, (
+            "deck.yaml no longer checks for missing images; a deck with blank slides "
+            "would upload as a green artifact"
+        )

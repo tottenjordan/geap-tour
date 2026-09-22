@@ -62,8 +62,16 @@ eval_pipeline_*.yaml
 eval_pipeline_*.json
 optimize_pipeline_*.yaml
 
-# PaperBanana diagram generation outputs
-outputs/
+# PaperBanana run scaffolding — per-run prompts, critic iterations, intermediates.
+# ANCHORED and SPECIFIC, because the unanchored `outputs/` this replaces matched any
+# directory of that name at any depth, including the one holding the FINAL diagrams.
+# Those eight PNGs are committed on purpose — scripts/generate_pptx.py embeds seven of
+# them and CI builds the deck from a clean checkout — and they survived only because
+# they were tracked before the rule existed. A NINTH diagram would have been silently
+# ignored, absent from CI's checkout, and dropped from the deck without complaint
+# (add_image_safe returns False and no caller checks it).
+/outputs/
+/diagrams/outputs/batch_*/
 
 # Generated workshop deck — rebuilt in ~4s by scripts/generate_pptx.py.
 # 28MB of embedded screenshots; a new binary blob per regeneration is not worth

@@ -288,7 +288,22 @@ def add_logo(slide, color=GRAY):
     )
 
 
+#: Slides whose image was missing at build time. `add_image_safe` is called 17 times
+#: and its return value is checked at none of them, so a missing diagram used to
+#: vanish in silence: 34 slides, exit 0, one slide quietly blank. Collected here and
+#: reported at the end of the build instead.
+MISSING_IMAGES: list[str] = []
+
+
 def add_image_safe(slide, path, left, top, width=None, height=None):
+    """Place an image, tolerating a missing file — but never silently.
+
+    Tolerant on purpose: a partial deck is more useful than a traceback when someone
+    is iterating on slides locally without having generated the diagrams. What was
+    wrong is that it was *quiet*. The diagrams live in `diagrams/outputs/`, which
+    until now an unanchored `outputs/` rule would have hidden for any newly added
+    file, so the failure mode was real rather than theoretical.
+    """
     if os.path.exists(path):
         kwargs = {"left": left, "top": top}
         if width:
@@ -297,6 +312,8 @@ def add_image_safe(slide, path, left, top, width=None, height=None):
             kwargs["height"] = height
         slide.shapes.add_picture(path, **kwargs)
         return True
+    MISSING_IMAGES.append(os.path.relpath(path, os.path.dirname(os.path.dirname(__file__))))
+    print(f"  WARNING: image not found, slide will be missing it: {path}")
     return False
 
 
@@ -2312,6 +2329,13 @@ def build_deck():
 
     prs.save(OUTPUT)
     print(f"Saved {len(prs.slides)} slides to {OUTPUT}")
+    if MISSING_IMAGES:
+        # Loud, and at the END where it cannot scroll past unseen. Not fatal: see
+        # add_image_safe on why a partial deck still beats a traceback locally. CI
+        # turns this into a failure (.github/workflows/deck.yaml).
+        print(f"\n  {len(MISSING_IMAGES)} IMAGE(S) MISSING — the deck is incomplete:")
+        for m in MISSING_IMAGES:
+            print(f"    - {m}")
     print(f"File size: {os.path.getsize(OUTPUT) / 1024:.0f} KB")
 
 
