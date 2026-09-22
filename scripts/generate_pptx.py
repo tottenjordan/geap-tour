@@ -230,7 +230,7 @@ def add_notes(slide, text):
     tf.text = text
 
 
-REPO_URL = "https://github.com/jswortz/geap-tour"
+REPO_URL = "https://github.com/tottenjordan/geap-tour"
 
 
 def add_repo_link(slide, code_path=None, y_pos=None):
@@ -566,8 +566,8 @@ def build_deck():
         Inches(2.5),
         [
             "Coordinator Agent — holds all three MCP toolsets directly",
-            "Travel Agent — flights/hotels; deployed + evaluated on its own",
-            "Expense Agent — expenses/policy; deployed + evaluated on its own",
+            "Travel Agent — flights/hotels; evaluated on its own evalset",
+            "Expense Agent — expenses/policy; evaluated on its own evalset",
         ],
         title="Three ADK Agents",
         title_color=BLUE,
@@ -1449,7 +1449,7 @@ def build_deck():
         Inches(3.6),
         Inches(2),
         "Online Monitors",
-        "Continuous evaluation of live traffic via Cloud Trace telemetry on 10-min cycles",
+        "Continuous scoring of sampled live traffic, client-side off stream_query, hourly",
         GREEN,
     )
     add_card(
@@ -1459,7 +1459,7 @@ def build_deck():
         Inches(3.6),
         Inches(2),
         "Simulated (CI/CD)",
-        "Automated eval gate on PRs — score ≥ 3.0 to merge, blocks otherwise",
+        "Rubric score on a PR against the deployed engine — advisory, not a required check",
         YELLOW,
     )
     add_repo_link(s, "src/eval/")
@@ -1591,7 +1591,7 @@ def build_deck():
         Inches(1.6),
         Inches(5.5),
         Inches(3.0),
-        'clusters = client.evals\n  .generate_loss_clusters(\n    src=eval_result_name\n  )\n\nfor cluster in clusters:\n  print(cluster.title)\n  print(cluster.description)\n  print(f"Samples: {cluster.sample_count}")\n  print(f"Avg score: {cluster.avg_score}")',
+        'clusters = client.evals\n  .generate_loss_clusters(\n    eval_result=eval_result,\n    metric=metric,\n  )\n\nfor cluster in clusters:\n  print(cluster.title)\n  print(cluster.description)\n  print(f"Samples: {cluster.sample_count}")\n  print(f"Avg score: {cluster.avg_score}")',
         font_size=12,
     )
     add_text(
@@ -1713,7 +1713,7 @@ def build_deck():
         Inches(3.0),
         Inches(5.5),
         Inches(1),
-        "✅  Pass — Merge allowed\n❌  Fail — PR blocked with failure report",
+        "✅  Pass — green check\n❌  Fail — red signal + report, merge NOT blocked (advisory by design)",
         18,
         color=DARK,
     )
@@ -1830,7 +1830,7 @@ def build_deck():
         Inches(4.7),
         Inches(5.5),
         Inches(1),
-        "Cost savings: 60-80% by routing simple queries to lightweight models",
+        "Cost savings: 93.1% measured vs an all-Opus baseline (agent_router/cost_savings_pct)",
         16,
         color=GRAY,
     )
@@ -2274,7 +2274,7 @@ def build_deck():
         color=WHITE,
     )
     resources = [
-        "Workshop repo:  github.com/jswortz/geap-tour",
+        "Workshop repo:  github.com/tottenjordan/geap-tour",
         "Workshop guide:  docs/workshop_guide.md",
         "Agent Development Kit:  google.github.io/adk-docs",
         "MCP Protocol:  modelcontextprotocol.io",

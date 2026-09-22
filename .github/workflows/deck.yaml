@@ -1,0 +1,88 @@
+name: Deck
+
+# Builds the workshop deck and uploads it as a downloadable artifact.
+#
+# WHY THIS EXISTS: `docs/slides.pptx` used to be committed — a 28MB binary, of which
+# ~all is 17 embedded screenshots, re-added as a fresh blob on every regeneration.
+# It was also last built a month before anyone noticed it could not be built at all
+# (`python-pptx` was in no dependency group), by which time it asserted six things
+# that were not true of this repo.
+#
+# So the deck is now GENERATED, not stored: `scripts/generate_pptx.py` rebuilds it in
+# ~4 seconds, this workflow proves that still works on every change to the generator,
+# and anyone who wants the file downloads it from the run rather than cloning it.
+#
+# Note the old blob remains in git history — untracking a file does not remove it
+# from past commits, and rewriting history for this is not worth it. What this
+# prevents is ANOTHER one on every edit.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/generate_pptx.py'
+      - 'pyproject.toml'
+      - '.github/workflows/deck.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/generate_pptx.py'
+      - 'pyproject.toml'
+      - '.github/workflows/deck.yaml'
+  workflow_dispatch:
+
+# Same reasoning as tests.yaml: supersede in-flight runs for one PR, but never
+# cancel a `main` run — that run is the record that main still builds.
+concurrency:
+  group: deck-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build workshop deck
+    runs-on: ubuntu-latest
+    # Measured at ~4s locally; 5 minutes is generous and still bounded, versus the
+    # GitHub default of 360.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        # `deck` carries python-pptx. It is NOT in the tests.yaml sync, which is why
+        # tests/test_deck_claims.py checks the generator SOURCE rather than importing
+        # pptx — that guard has to run in an environment without this group.
+        run: uv sync --group deck
+
+      - name: Generate the deck
+        run: uv run --no-sync python scripts/generate_pptx.py
+
+      - name: Fail if the deck was not produced
+        # `generate_pptx.py` prints its slide count and exits 0; a silent no-write
+        # would otherwise pass. Assert the artifact exists and is not a stub.
+        run: |
+          test -f docs/slides.pptx || { echo "::error::no deck was written"; exit 1; }
+          size=$(stat -c%s docs/slides.pptx)
+          echo "deck size: $((size / 1024)) KB"
+          if [ "$size" -lt 100000 ]; then
+            echo "::error::deck is only $size bytes — generation produced a stub"
+            exit 1
+          fi
+
+      - name: Upload the deck
+        uses: actions/upload-artifact@v4
+        with:
+          name: workshop-deck
+          path: docs/slides.pptx
+          # The deck is reproducible from the commit, so keeping months of copies
+          # buys nothing.
+          retention-days: 14
