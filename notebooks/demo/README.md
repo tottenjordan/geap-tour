@@ -33,11 +33,18 @@ run top-to-bottom safely: every live/billable cell is opt-in behind a
 
 ## Honesty note
 
-The evaluation notebook **drops** the native Vertex Online Evaluators: the
-managed Agent Engine runtime strips prompt/response content from ADK traces, so
-that path always returns `INSUFFICIENT_DATA` (see
-[../../docs/notes/offline-eval-monitoring-bridge.md](../../docs/notes/offline-eval-monitoring-bridge.md)
-and memory `online-eval-content-capture-blocked`). The canonical source is the
+The evaluation notebook uses the **offline bridge** rather than the native Vertex
+Online Evaluators. This section used to say the runtime "strips prompt/response
+content from ADK traces" so the native path is permanently blocked — **that was
+wrong, and was corrected on 2026-08-15.** The managed `AdkApp` runtime forces the
+ADK span-content gate closed unless the engine is deployed with
+`AdkApp(enable_tracing=True)`; that lever is ours, wired behind the opt-in
+`ENABLE_SPAN_CONTENT_CAPTURE` flag, and validated live (46/46 `call_llm` spans
+carried real content). The bridge is the canonical surface **by choice** —
+model-neutral, and it needs no privacy-off content capture on the served engine
+(see
+[../../docs/notes/online-eval-content-capture.md](../../docs/notes/online-eval-content-capture.md),
+[../../docs/notes/offline-eval-monitoring-bridge.md](../../docs/notes/offline-eval-monitoring-bridge.md)). The canonical source is the
 **offline-eval bridge** publishing two separate series — coordinator quality
 (`custom.googleapis.com/agent_eval/*`, 1-5) and router efficiency
 (`custom.googleapis.com/agent_router/*`, native units).

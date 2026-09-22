@@ -37,6 +37,20 @@ def _resolve_agent_resource_name(agent_id: str) -> str:
     return f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/reasoningEngines/{agent_id}"
 
 
+def _metric_label(metric) -> str:
+    """A human-readable name for a metric, for printing.
+
+    ``.name`` FIRST: the SDK hands back ``LazyLoadedPrebuiltMetric``, which has
+    ``.name`` but no ``.value``, so a ``.value``-first lookup fell through to
+    ``str(metric)`` and printed ``<...LazyLoadedPrebuiltMetric object at 0x7f...>``
+    as a section header — in a demo cell, in front of an audience.
+
+    Falls back rather than raising: an SDK that renames the attribute should degrade
+    to an ugly label, not crash the cell mid-presentation.
+    """
+    return str(getattr(metric, "name", None) or getattr(metric, "value", None) or metric)
+
+
 def analyze_failure_clusters(agent_id: str):
     """Run evaluation and analyze failure clusters."""
     agent_resource = _resolve_agent_resource_name(agent_id)
@@ -73,7 +87,7 @@ def analyze_failure_clusters(agent_id: str):
 
     print("[3/3] Analyzing failure clusters...")
     for metric in EVAL_METRICS:
-        metric_name = str(metric.value) if hasattr(metric, "value") else str(metric)
+        metric_name = _metric_label(metric)
         print(f"\n--- Clusters for {metric_name} ---")
         try:
             clusters = client.evals.generate_loss_clusters(
