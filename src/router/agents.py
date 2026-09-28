@@ -26,6 +26,7 @@ from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai.types import Content
 
 from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
+from src.agents.current_date import inject_current_date
 from src.agents.flash_agent import INSTRUCTION as FLASH_INSTRUCTION
 from src.agents.lite_agent import INSTRUCTION as LITE_INSTRUCTION
 from src.agents.opus_agent import INSTRUCTION as OPUS_INSTRUCTION
@@ -309,7 +310,9 @@ router_agent = LlmAgent(
     # defaults it on (docs/notes/genai-afc-warning.md).
     generate_content_config=with_afc_disabled(),
     before_agent_callback=complexity_router_callback,
-    before_model_callback=select_tier_model_callback,
+    # Tier model first, then today's date (src/agents/current_date.py). Both
+    # return None, so ADK runs the whole list before every hop.
+    before_model_callback=[select_tier_model_callback, inject_current_date],
     after_agent_callback=save_memories_callback,
 )
 

@@ -2,6 +2,7 @@
 
 from google.adk.agents import LlmAgent
 
+from src.agents.current_date import inject_current_date
 from src.config import (
     BOOKING_MCP_SERVER,
     PROMPT_VARIANT,
@@ -77,6 +78,7 @@ travel_agent = LlmAgent(
         get_mcp_tools(BOOKING_MCP_SERVER),
     ],
     generate_content_config=with_afc_disabled(),
+    before_model_callback=inject_current_date,  # src/agents/current_date.py
 )
 
 root_agent = travel_agent
