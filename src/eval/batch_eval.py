@@ -161,7 +161,7 @@ EVAL_CASES = [
     # ── Expense: Policy check (over limit) ─────────────────────────────────
     {
         "prompt": "Check policy for a $500 entertainment expense",
-        "reference": "The $500 entertainment expense exceeds the $150 policy limit. It requires manager review.",
+        "reference": "The $500 entertainment expense exceeds the $150 policy limit for entertainment.",
         "category": "expense_over_limit",
         "expected_tool": "expense_mcp_check_expense_policy",
         "expected_signals": ["exceeds", "150", "entertainment"],
@@ -169,7 +169,7 @@ EVAL_CASES = [
     },
     {
         "prompt": "Is a $100 meal expense allowed?",
-        "reference": "The $100 meal expense exceeds the $75 policy limit. It requires manager review.",
+        "reference": "The $100 meal expense exceeds the $75 policy limit for meals.",
         "category": "expense_over_limit",
         "expected_tool": "expense_mcp_check_expense_policy",
         "expected_signals": ["exceeds", "75", "meal"],
@@ -282,7 +282,7 @@ EVAL_CASES = [
     },
     {
         "prompt": "Plan my Miami trip: find a hotel there, and check whether a $500 entertainment dinner is within policy.",
-        "reference": "Fontainebleau Miami is $400/night (4.7 rating). The $500 entertainment expense exceeds the $150 policy limit and would require manager review.",
+        "reference": "Fontainebleau Miami is $400/night (4.7 rating). The $500 entertainment expense exceeds the $150 policy limit for entertainment.",
         "category": "multi_step",
         "expected_tool": "multiple",
         "expected_signals": ["Fontainebleau", "exceeds", "150", "entertainment"],
@@ -521,7 +521,7 @@ EVAL_CASES = [
     },
     {
         "prompt": "Is a $250 transport expense allowed?",
-        "reference": "The $250 transport expense exceeds the $200 policy limit and requires manager review.",
+        "reference": "The $250 transport expense exceeds the $200 policy limit for transport.",
         "category": "expense_over_limit",
         "expected_tool": "expense_mcp_check_expense_policy",
         "expected_signals": ["exceeds", "200", "transport"],
@@ -529,7 +529,7 @@ EVAL_CASES = [
     },
     {
         "prompt": "Check policy for a $120 supplies expense.",
-        "reference": "The $120 supplies expense exceeds the $100 policy limit and requires manager review.",
+        "reference": "The $120 supplies expense exceeds the $100 policy limit for supplies.",
         "category": "expense_over_limit",
         "expected_tool": "expense_mcp_check_expense_policy",
         "expected_signals": ["exceeds", "100", "supplies"],
@@ -682,7 +682,7 @@ EVAL_CASES = [
         "reference": (
             "Two lines exceed their limits: line 7, the $240 client dinner, is over the "
             "$150 entertainment limit, and line 9, the $91 Wednesday lunch, is over the "
-            "$75 meal limit. Both are still submitted and flagged for manager review. "
+            "$75 meal limit. Both would be flagged for manager review if submitted. "
             "Every other line is within its category limit."
         ),
         "category": "long_context",
