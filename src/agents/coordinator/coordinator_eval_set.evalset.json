@@ -292,8 +292,8 @@
                 "args": {
                   "hotel_id": "HT001",
                   "guest_name": "Bob Smith",
-                  "checkin_date": "2026-06-15",
-                  "checkout_date": "2026-06-18"
+                  "checkin_date": "2027-06-15",
+                  "checkout_date": "2027-06-18"
                 }
               }
             ]

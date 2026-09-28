@@ -15,6 +15,9 @@ CI.
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 # Repo root = three parents up from this file (src/eval/dataset_integrity.py).
@@ -74,3 +77,49 @@ def resolve(path: str | Path) -> Path:
     """Resolve a repo-relative evalset path to an absolute Path."""
     p = Path(path)
     return p if p.is_absolute() else _REPO_ROOT / p
+
+
+# A tool argument that is exactly a calendar date, e.g. ``"checkin_date": "2027-06-15"``.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def past_tool_arg_dates(paths: Iterable[str | Path], today: date) -> list[str]:
+    """Expected tool-argument dates that are already before ``today``.
+
+    An evalset must hold concrete dates: ADK and GEPA read these files by path, so
+    there is no load step to resolve a placeholder. But the search inventory and the
+    agent both move with the calendar. Since #174, "June 15" means the next June 15.
+    So a saved date goes stale once it passes, and the expected trajectory then
+    names a date the agent will never search.
+
+    No metric grades tool arguments today, so a stale date cannot fail anything.
+    That is exactly why this check exists. It runs when an evalset is used and
+    warns, never in CI, because a CI check tied to the calendar would turn red on a
+    date instead of on a change. To fix: move the year forward, then
+    ``dataset_manifest --update``.
+    """
+    stale = []
+    for path in paths:
+        data = json.loads(resolve(path).read_text())
+        for case in data.get("eval_cases") or data.get("evalCases") or []:
+            for turn in case.get("conversation") or []:
+                uses = (turn.get("intermediate_data") or {}).get("tool_uses") or []
+                for use in uses:
+                    for arg, value in (use.get("args") or {}).items():
+                        if (
+                            isinstance(value, str)
+                            and _ISO_DATE.match(value)
+                            and date.fromisoformat(value) < today
+                        ):
+                            stale.append(
+                                f"{path}: {case.get('eval_id', '?')} "
+                                f"{use.get('name')}({arg}={value})"
+                            )
+    return stale
+
+
+def warn_on_past_tool_arg_dates(paths: Iterable[str | Path], today: date | None = None) -> None:
+    """Print one line per stale expected date (see :func:`past_tool_arg_dates`)."""
+    stale = past_tool_arg_dates(paths, today or datetime.now(UTC).date())
+    for line in stale:
+        print(f"  Warning: expected tool-argument date has passed: {line}")

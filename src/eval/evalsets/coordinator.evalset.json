@@ -117,7 +117,7 @@
         "user_content": {"parts": [{"text": "Book hotel HT001 for Bob Smith, check-in June 15, check-out June 18"}], "role": "user"},
         "final_response": {"parts": [{"text": "Hotel HT001 (Grand Hyatt New York) has been booked for Bob Smith from June 15 to June 18. Booking confirmed."}], "role": "model"},
         "intermediate_data": {
-          "tool_uses": [{"name": "book_hotel", "args": {"hotel_id": "HT001", "guest_name": "Bob Smith", "checkin_date": "2026-06-15", "checkout_date": "2026-06-18"}}]
+          "tool_uses": [{"name": "book_hotel", "args": {"hotel_id": "HT001", "guest_name": "Bob Smith", "checkin_date": "2027-06-15", "checkout_date": "2027-06-18"}}]
         }
       }],
       "session_input": {"app_name": "geap_workshop", "user_id": "eval_user"}

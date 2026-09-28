@@ -15,6 +15,8 @@ from google.adk.evaluation.base_eval_service import InferenceConfig
 from google.adk.evaluation.eval_config import EvalConfig
 from google.adk.evaluation.eval_set import EvalSet
 
+from src.eval.dataset_integrity import warn_on_past_tool_arg_dates
+
 log = logging.getLogger(__name__)
 
 EVAL_CONFIG_FILES = {
@@ -122,6 +124,7 @@ async def run_one_time_eval(agent_key: str = "coordinator", num_runs: int = 1):
 
     with open(evalset_file) as f:
         eval_set = EvalSet.model_validate(json.load(f))
+    warn_on_past_tool_arg_dates([evalset_file])
 
     config_file = EVAL_CONFIG_FILES.get(agent_key, EVAL_CONFIG_FILES["default"])
     with open(config_file) as f:

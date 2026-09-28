@@ -84,7 +84,7 @@
         {
           "user_content": {"parts": [{"text": "Find flights from SFO to JFK on June 15"}], "role": "user"},
           "final_response": {"parts": [{"text": "Flights from SFO to JFK on June 15:\n- United FL001: $450, departing 08:00\n- Delta FL002: $520, departing 10:30\n\nUnited FL001 is $70 cheaper."}], "role": "model"},
-          "intermediate_data": {"tool_uses": [{"name": "search_flights", "args": {"origin": "SFO", "destination": "JFK", "date": "2026-06-15"}}]}
+          "intermediate_data": {"tool_uses": [{"name": "search_flights", "args": {"origin": "SFO", "destination": "JFK", "date": "2027-06-15"}}]}
         }
       ],
       "session_input": {"app_name": "flash_agent_opt", "user_id": "eval_user"}
