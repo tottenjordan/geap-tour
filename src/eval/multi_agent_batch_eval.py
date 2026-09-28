@@ -30,7 +30,7 @@ from src.config import (
     GCP_STAGING_BUCKET,
     ROUTER_ENGINE_ID,
 )
-from src.eval._sdk_patches import patch_evals_sdk, warm_agent_engine
+from src.eval._sdk_patches import patch_evals_sdk, warm_engine
 from src.eval.agent_eval_configs import (
     ALL_AGENTS,
     get_eval_cases,
@@ -460,13 +460,10 @@ def _run_single_agent_eval(
     # Warm the engine before the batched fan-out so cold-start empties don't
     # drop items (throttle + retry-on-empty in _sdk_patches cover the rest).
     try:
-        # `vertexai.agent_engines`, not `client.agent_engines`: aiplatform 2.x
-        # removed the latter from the Client (the surface was renamed to
-        # `client.runtimes`). The vertexai module is what every other engine
-        # lookup in this repo already uses, and it returns an object with
-        # `stream_query`, which is what warm_agent_engine needs.
-        engine = vertexai.agent_engines.get(agent_resource_name)
-        warmed = warm_agent_engine(engine)
+        # Via `vertexai.agent_engines`, not `client.agent_engines` (aiplatform 2.x
+        # removed the latter from the Client). `warm_engine` owns the submodule
+        # import — see its docstring for the AttributeError this used to raise.
+        warmed = warm_engine(agent_resource_name)
         print(f"  Warmed engine ({warmed} warmup queries returned content)")
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"  Warmup skipped: {e}")

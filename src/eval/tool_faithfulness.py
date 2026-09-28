@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 from typing import TYPE_CHECKING
 
@@ -45,6 +46,8 @@ from src.eval.types import FaithfulnessScores, TrajectoryCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_JUDGE_MODEL = "gemini-2.5-flash"
 DEFAULT_USER_ID = "faithfulness-eval"
@@ -286,11 +289,11 @@ def run_tool_faithfulness_eval(
 
     if warm:
         try:
-            from src.eval.multi_agent_batch_eval import warm_agent_engine
+            from src.eval._sdk_patches import warm_agent_engine
 
             warm_agent_engine(engine)
-        except Exception:  # warming is best-effort
-            pass
+        except Exception as exc:  # warming is best-effort — but say so when skipped
+            logger.warning("warmup skipped: %s", exc)
 
     io_cases = [
         capture_interaction(

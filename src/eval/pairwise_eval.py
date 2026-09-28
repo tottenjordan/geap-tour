@@ -24,6 +24,7 @@ Convention (matches the DOE main-effect direction ``claude_mean - gemini_mean``)
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -32,6 +33,8 @@ from src.eval.types import PairwiseAggregate, PairwiseResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 # Winner labels.
 BASELINE = "BASELINE"
@@ -189,14 +192,11 @@ def _collect_responses(client, engine_id: str, cases, *, warm: bool) -> dict[str
 
     if warm:
         try:
-            import vertexai
+            from src.eval._sdk_patches import warm_engine
 
-            from src.eval.multi_agent_batch_eval import warm_agent_engine
-
-            # Not client.agent_engines — removed from the Client in aiplatform 2.x.
-            warm_agent_engine(vertexai.agent_engines.get(engine_id))
-        except Exception:  # warming is best-effort
-            pass
+            warm_engine(engine_id)
+        except Exception as exc:  # warming is best-effort — but say so when skipped
+            logger.warning("warmup skipped for %s: %s", engine_id, exc)
 
     df = pd.DataFrame([{"prompt": c["prompt"]} for c in cases])
     return _responses_by_prompt(client.evals.run_inference(agent=engine_id, src=df))

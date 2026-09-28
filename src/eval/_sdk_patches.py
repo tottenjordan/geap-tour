@@ -292,6 +292,26 @@ def warm_agent_engine(agent_engine, n: int = 2, message: str = "ping") -> int:
     return warmed
 
 
+def warm_engine(resource_name: str, n: int = 2) -> int:
+    """Look up a deployed engine by resource name and warm it.
+
+    The ONE place that resolves an engine for warmup. Five call sites used to write
+    ``import vertexai`` then ``vertexai.agent_engines.get(...)`` — which raises
+    ``AttributeError``, because ``import vertexai`` does not load the
+    ``agent_engines`` submodule. It only worked in processes where something else
+    (e.g. ``deploy_agents``) had already imported it, which is why the test suite
+    never saw it. Every CI eval printed ``Warmup skipped: module 'vertexai' has no
+    attribute 'agent_engines'`` from #106 onward, and two callers swallowed it
+    silently. ``from vertexai import agent_engines`` imports the submodule.
+
+    Raises on lookup failure. Warmup is best-effort, but callers must SAY when they
+    skip it — a silent skip is how this stayed broken.
+    """
+    from vertexai import agent_engines
+
+    return warm_agent_engine(agent_engines.get(resource_name), n=n)
+
+
 def patch_evals_sdk() -> None:
     """Apply all evals-SDK patches (idempotent)."""
     global _PATCHED
