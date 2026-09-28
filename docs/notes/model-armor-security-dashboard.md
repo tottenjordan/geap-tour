@@ -227,3 +227,39 @@ fetch global::custom.googleapis.com/agent_armor/plugin_screening_failed
 ```
 
 Any non-zero rate means the agent is refusing traffic it never screened.
+
+## Inline templates switched off: platform-side TEMPLATE_NOT_FOUND (2026-09-28)
+
+From **2026-09-17 01:40 UTC**, Vertex `generateContent` requests carrying
+`model_armor_config` (our region-scoped `geap-workshop-prompt` / `-response`
+templates, unchanged since 2026-08-12) intermittently fail with
+`400 INVALID_ARGUMENT TEMPLATE_NOT_FOUND`. Nothing on our side changed that day.
+
+| probe | result |
+| --- | --- |
+| direct `generateContent` + `model_armor_config`, gemini-2.5-flash, workstation | **16/20 failed** |
+| Model Armor API `sanitize_user_prompt`, same template (`modelarmor.us-central1.rep.googleapis.com`) | **20/20 OK** |
+| coordinator `3639…` errors per day (09-15 → 09-19) | 0, 0, 33, 240, 378, then 500+/day (query cap) |
+| router `6134…` (attaches no templates) | unaffected |
+
+Each failed hop surfaces to the client as an **empty-at-200** stream: 9/12
+tool-using coordinator prompts came back empty on 2026-09-28. So the
+coordinator's published quality, its infra-empty rate, and the Eval Gate since
+09-17 all carry this failure — it may overlap the oscillation discussed in
+`empty-at-200-still-present-2026-09.md` (not verified).
+
+**Fix:** `MODEL_ARMOR_INLINE_TEMPLATES` (default **off**) gates the templates in
+`get_armored_generate_config`. With it off, `model_armor_plugin()` no longer
+returns `None` for gemini-2.5, so the ADK plugin screens every backbone through
+the Model Armor API — the path that works. Two consequences:
+
+* The gemini-2.5 coordinator now needs `roles/modelarmor.user` on its
+  `AGENT_IDENTITY`, the same as a Gemini-3 one (both live engines already hold a
+  modelarmor role, checked 2026-09-28).
+* `engine_baseline._armor_observation` reads `MODEL_ARMOR_INLINE_TEMPLATES` from the
+  **engine's** env. An engine deployed before this change has no such key but still
+  sends templates; it is judged on the plugin until redeployed, which is the stricter
+  reading.
+
+Re-enable (`MODEL_ARMOR_INLINE_TEMPLATES=1`) only after a direct `generateContent`
+repro with the templates stops returning `TEMPLATE_NOT_FOUND`.

@@ -166,6 +166,18 @@ def test_build_config_uses_tagged_display_name():
     assert config["display_name"] == "coordinator_agent_demo1"
 
 
+def test_inline_armor_templates_are_baked_only_when_opted_in(monkeypatch):
+    """engine_baseline judges the armor layer by the ENGINE's own env, so the flag
+    must reach it when set — and stay absent by default (inline templates 400
+    TEMPLATE_NOT_FOUND platform-side since 2026-09-17)."""
+    import src.deploy.deploy_agents as da
+
+    monkeypatch.setattr(da, "MODEL_ARMOR_INLINE_TEMPLATES", False)
+    assert "MODEL_ARMOR_INLINE_TEMPLATES" not in _build_config(_fake_agent())["env_vars"]
+    monkeypatch.setattr(da, "MODEL_ARMOR_INLINE_TEMPLATES", True)
+    assert _build_config(_fake_agent())["env_vars"]["MODEL_ARMOR_INLINE_TEMPLATES"] == "1"
+
+
 def test_build_config_includes_doe_factor_env():
     config = _build_config(_fake_agent())
     env = config["env_vars"]

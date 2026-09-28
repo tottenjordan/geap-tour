@@ -344,7 +344,11 @@ COORDINATOR_CHECKS: tuple[Check, ...] = (
             "it ACTIVE. It now requires the identity to hold roles/modelarmor.user. It "
             "reads the PROJECT policy, so a folder/org-inherited grant would read as "
             "missing — the safe direction for a control that fails closed, and where "
-            "grant_modelarmor_user writes."
+            "grant_modelarmor_user writes. CHANGED 2026-09-28: inline templates are "
+            "off by default (MODEL_ARMOR_INLINE_TEMPLATES) because Vertex began "
+            "answering them with 400 TEMPLATE_NOT_FOUND on 2026-09-17 — each failure "
+            "an empty answer — so a gemini-2.5 engine is now judged on the plugin, "
+            "grant included, unless its own env opts back in to templates."
         ),
         predicate=lambda s: _armor_observation(s),
     ),
@@ -359,7 +363,11 @@ def _armor_observation(spec) -> tuple[bool, str]:
     google-cloud-modelarmor being present in the served image.
     """
     model = _env(spec, "COORDINATOR_MODEL")
-    templates = server_side_armor_enabled(model)
+    # The ENGINE's baked flag, not the local default: an engine deployed before
+    # 2026-09-28 carries no MODEL_ARMOR_INLINE_TEMPLATES yet still sends templates,
+    # so it is judged on the plugin until it is redeployed — the safe direction.
+    inline = _env(spec, "MODEL_ARMOR_INLINE_TEMPLATES") in ("1", "true", "True")
+    templates = server_side_armor_enabled(model, inline=inline)
     plugin = _env(spec, "ENABLE_MODEL_ARMOR_PLUGIN") in ("1", "true", "True")
     if templates:
         # Vertex calls Model Armor on the engine's behalf here, as a service agent, so
