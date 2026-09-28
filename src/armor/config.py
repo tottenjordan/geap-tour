@@ -73,14 +73,22 @@ def _is_regional_gemini(model: str | None) -> bool:
     return bool(model) and model.startswith(("gemini-2", "models/"))
 
 
-def server_side_armor_enabled(model: str | None) -> bool:
+def server_side_armor_enabled(model: str | None, *, inline: bool | None = None) -> bool:
     """True when ``get_armored_generate_config`` actually attaches Model Armor.
 
     Exactly the gate applied below, named and exported so callers (e.g. the
     coordinator publishing ``armor.server_side`` on its request span) can report
     which security layers are live without re-deriving the family check.
+
+    Needs BOTH a regional Gemini-2.x backbone and ``MODEL_ARMOR_INLINE_TEMPLATES``
+    (default off since 2026-09-28 — the inline path 400s TEMPLATE_NOT_FOUND
+    platform-side; see ``src/config.py``). ``inline`` overrides the local flag so
+    ``engine_baseline`` can judge a deployed engine by the value baked into ITS env
+    rather than by whatever the operator's shell says.
     """
-    return _is_regional_gemini(model)
+    if inline is None:
+        inline = config.MODEL_ARMOR_INLINE_TEMPLATES
+    return inline and _is_regional_gemini(model)
 
 
 def model_armor_plugin(model: str | None = None):
@@ -96,6 +104,11 @@ def model_armor_plugin(model: str | None = None):
     pinned BACK to gemini-2.5-flash so a fresh deploy takes the better-travelled
     templates path. Gemini-3 is now opt-in, and the bake-off engines still run it, so
     this plugin remains the layer that covers them.
+
+    Since 2026-09-28 it covers gemini-2.5 as well: the inline templates are off by
+    default (``MODEL_ARMOR_INLINE_TEMPLATES``) because Vertex began rejecting them
+    with 400 TEMPLATE_NOT_FOUND on 2026-09-17, while this plugin's direct Model Armor
+    API call resolves the same templates reliably.
 
     ``google.adk.integrations.model_armor.ModelArmorPlugin`` (new in ADK 2.8.0)
     screens inside the ADK request path rather than via a ``GenerateContentConfig``
@@ -123,8 +136,8 @@ def model_armor_plugin(model: str | None = None):
     if not config.ENABLE_MODEL_ARMOR_PLUGIN:
         return None
     model = model_id(model)
-    if _is_regional_gemini(model):
-        return None  # templates already cover this backbone natively
+    if server_side_armor_enabled(model):
+        return None  # inline templates already cover this backbone
     try:
         from google.adk.integrations.model_armor import (
             ModelArmorConfig as AdkModelArmorConfig,
@@ -161,7 +174,8 @@ def armor_layers(model: str | None = None) -> dict[str, bool]:
     * ``client_guardrail`` — ``input_guardrail_callback``. Always on, no cloud
       dependency, the only layer that works offline.
     * ``server_side`` — region-scoped Model Armor templates on the
-      ``GenerateContentConfig``. Regional Gemini-2.x only.
+      ``GenerateContentConfig``. Regional Gemini-2.x only, and only with
+      ``MODEL_ARMOR_INLINE_TEMPLATES`` set (default off since 2026-09-28).
     * ``plugin`` — the ADK request-path plugin. Covers what the templates cannot,
       when ``ENABLE_MODEL_ARMOR_PLUGIN`` is set.
 
@@ -176,7 +190,12 @@ def armor_layers(model: str | None = None) -> dict[str, bool]:
 
 
 def get_armored_generate_config(model: str | None = None) -> GenerateContentConfig:
-    """GenerateContentConfig with server-side Model Armor only where it is honored.
+    """GenerateContentConfig with inline Model Armor only where it is honored AND enabled.
+
+    ``MODEL_ARMOR_INLINE_TEMPLATES`` (default off since 2026-09-28) gates the
+    templates below: that path started failing platform-side with 400
+    TEMPLATE_NOT_FOUND on 2026-09-17, so by default ``model_armor_plugin`` screens
+    every backbone instead.
 
     Model Armor templates are region-scoped and enforced natively on the Gemini 2.x
     path. Gemini 3.x runs on the global endpoint (no template support -> 400
@@ -205,7 +224,12 @@ def get_armored_generate_config(model: str | None = None) -> GenerateContentConf
     thinking = ThinkingConfig(thinking_budget=budget) if budget is not None else None
     return with_afc_disabled(
         GenerateContentConfig(
-            model_armor_config=get_model_armor_config(),
+            # Off by default since 2026-09-28: the inline path 400s TEMPLATE_NOT_FOUND
+            # platform-side and every failed hop is an empty answer. The plugin
+            # screens instead. See src/config.py:MODEL_ARMOR_INLINE_TEMPLATES.
+            model_armor_config=get_model_armor_config()
+            if server_side_armor_enabled(model)
+            else None,
             thinking_config=thinking,
             max_output_tokens=config.COORDINATOR_MAX_OUTPUT_TOKENS,
         )

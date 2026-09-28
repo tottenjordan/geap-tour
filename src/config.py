@@ -333,6 +333,29 @@ BQ_EVAL_DATASET = os.environ.get("BQ_EVAL_DATASET", "geap_workshop_logs")
 # dataset IAM. See docs/notes/agent-analytics-bigquery.md.
 ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", "true", "True")
 
+# MODEL_ARMOR_INLINE_TEMPLATES=1 restores the INLINE template path: Model Armor
+# templates attached to the Gemini request as GenerateContentConfig.model_armor_config,
+# screened by Vertex on the engine's behalf. DEFAULT OFF as of 2026-09-28.
+#
+# That path broke platform-side on 2026-09-17 01:40 UTC. Vertex's generateContent
+# intermittently rejects the request with 400 TEMPLATE_NOT_FOUND for templates that
+# exist and have not changed since 2026-08-12: measured 16/20 direct calls failing
+# from a workstation, no engine involved, while the Model Armor API's own
+# sanitize_user_prompt resolved the SAME template 20/20. On the coordinator every
+# failed hop is an empty-at-200 answer — 9/12 tool-using requests, hundreds of errors
+# a day since 09-17 on an engine unchanged since 08-21. The router attaches no
+# templates, which is why it never saw it.
+#
+# With this off, the ModelArmorPlugin (ENABLE_MODEL_ARMOR_PLUGIN) screens every
+# backbone through the Model Armor API, which works. Flip back on only after the
+# direct repro (src/armor/config.py:get_armored_generate_config with the flag on)
+# stops returning TEMPLATE_NOT_FOUND. See docs/notes/model-armor-security-dashboard.md.
+MODEL_ARMOR_INLINE_TEMPLATES = os.environ.get("MODEL_ARMOR_INLINE_TEMPLATES", "0") in (
+    "1",
+    "true",
+    "True",
+)
+
 # ENABLE_MODEL_ARMOR_PLUGIN=1 attaches ADK 2.8.0's first-party
 # `google.adk.integrations.model_armor.ModelArmorPlugin`, which screens inside the
 # ADK request path instead of via a GenerateContentConfig field — so unlike the
@@ -340,8 +363,9 @@ ENABLE_AGENT_ANALYTICS = os.environ.get("ENABLE_AGENT_ANALYTICS", "0") in ("1", 
 #
 # It exists because the template path covers ONLY regional Gemini-2.x. The live
 # coordinator is baked at gemini-2.5-flash (armor active). .env's AGENT_MODEL was
-# gemini-3.5-flash until 2026-09-17 and is now 2.5 as well, so a default deploy stays
-# on templates; this plugin covers the opt-in Gemini-3 path and the bake-off engines.
+# gemini-3.5-flash until 2026-09-17 and is now 2.5 as well. Until 2026-09-28 a default
+# deploy stayed on templates and this plugin covered only Gemini-3 and the bake-off
+# engines; with the inline path now off it screens every backbone.
 # Defaults ON (flipped 2026-09-09). This comment said "Default off ... byte-identical"
 # until 2026-09-17 — the third of three stale copies of that claim, and the one in the
 # file that actually sets the default. On a Gemini-3 backbone the plugin is then the
@@ -361,11 +385,10 @@ ADK_MAX_LLM_CALLS = int(os.environ.get("ADK_MAX_LLM_CALLS", "100"))
 # existed and guarded nothing.
 #
 # Safe to default on because it is inert where it is not needed: model_armor_plugin()
-# returns None on a regional Gemini-2.x backbone, where the templates already screen,
-# so no request is ever double-screened. Both currently-deployed engines are
-# gemini-2.5-flash, so flipping this changes nothing about them today — the point is
-# that a Gemini-3 deploy (now opt-in rather than the .env default) is covered instead
-# of silently unarmored.
+# returns None wherever the inline templates screen, so no request is ever
+# double-screened. Since 2026-09-28 that is nowhere by default — the inline path is
+# off (MODEL_ARMOR_INLINE_TEMPLATES above), so the plugin is the server-side layer on
+# gemini-2.5 too, not only on Gemini-3.
 #
 # Set ENABLE_MODEL_ARMOR_PLUGIN=0 to opt out.
 ENABLE_MODEL_ARMOR_PLUGIN = os.environ.get("ENABLE_MODEL_ARMOR_PLUGIN", "1") not in (

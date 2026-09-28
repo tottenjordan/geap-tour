@@ -72,6 +72,7 @@ from src.config import (
     HIGH_SPLIT,
     LITE_MODEL,
     MEDIUM_SPLIT,
+    MODEL_ARMOR_INLINE_TEMPLATES,
     OPUS_MODEL,
     OTEL_ENV_VARS,
     PRO_MODEL,
@@ -570,6 +571,13 @@ def _build_config(
     # enabled, so default deploys keep byte-identical env.
     if ENABLE_MODEL_ARMOR_PLUGIN:
         env_vars["ENABLE_MODEL_ARMOR_PLUGIN"] = "1"
+
+    # Inline templates (default OFF since 2026-09-28 — platform-side
+    # TEMPLATE_NOT_FOUND). Baked only when opted in, for the same reason as the
+    # plugin flag: engine_baseline reads the engine's own value to decide which
+    # layer it is actually serving with.
+    if MODEL_ARMOR_INLINE_TEMPLATES:
+        env_vars["MODEL_ARMOR_INLINE_TEMPLATES"] = "1"
 
     # Model Armor template names for server-side screening (read by
     # src/armor/config.get_model_armor_config). Only bake when explicitly set so

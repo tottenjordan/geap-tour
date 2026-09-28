@@ -18,6 +18,12 @@ from src.armor.config import (
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture
+def inline_templates(monkeypatch):
+    """Opt back in to the inline template path (default OFF since 2026-09-28)."""
+    monkeypatch.setattr(src_config, "MODEL_ARMOR_INLINE_TEMPLATES", True)
+
+
 def _make_context(text: str):
     ctx = MagicMock()
     ctx.user_content = Content(parts=[Part(text=text)])
@@ -80,11 +86,26 @@ class TestModelArmorConfig:
         assert "templates/" in config.prompt_template_name
         assert "templates/" in config.response_template_name
 
-    def test_armored_generate_config(self):
-        # Server-side Model Armor is attached for a Gemini-2.x backbone (region-scoped
-        # templates are honored natively on the regional path).
+    def test_armored_generate_config(self, inline_templates):
+        # With the inline path opted in, templates are attached for a Gemini-2.x
+        # backbone (region-scoped templates are honored natively on the regional path).
         config = get_armored_generate_config("gemini-2.5-flash")
         assert config.model_armor_config is not None
+
+    def test_no_inline_templates_by_default(self, monkeypatch):
+        """Since 2026-09-17 Vertex intermittently 400s TEMPLATE_NOT_FOUND on inline
+        templates that exist (16/20 direct calls), and each failed hop is an
+        empty-at-200 answer. The default must not send them — the plugin screens."""
+        monkeypatch.setattr(src_config, "MODEL_ARMOR_INLINE_TEMPLATES", False)
+        config = get_armored_generate_config("gemini-2.5-flash")
+        assert config.model_armor_config is None
+
+    def test_inline_templates_default_off_in_a_clean_env(self):
+        assert _config_in_clean_env("c.MODEL_ARMOR_INLINE_TEMPLATES") == "False"
+        assert (
+            _config_in_clean_env("c.MODEL_ARMOR_INLINE_TEMPLATES", MODEL_ARMOR_INLINE_TEMPLATES="1")
+            == "True"
+        )
 
     def test_armor_omitted_for_gemini_3(self):
         # Gemini-3 runs on the global endpoint (no template support → 400
@@ -118,7 +139,7 @@ class TestModelArmorConfig:
 class TestGenerationLatencyKnobs:
     """The opt-in thinking/max-output-tokens knobs (regional-Gemini path only)."""
 
-    def test_no_knobs_by_default(self, monkeypatch):
+    def test_no_knobs_by_default(self, monkeypatch, inline_templates):
         # Unset knobs preserve prior behavior: armor present, no thinking/token caps.
         monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", None)
         monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", None)
@@ -127,7 +148,7 @@ class TestGenerationLatencyKnobs:
         assert cfg.thinking_config is None
         assert cfg.max_output_tokens is None
 
-    def test_thinking_budget_applied_on_regional_gemini(self, monkeypatch):
+    def test_thinking_budget_applied_on_regional_gemini(self, monkeypatch, inline_templates):
         monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", 0)
         monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", None)
         cfg = get_armored_generate_config("gemini-2.5-flash")
@@ -139,6 +160,16 @@ class TestGenerationLatencyKnobs:
         monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", None)
         monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", 512)
         cfg = get_armored_generate_config("gemini-2.5-flash")
+        assert cfg.max_output_tokens == 512
+
+    def test_knobs_survive_with_inline_templates_off(self, monkeypatch):
+        """Turning the templates off must not take the latency knobs with them."""
+        monkeypatch.setattr(src_config, "MODEL_ARMOR_INLINE_TEMPLATES", False)
+        monkeypatch.setattr(src_config, "COORDINATOR_THINKING_BUDGET", 0)
+        monkeypatch.setattr(src_config, "COORDINATOR_MAX_OUTPUT_TOKENS", 512)
+        cfg = get_armored_generate_config("gemini-2.5-flash")
+        assert cfg.model_armor_config is None
+        assert cfg.thinking_config.thinking_budget == 0
         assert cfg.max_output_tokens == 512
 
     def test_knobs_ignored_for_gemini_3(self, monkeypatch):
@@ -216,7 +247,7 @@ class TestArmorIsNeverSilentlyAbsent:
     screens in the ADK request path and is therefore model-family-independent.
     """
 
-    def test_the_gate_still_excludes_the_backbones_it_should(self):
+    def test_the_gate_still_excludes_the_backbones_it_should(self, inline_templates):
         """Not the bug — this part is correct and must stay correct."""
         from src.armor.config import server_side_armor_enabled
 
@@ -258,7 +289,9 @@ class TestArmorIsNeverSilentlyAbsent:
         layers = armor_cfg.armor_layers("gemini-3.5-flash")
         assert layers["plugin"] is True
 
-    def test_the_plugin_does_not_double_up_on_a_gemini2_backbone(self, monkeypatch):
+    def test_the_plugin_does_not_double_up_on_a_gemini2_backbone(
+        self, monkeypatch, inline_templates
+    ):
         """Templates already screen regional Gemini-2.x; adding the plugin there
         would screen every request twice and bill for it."""
         from src import config as cfg
@@ -270,12 +303,25 @@ class TestArmorIsNeverSilentlyAbsent:
         assert layers["plugin"] is False
         assert armor_cfg.model_armor_plugin("gemini-2.5-flash") is None
 
-    def test_a_regional_gemini2_backbone_reports_the_template_layer(self):
+    def test_a_regional_gemini2_backbone_reports_the_template_layer(self, inline_templates):
         from src.armor.config import armor_layers
 
         layers = armor_layers("gemini-2.5-flash")
         assert layers["server_side"] is True
         assert layers["client_guardrail"] is True
+
+    def test_by_default_the_plugin_screens_a_gemini2_backbone(self, monkeypatch):
+        """With inline templates off (the default since 2026-09-28) the plugin is the
+        server-side layer on gemini-2.5 too — otherwise the fix would leave the
+        default backbone on the client blocklist alone."""
+        from src import config as cfg
+        from src.armor import config as armor_cfg
+
+        monkeypatch.setattr(cfg, "MODEL_ARMOR_INLINE_TEMPLATES", False)
+        monkeypatch.setattr(cfg, "ENABLE_MODEL_ARMOR_PLUGIN", True)
+        layers = armor_cfg.armor_layers("gemini-2.5-flash")
+        assert layers == {"client_guardrail": True, "server_side": False, "plugin": True}
+        assert armor_cfg.model_armor_plugin("gemini-2.5-flash") is not None
 
     def test_every_backbone_can_reach_two_layers(self, monkeypatch):
         """The property that matters: no backbone is stuck on the local blocklist.
@@ -472,13 +518,19 @@ class TestTheDefaultBackboneTakesTheTemplatesPath:
         out = _config_in_clean_env("c.AGENT_MODEL, c.COORDINATOR_MODEL")
         assert out.split() == ["gemini-2.5-flash", "gemini-2.5-flash"], out
 
-    def test_the_default_backbone_is_covered_by_templates_not_the_plugin(self) -> None:
-        """The whole point of the pin: no per-engine IAM grant is required to be safe."""
+    def test_the_default_backbone_is_covered_by_the_plugin(self, monkeypatch) -> None:
+        """REVERSED 2026-09-28. This pinned "templates, not the plugin" — the pin's
+        original point was that no per-engine IAM grant was needed. The inline
+        templates then started failing platform-side (400 TEMPLATE_NOT_FOUND, 16/20
+        direct calls) and every failure was an empty answer, so the default backbone
+        now takes the plugin and DOES need `roles/modelarmor.user` on its identity."""
         from src.armor.config import armor_layers
 
+        monkeypatch.setattr(src_config, "MODEL_ARMOR_INLINE_TEMPLATES", False)
+        monkeypatch.setattr(src_config, "ENABLE_MODEL_ARMOR_PLUGIN", True)
         layers = armor_layers("gemini-2.5-flash")
-        assert layers["server_side"] is True, "the default backbone lost template armor"
-        assert layers["plugin"] is False, "the default backbone should not need the plugin"
+        assert layers["server_side"] is False, "inline templates are off by default"
+        assert layers["plugin"] is True, "the default backbone lost its server-side layer"
         assert layers["client_guardrail"] is True
 
     def test_the_shipped_env_template_agrees_with_the_code_default(self) -> None:

@@ -26,6 +26,7 @@ def _good_env(engine_id="111"):
         "ENABLE_MEMORY_BANK": "1",
         "ENABLE_MEMORY_PRELOAD_CACHE": "1",
         "COORDINATOR_MODEL": "gemini-2.5-flash",
+        "ENABLE_MODEL_ARMOR_PLUGIN": "1",
         # router
         "LITE_MODEL": "gemini-2.5-flash-lite",
         "FLASH_MODEL": "gemini-2.5-flash",
@@ -196,6 +197,7 @@ class TestAdvisories:
         nobody has to act on."""
         env = _good_env()
         env["COORDINATOR_MODEL"] = "gemini-3.5-flash"
+        env.pop("ENABLE_MODEL_ARMOR_PLUGIN")
         f = _find(eb.evaluate(_good_spec(env=env), "coordinator"), "server_side_armor")
         assert not f.ok
         assert f.severity == "critical"
@@ -248,15 +250,36 @@ class TestAdvisories:
         own identity needs nothing, so the grant must not be required there."""
         env = _good_env()
         env["COORDINATOR_MODEL"] = "gemini-2.5-flash"
+        env["MODEL_ARMOR_INLINE_TEMPLATES"] = "1"
         spec = _good_spec(env=env)
         spec["_modelarmor_grantees"] = set()
         f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
         assert f.ok
         assert "templates active" in f.observed
 
+    def test_a_gemini2_engine_without_the_inline_flag_is_judged_on_the_plugin(self):
+        """Inline templates are off by default since 2026-09-28 (platform-side
+        TEMPLATE_NOT_FOUND), so a gemini-2.5 engine's server-side layer is the plugin —
+        and the plugin needs the grant. Judging it on templates would pass an engine
+        that refuses everything."""
+        env = _good_env()
+        env["COORDINATOR_MODEL"] = "gemini-2.5-flash"
+        spec = _good_spec(env=env)
+        spec["effective_identity"] = "ident-1"
+        spec["_modelarmor_grantees"] = set()
+        f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
+        assert not f.ok
+        assert "CANNOT reach Model Armor" in f.observed
+
+        spec["_modelarmor_grantees"] = {"principal://ident-1"}
+        f = _find(eb.evaluate(spec, "coordinator"), "server_side_armor")
+        assert f.ok
+        assert "plugin active" in f.observed
+
     def test_a_claude_coordinator_also_loses_server_side_armor(self):
         env = _good_env()
         env["COORDINATOR_MODEL"] = "claude-sonnet-5"
+        env.pop("ENABLE_MODEL_ARMOR_PLUGIN")
         assert not _find(eb.evaluate(_good_spec(env=env), "coordinator"), "server_side_armor").ok
 
     def test_a_foreign_baked_engine_id_is_advisory(self):
