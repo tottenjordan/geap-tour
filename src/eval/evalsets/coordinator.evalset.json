@@ -49,7 +49,7 @@
       "eval_id": "expense_policy_over_limit",
       "conversation": [{
         "user_content": {"parts": [{"text": "Check policy for a $500 entertainment expense"}], "role": "user"},
-        "final_response": {"parts": [{"text": "A $500 entertainment expense exceeds the $150 policy limit for entertainment. It requires manager review."}], "role": "model"},
+        "final_response": {"parts": [{"text": "A $500 entertainment expense exceeds the $150 policy limit for entertainment."}], "role": "model"},
         "intermediate_data": {
           "tool_uses": [{"name": "check_expense_policy", "args": {"category": "entertainment", "amount": 500}}]
         }

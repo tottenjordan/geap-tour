@@ -246,3 +246,102 @@ class TestAdversarialAndLongContextCoverage:
         for c in self._cases():
             if c["category"] in ("adversarial", "long_context"):
                 assert len(c["description"]) > 40, c["prompt"][:50]
+
+
+_CATEGORY_WORDS = {"meal": "meals", "meals": "meals", "transport": "transport",
+                   "lodging": "lodging", "supplies": "supplies",
+                   "entertainment": "entertainment"}  # fmt: skip
+_REVIEW_WORDS = re.compile(r"manager|review|approv", re.IGNORECASE)
+_SUBMISSION_INTENT = re.compile(r"submit|approv", re.IGNORECASE)
+
+
+def _coordinator_policy_checks() -> list[tuple[str, str]]:
+    """(prompt, reference) for every coordinator case that only CHECKS policy.
+
+    Both coordinator datasets: the in-code set behind the published agent_eval/*
+    scores and the regression evalset.
+    """
+    from src.eval.batch_eval import EVAL_CASES
+
+    pairs = [
+        (c["prompt"], c["reference"])
+        for c in EVAL_CASES
+        if c["expected_tool"] == "expense_mcp_check_expense_policy"
+    ]
+    evalset = json.loads((_REPO_ROOT / "src/eval/evalsets/coordinator.evalset.json").read_text())
+    for case in evalset["eval_cases"]:
+        for turn in case["conversation"]:
+            tools = [t["name"] for t in (turn.get("intermediate_data") or {}).get("tool_uses", [])]
+            if tools == ["check_expense_policy"]:
+                pairs.append(
+                    (
+                        turn["user_content"]["parts"][0]["text"],
+                        turn["final_response"]["parts"][0]["text"],
+                    )
+                )
+    # One amount in one known category — the shape a single check_policy call
+    # answers. Multi-line reports, "what is the limit?" and unknown-category cases
+    # are covered by the review-wording test below instead.
+    return [
+        (p, r)
+        for p, r in pairs
+        if len(re.findall(r"\$\d", p)) == 1
+        and any(w in _CATEGORY_WORDS for w in re.findall(r"[a-z]+", p.lower()))
+    ]
+
+
+class TestCoordinatorReferencesAreGroundedInTheTool:
+    """A reference answer may only demand what the agent can actually know.
+
+    ``final_response_match`` failed the Eval Gate on "Check policy for a $500
+    entertainment expense" because the reference demanded "It requires manager
+    review." ``check_policy`` returns ``{within_policy, limit, amount, category,
+    reason}`` — no review, no approval — and the coordinator's instruction mentions
+    manager review only after a SUBMISSION. A correct answer was scored as missing
+    a "crucial" fact that nothing in the system supplies.
+
+    (The expense_agent's references keep the phrase on purpose: its own
+    instruction tells it to "note it requires manager review" on an over-limit
+    check, so there it is grounded.)
+    """
+
+    def test_the_policy_check_cases_are_found(self):
+        """Guard the guard: an empty selection would make every check vacuous."""
+        assert len(_coordinator_policy_checks()) >= 8
+
+    @pytest.mark.parametrize(("prompt", "reference"), _coordinator_policy_checks())
+    def test_reference_matches_what_check_policy_returns(self, prompt, reference):
+        from src.mcp_servers.expense.mock_db import check_policy
+
+        amount = float(re.search(r"\$(\d+(?:\.\d+)?)", prompt).group(1))
+        words = re.findall(r"[a-z]+", prompt.lower())
+        category = next(_CATEGORY_WORDS[w] for w in words if w in _CATEGORY_WORDS)
+        result = check_policy(amount, category)
+
+        assert f"${int(result['limit'])}" in reference, "reference must cite the tool's limit"
+        verdict = "within" if result["within_policy"] else "exceeds"
+        assert verdict in reference.lower(), f"tool says {verdict!r}"
+        tool_output = json.dumps(result)
+        assert not _REVIEW_WORDS.search(tool_output), "premise: check_policy says nothing of review"
+        assert not _REVIEW_WORDS.search(reference), (
+            f"reference asks for a fact check_policy never returns: {reference!r}"
+        )
+
+    def test_review_is_only_expected_as_a_consequence_of_submission(self):
+        """Manager review is grounded only by SUBMISSION — ``submit_expense``'s
+        ``pending_review`` status and the instruction's "submitted for manager
+        review". So a reference may mention it only when the prompt submits or
+        approves, or when the reference itself ties it to submitting ("would be
+        flagged ... if submitted"). Catches the defect in cases the tool-keyed
+        selection misses: a multi-step "check whether ... is within policy" carried
+        it too."""
+        from src.eval.batch_eval import EVAL_CASES
+
+        offenders = [
+            c["prompt"]
+            for c in EVAL_CASES
+            if _REVIEW_WORDS.search(c.get("reference", ""))
+            and not _SUBMISSION_INTENT.search(c["prompt"])
+            and "submit" not in c["reference"].lower()
+        ]
+        assert not offenders, offenders
