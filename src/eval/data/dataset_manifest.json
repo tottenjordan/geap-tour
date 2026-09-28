@@ -43,10 +43,10 @@
       "version": "1.0.0"
     },
     "src/agents/coordinator/coordinator_eval_set.evalset.json": {
-      "checksum": "sha256:39a5b38f62545b0059e189db48f09d6adae3f6864576e36410a451f4cdbd59b1",
+      "checksum": "sha256:31778d744278f61cd92a284298200ed2ca2b0307c2494887315f9dae50bbe6a9",
       "n_cases": 20,
       "role": "development",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "src/agents/expense_agent_opt/expense_eval_set.evalset.json": {
       "checksum": "sha256:fdbe0cddce39bec5fd317b71a75a15fe594a4143aab02524cc5c82ee3c0a6c9f",
@@ -61,10 +61,10 @@
       "version": "1.0.0"
     },
     "src/eval/evalsets/coordinator.evalset.json": {
-      "checksum": "sha256:c8c7f4eef380d1173ed0e5078b2bd0e3478e01d3cae4d2f6c529820d84ac0259",
+      "checksum": "sha256:8d9a903152526c22370c0b781cc9a791e8262134a6614e257320504309cd45c8",
       "n_cases": 17,
       "role": "regression",
-      "version": "1.1.0"
+      "version": "1.1.1"
     },
     "src/eval/evalsets/expense_agent.evalset.json": {
       "checksum": "sha256:57d460e4535be4d82fce1417558efae33928581f44b5bbac1341ad7a8e8dc5e3",

@@ -210,6 +210,8 @@ def run_optimize(
         LocalEvalSamplerConfig,
     )
 
+    from src.eval.dataset_integrity import warn_on_past_tool_arg_dates
+
     root_agent = _load_agent(agent_module_path)
     print(f"  Agent: {root_agent.name}")
     print(f"  Sub-agents: {[a.name for a in root_agent.sub_agents]}")
@@ -231,6 +233,10 @@ def run_optimize(
     else:
         optimizer_config = GEPARootAgentPromptOptimizerConfig()
 
+    # LocalEvalSetsManager's layout: <agents_dir>/<app_name>/<eval_set_id>.evalset.json
+    warn_on_past_tool_arg_dates(
+        [os.path.join(agent_module_path, f"{sampler_config.train_eval_set}.evalset.json")]
+    )
     eval_sets_manager = LocalEvalSetsManager(agents_dir=agents_dir)
     sampler = LocalEvalSampler(sampler_config, eval_sets_manager)
     optimizer = GEPARootAgentPromptOptimizer(optimizer_config)
