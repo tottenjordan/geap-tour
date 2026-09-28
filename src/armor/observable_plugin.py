@@ -35,6 +35,7 @@ a screening decision — that is the whole point of a security control.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -87,6 +88,30 @@ class ObservableModelArmorPlugin(ModelArmorPlugin):
         super().__init__(*args, **kwargs)
         # Injectable so tests never construct a real metrics client.
         self._metrics_writer = metrics_writer
+        self._client_loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def client(self):
+        """ADK's lazy client, rebuilt whenever the running event loop changes.
+
+        ADK builds ONE ``grpc.aio`` client on first use, and a ``grpc.aio`` channel is
+        bound to the loop that created it. The managed runtime serves requests on more
+        than one loop, so after the first loop closed, every later screening call
+        raised ``RuntimeError: Event loop is closed`` — a screening failure, which
+        ``block_on_screening_failure`` turns into a refusal (3/12 prompts on
+        coordinator ``3639…``, 2026-09-28). The abandoned client is not closed: its
+        transport belongs to a loop that may already be gone.
+        """
+        if self._supplied_client:
+            return self._supplied_client
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not self._client_loop:
+            self._client = None
+            self._client_loop = loop
+        return ModelArmorPlugin.client.fget(self)
 
     def _handle_screening_failure(self, blocked_message: str) -> LlmResponse | None:
         """Screening did not run. Say so, loudly, then behave exactly as ADK does.

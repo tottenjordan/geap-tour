@@ -189,3 +189,68 @@ class TestTheAdkSurfaceWeSubclass:
         from src.armor.config import model_armor_plugin
 
         assert model_armor_plugin("gemini-3.5-flash")._config.block_on_screening_failure is True
+
+
+class TestTheClientFollowsTheEventLoop:
+    """ADK caches ONE ``grpc.aio`` client, bound to the loop that first used it.
+
+    The managed runtime serves requests on more than one event loop, so once the
+    first loop closed every later screening call raised ``RuntimeError: Event loop
+    is closed`` — a screening FAILURE, which ``block_on_screening_failure`` turns
+    into ADK's refusal. Measured 2026-09-28 on coordinator ``3639…`` right after the
+    plugin took over from the inline templates: 3/12 prompts refused, every one a
+    ``_check_closed`` traceback. Reproduced locally with the stock plugin: loop 1
+    SUCCESS, loops 2 and 3 ``Event loop is closed``.
+    """
+
+    @staticmethod
+    def _real_plugin() -> ObservableModelArmorPlugin:
+        from google.auth.credentials import AnonymousCredentials
+
+        return ObservableModelArmorPlugin(
+            config=AdkModelArmorConfig(
+                prompt_template_name=TEMPLATE, response_template_name=TEMPLATE
+            ),
+            credentials=AnonymousCredentials(),
+        )
+
+    def test_each_event_loop_gets_its_own_client(self) -> None:
+        import asyncio
+
+        plugin = self._real_plugin()
+
+        async def grab():
+            return plugin.client
+
+        first = asyncio.run(grab())
+        second = asyncio.run(grab())
+        assert first is not second, "a client bound to a closed loop was reused"
+
+    def test_the_same_loop_reuses_its_client(self) -> None:
+        """Rebuilding per CALL would open a channel per screening."""
+        import asyncio
+
+        plugin = self._real_plugin()
+
+        async def grab_twice():
+            return plugin.client, plugin.client
+
+        a, b = asyncio.run(grab_twice())
+        assert a is b
+
+    def test_a_supplied_client_is_left_alone(self) -> None:
+        import asyncio
+
+        supplied = object()
+        plugin = ObservableModelArmorPlugin(
+            config=AdkModelArmorConfig(
+                prompt_template_name=TEMPLATE, response_template_name=TEMPLATE
+            ),
+            client=supplied,  # type: ignore[arg-type]
+        )
+
+        async def grab():
+            return plugin.client
+
+        assert asyncio.run(grab()) is supplied
+        assert asyncio.run(grab()) is supplied
