@@ -125,6 +125,9 @@ analytics = [
     "google-cloud-bigquery-storage>=2",
     "google-cloud-storage>=2",
 ]
+deck = [
+    "python-pptx>=1.0.2",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

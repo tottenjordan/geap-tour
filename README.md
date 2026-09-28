@@ -37,7 +37,7 @@ A hands-on workshop demonstrating the full Gemini Enterprise Agent Platform (GEA
 | [Cross-Model Experiment](docs/cross_model_experiment.md) | All models × all complexity tiers — **historical (2026-08-05)**; its "use Lite for medium" conclusion was later measured and rejected |
 | [Cost Comparison](docs/multi_model_cost_comparison.md) | Multi-model routing cost analysis — **historical**; three-tier framing and model ids superseded |
 | [Code Standards](CODE_STANDARDS.md) | Git, Python tooling, and testing conventions |
-| [Slides](docs/slides.pptx) | Workshop deck (34 slides) |
+| Slides | Workshop deck (34 slides) — **generated, not committed**: `uv sync --group deck && uv run python scripts/generate_pptx.py`, or download the `workshop-deck` artifact from the [Deck workflow](../../actions/workflows/deck.yaml) |
 
 ## Quick Start
 
