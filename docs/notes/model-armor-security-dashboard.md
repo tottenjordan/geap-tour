@@ -263,3 +263,23 @@ the Model Armor API — the path that works. Two consequences:
 
 Re-enable (`MODEL_ARMOR_INLINE_TEMPLATES=1`) only after a direct `generateContent`
 repro with the templates stops returning `TEMPLATE_NOT_FOUND`.
+
+### The plugin's client was bound to one event loop (2026-09-28)
+
+Right after the redeploy that made the plugin the gemini-2.5 layer, the
+tool-prompt probe went from 9/12 empty to **0/12 empty — but 3/12 refused** with
+ADK's `"I'm sorry, but I can't help with that request."`. The engine logs showed
+screening *failures*, not blocks (`Model Armor input screening call failed`,
+ending in `asyncio ... _check_closed`).
+
+ADK's `ModelArmorPlugin.client` builds one `grpc.aio` client on first use, and a
+`grpc.aio` channel is bound to the event loop that created it. The managed runtime
+serves requests on more than one loop, so once the first loop closed, later calls
+raised `RuntimeError: Event loop is closed`, and `block_on_screening_failure`
+turned each into a refusal. Reproduced locally with the stock plugin across three
+`asyncio.run` calls: `SUCCESS`, then two `Event loop is closed`.
+
+`ObservableModelArmorPlugin.client` now rebuilds the client whenever the running
+loop changes (and reuses it within a loop). Same probe through the real factory:
+4/4 `SUCCESS`. This affects any engine on the plugin, Gemini-3 included; the
+`agent_armor/plugin_screening_failed` series is what would have shown it.
