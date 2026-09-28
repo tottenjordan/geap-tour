@@ -18,6 +18,7 @@ consumable by the offline-eval bridge (:mod:`src.eval.publish_offline_eval`).
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,8 @@ from src.eval.types import JudgeScore, PanelScore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 # Coordinator eval categories whose responses are meaningful for policy scoring:
 # every expense flow, plus the expense-routing case (the rubric explicitly scores
@@ -164,14 +167,11 @@ def run_policy_compliance_eval(
 
     if warm:
         try:
-            import vertexai
+            from src.eval._sdk_patches import warm_engine
 
-            from src.eval.multi_agent_batch_eval import warm_agent_engine
-
-            engine = vertexai.agent_engines.get(agent_resource_name)
-            warm_agent_engine(engine)
-        except Exception:  # warming is best-effort
-            pass
+            warm_engine(agent_resource_name)
+        except Exception as exc:  # warming is best-effort — but say so when skipped
+            logger.warning("warmup skipped for %s: %s", agent_resource_name, exc)
 
     import pandas as pd
 

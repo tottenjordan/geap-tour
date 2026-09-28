@@ -83,13 +83,11 @@ def _df(responses, *, with_tool=True):
 def offline(monkeypatch):
     """Neutralize every network call the flow makes."""
     monkeypatch.setattr(mabe, "ensure_eval_experiment", lambda **_k: None)
-    # `raising=False`: `vertexai.agent_engines` is a submodule, not bound on the
-    # package until something imports it. The module under test survives that in
-    # production only because the warmup call sits inside a try/except.
-    monkeypatch.setattr(
-        mabe.vertexai, "agent_engines", SimpleNamespace(get=lambda _n: object()), raising=False
-    )
-    monkeypatch.setattr(mabe, "warm_agent_engine", lambda _e: 1)
+    # This fixture used to stub `vertexai.agent_engines` with `raising=False`, noting
+    # the module "survives" an unbound submodule only because of a try/except. It
+    # did not survive — warmup was skipped on every real run. `warm_engine` now owns
+    # the lookup; see tests/test_engine_warmup.py.
+    monkeypatch.setattr(mabe, "warm_engine", lambda _n: 1)
     return monkeypatch
 
 

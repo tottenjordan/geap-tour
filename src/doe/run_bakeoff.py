@@ -173,13 +173,20 @@ def _measure_usage(engine_id: str, model_id: str, *, client=None, cases=None) ->
 
         cases = get_eval_cases("coordinator_agent")
     if client is None:
-        import vertexai
         from agentplatform import Client
 
         from src.config import GCP_PROJECT_ID, GCP_REGION
 
         client = Client(project=GCP_PROJECT_ID, location=GCP_REGION)
-    engine = vertexai.agent_engines.get(engine_id)
+    # `from vertexai import agent_engines`, not `import vertexai` + attribute access:
+    # the latter raises AttributeError (the submodule is not loaded by the package
+    # import) and, with `client` passed in, NameError — `vertexai` was only bound
+    # inside the branch above. Uncaught either way, so an --execute bake-off would
+    # have died here after deploying and scoring both engines. See
+    # `_sdk_patches.warm_engine`.
+    from vertexai import agent_engines
+
+    engine = agent_engines.get(engine_id)
     return collect_token_usage(engine, [c["prompt"] for c in cases])
 
 
