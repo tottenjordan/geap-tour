@@ -3,6 +3,7 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
+from src.agents.current_date import inject_current_date
 from src.config import (
     BOOKING_MCP_SERVER,
     EXPENSE_MCP_SERVER,
@@ -50,6 +51,7 @@ flash_agent = LlmAgent(
         PreloadMemoryTool(),
     ],
     generate_content_config=with_afc_disabled(),
+    before_model_callback=inject_current_date,  # src/agents/current_date.py
 )
 
 root_agent = flash_agent

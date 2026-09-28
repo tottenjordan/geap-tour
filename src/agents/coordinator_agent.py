@@ -11,6 +11,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 from src.agents.caching_preload_memory_tool import CachingPreloadMemoryTool
+from src.agents.current_date import inject_current_date
 from src.armor.config import (
     get_armored_generate_config,
     guardrail_with_telemetry,
@@ -216,6 +217,10 @@ coordinator_agent = LlmAgent(
     # oversized inputs BEFORE the model runs, and emits a span event + metric on
     # each block so the BLOCK is observable. Telemetry never affects the decision.
     before_agent_callback=guardrail_with_telemetry,
+    # Today's date, per request, appended to the system instruction — the model
+    # has no clock and was searching "June 15" as 2024. Outside INSTRUCTION so
+    # the GEPA text is untouched. See src/agents/current_date.py.
+    before_model_callback=inject_current_date,
     after_agent_callback=_after_callback,
 )
 
