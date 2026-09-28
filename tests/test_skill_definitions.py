@@ -214,7 +214,7 @@ def _real_tool_response_fields() -> dict[str, set[str]]:
     # here notices — the literal keeps asserting a shape the server no longer has.
     any_booking = flight_fields | hotel_fields | cancelled_fields | {"error"}
     return {
-        # KNOWN DIVERGENCE #2: these two read the catalogue constants directly
+        # KNOWN DIVERGENCE #2: these two read the catalogue functions directly
         # rather than calling a tool, because the search tools return the bare
         # list and add no envelope of their own — today. They are also the repo's
         # only *unbounded* list-returning MCP tools, so when CLAUDE.md's "bound
@@ -223,8 +223,8 @@ def _real_tool_response_fields() -> dict[str, set[str]]:
         # will still describe the inner record, and the `set(shapes) ==
         # tool_names` drift guard below will not fire (the keys are unchanged).
         # Re-derive both from the tool functions when that lands.
-        "search_flights": _keys_of(search_db.FLIGHTS),
-        "search_hotels": _keys_of(search_db.HOTELS),
+        "search_flights": _keys_of(search_db.flights()),
+        "search_hotels": _keys_of(search_db.hotels()),
         "book_flight": flight_fields,
         "book_hotel": hotel_fields,
         "cancel_booking": any_booking,

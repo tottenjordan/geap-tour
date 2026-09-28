@@ -14,9 +14,9 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 try:
-    from .mock_db import FLIGHTS, HOTELS
+    from .mock_db import flights, hotels
 except ImportError:
-    from mock_db import FLIGHTS, HOTELS  # ty: ignore[unresolved-import]
+    from mock_db import flights, hotels  # ty: ignore[unresolved-import]
 
 mcp = FastMCP("search-mcp", instructions="Search for flights and hotels.")
 
@@ -49,7 +49,7 @@ def search_flights(origin: str, destination: str, date: str | None = None) -> li
     """
     results = [
         f
-        for f in FLIGHTS
+        for f in flights()
         if str(f["origin"]).upper() == origin.upper()
         and str(f["destination"]).upper() == destination.upper()
     ]
@@ -66,7 +66,7 @@ def search_hotels(city: str, max_price: float | None = None) -> list[dict]:
         city: City name (e.g., New York, Chicago, London)
         max_price: Optional maximum price per night filter
     """
-    results = [h for h in HOTELS if str(h["city"]).lower() == city.lower()]
+    results = [h for h in hotels() if str(h["city"]).lower() == city.lower()]
     if max_price is not None:
         results = [h for h in results if float(h["price_per_night"]) <= max_price]
     return results

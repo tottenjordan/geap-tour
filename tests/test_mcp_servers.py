@@ -22,7 +22,7 @@ from src.mcp_servers.expense.mock_db import (
     submit_expense,
 )
 from src.mcp_servers.search import server as search_server
-from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
+from src.mcp_servers.search.mock_db import flights, hotels
 
 MCP_SERVERS_DIR = Path(__file__).resolve().parents[1] / "src" / "mcp_servers"
 
@@ -88,23 +88,23 @@ EXPECTED_ANNOTATIONS = {
 
 class TestSearchMockDB:
     def test_flights_have_required_fields(self):
-        for f in FLIGHTS:
+        for f in flights():
             assert "id" in f
             assert "origin" in f
             assert "destination" in f
             assert "price" in f
 
     def test_hotels_have_required_fields(self):
-        for h in HOTELS:
+        for h in hotels():
             assert "id" in h
             assert "city" in h
             assert "price_per_night" in h
 
     def test_flights_not_empty(self):
-        assert len(FLIGHTS) > 0
+        assert len(flights()) > 0
 
     def test_hotels_not_empty(self):
-        assert len(HOTELS) > 0
+        assert len(hotels()) > 0
 
 
 class TestBookingMockDB:

@@ -11,27 +11,27 @@ from google.genai.types import Content, Part
 from src.armor.config import input_guardrail_callback
 from src.mcp_servers.booking.mock_db import bookings, create_booking
 from src.mcp_servers.expense.mock_db import check_policy, expenses, submit_expense
-from src.mcp_servers.search.mock_db import FLIGHTS, HOTELS
+from src.mcp_servers.search.mock_db import flights, hotels
 
 # --- MCP Server Tool Tests (simulated calls) ---
 
 
 class TestSearchToolsE2E:
     def test_search_flights_sfo_jfk(self):
-        results = [f for f in FLIGHTS if f["origin"] == "SFO" and f["destination"] == "JFK"]
+        results = [f for f in flights() if f["origin"] == "SFO" and f["destination"] == "JFK"]
         assert len(results) >= 2
         assert all(f["price"] > 0 for f in results)
 
     def test_search_flights_no_results(self):
-        results = [f for f in FLIGHTS if f["origin"] == "XYZ"]
+        results = [f for f in flights() if f["origin"] == "XYZ"]
         assert len(results) == 0
 
     def test_search_hotels_new_york(self):
-        results = [h for h in HOTELS if h["city"] == "New York"]
+        results = [h for h in hotels() if h["city"] == "New York"]
         assert len(results) >= 1
 
     def test_search_hotels_with_price_filter(self):
-        results = [h for h in HOTELS if h["city"] == "New York" and h["price_per_night"] <= 200]
+        results = [h for h in hotels() if h["city"] == "New York" and h["price_per_night"] <= 200]
         assert len(results) >= 1
         assert all(h["price_per_night"] <= 200 for h in results)
 
