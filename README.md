@@ -51,7 +51,9 @@ uv sync --all-groups
 cp .env.example .env
 # Edit .env with your GCP project details
 
-# Run tests (offline — no live GCP or MCP connections needed). Expect 1793.
+# Run tests (offline — no live GCP or MCP connections needed). 2397 passed on
+# 2026-10-02 and the count grows, so read it as a floor. A total ~40 short of
+# the latest run (2358 that day) is the DOE/pipeline modules silently missing.
 # Use --no-sync: a bare `uv run` re-syncs to the default groups and re-creates
 # the same silent shortfall.
 uv run --no-sync pytest tests/
