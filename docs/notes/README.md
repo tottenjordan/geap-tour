@@ -81,8 +81,8 @@ file; keep this index short (< 200 lines).
 - [Eval reliability audit](./eval-reliability-audit.md) — what the suite cannot see: the
   safety corpus restates the 4 blocklist regexes (1/10 held-out injections blocked);
   calibration is blind at the 3.0 floor; a routing collapse *improves* `cost_savings_pct`.
-- [Agent Gateway / Identity / Registry audit](./geap-services-audit-2026-09.md) — our docs
-  call Gateway early-access-blocked; it is provisioned and answers (404 = wrong host).
+- [Gateway / Identity / Registry audit](./geap-services-audit-2026-09.md) and the
+  [GEAP coverage map](./geap-coverage.md) — what is demonstrated, blocked, or missing.
 - [The deployed-engine baseline](./deployed-engine-baseline.md) — "configured correctly"
   as **executable** rules (`engine_baseline.py`) plus a verifier that diffs the live spec
   and exits non-zero (`verify_engine_config`). Catches the silent class: 4Gi containers,
