@@ -55,16 +55,12 @@ DEFAULT_THRESHOLD = 3.0
 
 # Trailing window for every surface query.
 #
-# 48h, not 24h, and the reason is measured rather than preferred. The publishing
-# cron is scheduled `23 * * * *` but GitHub *drops* scheduled runs under load
-# rather than queueing them: over two weeks it produced 99 successes, i.e. **~7
-# runs/day, not 24**. At 24h that left ~7 points against `baseline.MIN_BASELINE`
-# of 5 — one slow day below the minimum and the rolling-baseline detector goes
-# silently inert, which is the failure mode it exists to prevent.
-#
-# Widening trades a little sensitivity to a genuine sustained shift for a
-# baseline that survives a slow day. Revisit if the cron ever really runs hourly.
-DEFAULT_LOOKBACK_HOURS = 48
+# 240h (10 days), because every publisher is now DAILY. monitoring_publish.yaml
+# was hourly until 2026-10-26 (GitHub thinned it to ~7 runs/day, so the window
+# was 48h); router_quality.yaml was always daily and already read 240h. At 1/day
+# a window must hold MIN_BASELINE + 1 points or the rolling z-score can never
+# fire — 6 days would just reach it, 10 keeps it reachable with four days missed.
+DEFAULT_LOOKBACK_HOURS = 240
 
 
 class Surface(NamedTuple):
@@ -84,9 +80,9 @@ class Surface(NamedTuple):
 
     prefix: str
     metrics: list[tuple[str, float, str]]
-    #: Measured, not nominal. The hourly cron is scheduled `23 * * * *` but GitHub
-    #: DROPS scheduled runs under load — 99 successes over two weeks, ~7/day.
-    writes_per_day: float = 7.0
+    #: Every publishing workflow is a daily cron (monitoring_publish.yaml
+    #: `23 10 * * *`, router_quality.yaml `37 4 * * *`).
+    writes_per_day: float = 1.0
     lookback_hours: int = DEFAULT_LOOKBACK_HOURS
 
 
@@ -121,7 +117,7 @@ SURFACES = {
         metrics=[(name, threshold, "LT") for name, threshold in ROUTER_QUALITY_MONITORED_METRICS],
         # DAILY, because scoring the router costs engine calls
         # (.github/workflows/router_quality.yaml, `37 4 * * *`) — unlike the
-        # classifier-only efficiency publisher that rides the hourly tick.
+        # classifier-only efficiency publisher in monitoring_publish.yaml.
         writes_per_day=1.0,
         # 10 days, so the baseline survives dropped runs. At 1/day a 48h window
         # holds 2 points against MIN_BASELINE's 5: the detector could never fire.

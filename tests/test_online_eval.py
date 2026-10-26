@@ -519,17 +519,16 @@ class TestAnomaliesAreHoisted:
         assert data["anomalies"] == []
 
 
-def test_lookback_survives_a_slow_cron_day():
-    """The publishing cron is scheduled hourly but GitHub drops runs under load —
-    measured ~7/day over two weeks. At the old 24h window that left ~7 points
-    against a 5-point baseline minimum, so one slow day silently disabled the
-    detector."""
+def test_lookback_survives_missed_cron_days():
+    """The publishing cron is daily (since 2026-10-26; it was hourly before) and
+    GitHub can drop a scheduled run. The window must still hold a full baseline
+    after a few missed days, or one bad stretch silently disables the detector."""
     from src.eval.baseline import MIN_BASELINE
     from src.eval.verify_monitors import DEFAULT_LOOKBACK_HOURS
 
-    assert DEFAULT_LOOKBACK_HOURS >= 48
-    observed_runs_per_day = 7
-    assert (DEFAULT_LOOKBACK_HOURS / 24) * observed_runs_per_day >= MIN_BASELINE * 2
+    runs_per_day = 1
+    missed_days = 4
+    assert (DEFAULT_LOOKBACK_HOURS / 24 - missed_days) * runs_per_day >= MIN_BASELINE + 1
 
 
 class TestAlertedButUnpublishedIsReported:

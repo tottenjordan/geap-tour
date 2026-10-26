@@ -51,25 +51,26 @@ def test_the_declared_cadence_is_plausible(name):
     assert 0 < s.writes_per_day <= 24, f"{name}: implausible cadence {s.writes_per_day}"
 
 
-def test_the_daily_surface_is_the_one_that_needed_widening():
+def test_router_quality_stays_daily():
     """Pins the specific case, so the general invariant above cannot be satisfied
     by quietly relabelling router_quality as hourly."""
     rq = SURFACES["router_quality"]
     assert rq.writes_per_day == 1.0, "router_quality.yaml is a daily cron (37 4 * * *)"
-    assert rq.lookback_hours > DEFAULT_LOOKBACK_HOURS
+    assert rq.lookback_hours >= DEFAULT_LOOKBACK_HOURS
 
 
-def test_the_hourly_surfaces_keep_the_measured_default():
-    """Widening everything would trade away recency for no reason — the hourly
-    surfaces already clear the baseline at 48h, which was itself a measured choice
-    (the cron yields ~7 runs/day, not 24)."""
+def test_the_formerly_hourly_surfaces_are_declared_daily():
+    """monitoring_publish.yaml went hourly -> daily on 2026-10-26. These surfaces
+    must declare the cadence they actually get, or the invariant above checks a
+    fiction: at the old 48h window a daily writer yields 2 points, never a baseline."""
     for name in ("coordinator_quality", "online_quality", "router_efficiency"):
+        assert SURFACES[name].writes_per_day == 1.0, name
         assert SURFACES[name].lookback_hours == DEFAULT_LOOKBACK_HOURS, name
 
 
 def test_the_guard_would_reject_the_old_configuration():
     """Guards the guard: the invariant must actually fail on what was shipped."""
-    old_points = DEFAULT_LOOKBACK_HOURS / 24.0 * 1.0  # daily writer, 48h window
+    old_points = 48 / 24.0 * 1.0  # daily writer, the old 48h window
     assert old_points < MIN_BASELINE + 1
 
 
@@ -118,10 +119,15 @@ class TestTheWindowIsActuallyUsed:
                 f"{key} was queried over {window}h but declares {SURFACES[key].lookback_hours}h"
             )
 
-    def test_the_daily_surface_really_asks_for_more_than_the_others(self):
-        """The whole point, stated as a comparison rather than a constant."""
+    def test_every_daily_surface_really_asks_for_a_baseline_window(self):
+        """The whole point, checked against the query actually issued rather than
+        the declared table: a daily writer needs MIN_BASELINE + 1 days of window."""
+        from src.eval.verify_monitors import SURFACES
+
         seen = self._windows_requested()
-        assert seen["router_quality"] > seen["coordinator_quality"]
+        for key, window in seen.items():
+            points = window / 24.0 * SURFACES[key].writes_per_day
+            assert points >= MIN_BASELINE + 1, f"{key}: {window}h holds ~{points:.1f} points"
 
     def test_an_explicit_override_applies_to_every_surface(self):
         """`--hours 24` is a deliberate narrowing and must not be silently ignored
