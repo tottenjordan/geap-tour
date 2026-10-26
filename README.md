@@ -185,7 +185,7 @@ while the batch still exits 0** — read the per-item table, not the exit code.
 | ![Evaluation Pipeline](diagrams/outputs/03_eval_pipeline.png) | Three publishing surfaces — offline snapshot (canonical), client-side online monitor with `infra_empty_rate` split out, and router efficiency |
 | ![Agent Identity](diagrams/outputs/04_agent_identity_gateway.png) | Per-engine SPIFFE identity and the `roles/agentregistry.viewer` grant. Agent Gateway is **provisioned but not yet attached** — `ENABLE_AGENT_GATEWAY=false` pending the IAP egress work, not blocked by access |
 | ![Observability Stack](diagrams/outputs/05_observability_stack.png) | Platform-emitted telemetry (always on) vs self-reported quality series (only while a publisher runs) |
-| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | Three workflows: required cloud-free tests, the **advisory** eval gate, and the hourly scheduled publish |
+| ![CI/CD Flow](diagrams/outputs/06_ci_cd_flow.png) | Three workflows: required cloud-free tests, the **advisory** eval gate, and the daily scheduled publish |
 | ![Model Armor](diagrams/outputs/07_agent_armor.png) | Layered screening — the client-side guardrail always runs; Model Armor templates attach **only** on a regional Gemini-2.x backbone |
 
 ## Project Structure

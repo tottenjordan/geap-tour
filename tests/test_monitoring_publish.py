@@ -90,6 +90,15 @@ class TestScheduling:
         minute = triggers["schedule"][0]["cron"].split()[0]
         assert minute not in ("0", "30"), f"cron minute {minute} is a contended slot"
 
+    def test_runs_daily_not_hourly(self, workflow):
+        """Every run creates a `geap-batch-eval` EvaluationRun and costs a full
+        coordinator batch eval plus judges; hourly produced ~7 of those a day
+        against an engine that does not change hour to hour."""
+        triggers = workflow.get(True) or workflow.get("on")
+        cron = triggers["schedule"][0]["cron"]
+        assert cron.split()[1] != "*", f"{cron!r} runs hourly"
+        assert len(triggers["schedule"]) == 1, "one daily tick, not several"
+
     def test_runs_do_not_overlap(self, workflow):
         """A run takes ~5 min; an overlapping one would double-publish the series."""
         assert workflow["concurrency"]["group"]

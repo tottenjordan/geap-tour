@@ -11,9 +11,12 @@ name: Monitoring Publish
 # looks-like-it-is-running-but-is-not failure this repo keeps getting bitten by.
 #
 # COST: each run is a full coordinator batch eval plus two standalone judges
-# (~5 min, billable Vertex inference + judge calls). Hourly is chosen to fill the
-# 5-point baseline within a working day. Once the baseline is established, dial
-# this back — '23 */3 * * *' (8/day) is plenty for drift detection.
+# (~18 min, billable Vertex inference + judge calls), and every run creates a
+# `geap-batch-eval · coordinator_agent · batch` EvaluationRun. DAILY since
+# 2026-10-26: the hourly cron (which GitHub thinned to ~7 runs/day) was producing
+# ~7 of those runs a day for one engine that does not change hour to hour.
+# verify_monitors reads these surfaces over a 240h window so the 5-point rolling
+# baseline stays reachable at 1/day (tests/test_baseline_window_reachability.py).
 #
 # --no-faithfulness IS LOAD-BEARING, DO NOT REMOVE IT. demo_readiness treats a
 # RED tool_faithfulness publish as a deliberate demo regression point; a healthy
@@ -22,9 +25,10 @@ name: Monitoring Publish
 
 on:
   schedule:
-    # Hourly at :23 UTC. Deliberately off :00 — GitHub delays scheduled runs
+    # Daily at 10:23 UTC. Deliberately off :00 — GitHub delays scheduled runs
     # under load, and the top of the hour is the most contended slot there is.
-    - cron: '23 * * * *'
+    # Off router_quality.yaml's 04:37 too, so the two never share a tick.
+    - cron: '23 10 * * *'
   workflow_dispatch:
     inputs:
       skip_online:
